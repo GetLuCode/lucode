@@ -9,8 +9,8 @@ export interface TokenUsage {
   cache_read_input_tokens?: number
 }
 
-export interface StreamingMessage {
-  text: string
+// Pending usage collected during a streaming turn (not exposed directly to components)
+interface PendingUsage {
   inputUsage?: TokenUsage
   outputTokens?: number
 }
@@ -23,8 +23,9 @@ interface AppState {
   messages: Record<string, Message[]>
   pendingHook: PendingHook | null
   sessionStatus: Record<string, string>
-  streaming: Record<string, StreamingMessage>     // sessionId → current streaming text
-  sessionUsage: Record<string, TokenUsage>        // sessionId → cumulative totals
+  // Plain strings — Zustand Object.is comparison on strings is reliable
+  streamingText: Record<string, string>
+  sessionUsage: Record<string, TokenUsage>
 
   loadProjects: () => Promise<void>
   createProject: (data: Partial<Project>) => Promise<Project>
@@ -40,6 +41,9 @@ interface AppState {
   handleWSEvent: (event: WSEvent) => void
 }
 
+// Mutable map of in-progress token usage — not stored in Zustand (no need to re-render)
+const pendingUsageMap: Record<string, PendingUsage> = {}
+
 export const useStore = create<AppState>((set, get) => ({
   projects: [],
   sessions: [],
@@ -48,7 +52,7 @@ export const useStore = create<AppState>((set, get) => ({
   messages: {},
   pendingHook: null,
   sessionStatus: {},
-  streaming: {},
+  streamingText: {},
   sessionUsage: {},
 
   loadProjects: async () => {
@@ -145,109 +149,129 @@ export const useStore = create<AppState>((set, get) => ({
 
         const outerType = raw.type as string
 
-        // Streaming text accumulation
         if (outerType === 'stream_event') {
           const inner = (raw.event ?? raw) as Record<string, unknown>
           const innerType = inner?.type as string
 
           if (innerType === 'message_start') {
-            // Start of a new assistant message — capture input token usage
+            // Init pending usage tracker (plain mutable object, not Zustand state)
             const msg = inner.message as Record<string, unknown> | undefined
-            const usage = msg?.usage as TokenUsage | undefined
-            set(s => ({
-              streaming: {
-                ...s.streaming,
-                [sessId]: { text: '', inputUsage: usage },
-              },
-            }))
+            pendingUsageMap[sessId] = { inputUsage: msg?.usage as TokenUsage | undefined }
+            // Clear streaming text for this session
+            set(s => ({ streamingText: { ...s.streamingText, [sessId]: '' } }))
+
           } else if (innerType === 'content_block_delta') {
             const delta = inner.delta as Record<string, unknown> | undefined
             if (delta?.type === 'text_delta') {
-              const text = delta.text as string ?? ''
-              set(s => {
-                const cur = s.streaming[sessId] ?? { text: '' }
-                return { streaming: { ...s.streaming, [sessId]: { ...cur, text: cur.text + text } } }
-              })
+              const chunk = (delta.text as string) ?? ''
+              // Append to plain string — triggers reliable Zustand re-render
+              set(s => ({
+                streamingText: {
+                  ...s.streamingText,
+                  [sessId]: (s.streamingText[sessId] ?? '') + chunk,
+                },
+              }))
             }
+
           } else if (innerType === 'message_delta') {
-            // Capture output token count
             const usage = inner.usage as { output_tokens?: number } | undefined
-            set(s => {
-              const cur = s.streaming[sessId] ?? { text: '' }
-              return { streaming: { ...s.streaming, [sessId]: { ...cur, outputTokens: usage?.output_tokens } } }
-            })
+            if (pendingUsageMap[sessId]) {
+              pendingUsageMap[sessId].outputTokens = usage?.output_tokens
+            }
+
           } else if (innerType === 'message_stop') {
-            // Finalize: move streaming text to messages
-            const cur = get().streaming[sessId]
-            if (cur?.text) {
+            // Finalize: move streaming text to messages list
+            const text = get().streamingText[sessId] ?? ''
+            const pending = pendingUsageMap[sessId]
+            delete pendingUsageMap[sessId]
+
+            if (text) {
               const msgs = get().messages[sessId] ?? []
+              const usage: Message['usage'] = pending?.inputUsage
+                ? {
+                    input_tokens: pending.inputUsage.input_tokens ?? 0,
+                    output_tokens: pending.outputTokens ?? 0,
+                    cache_creation_input_tokens: pending.inputUsage.cache_creation_input_tokens,
+                    cache_read_input_tokens: pending.inputUsage.cache_read_input_tokens,
+                  }
+                : undefined
+
               const finalMsg: Message = {
                 id: `ws-${Date.now()}`,
                 session_id: sessId,
                 role: 'assistant',
-                content: cur.text,
+                content: text,
                 seq: msgs.length,
                 created_at: new Date().toISOString(),
-                usage: cur.inputUsage
-                  ? {
-                      input_tokens: cur.inputUsage.input_tokens ?? 0,
-                      output_tokens: cur.outputTokens ?? 0,
-                      cache_creation_input_tokens: cur.inputUsage.cache_creation_input_tokens,
-                      cache_read_input_tokens: cur.inputUsage.cache_read_input_tokens,
-                    }
-                  : undefined,
+                usage,
               }
+
               set(s => ({
                 messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), finalMsg] },
-                streaming: { ...s.streaming, [sessId]: { text: '' } },
+                streamingText: { ...s.streamingText, [sessId]: '' },
               }))
 
               // Accumulate session totals
-              if (cur.inputUsage) {
+              if (usage) {
                 set(s => {
                   const prev = s.sessionUsage[sessId] ?? { input_tokens: 0, output_tokens: 0 }
                   return {
                     sessionUsage: {
                       ...s.sessionUsage,
                       [sessId]: {
-                        input_tokens: prev.input_tokens + (cur.inputUsage?.input_tokens ?? 0),
-                        output_tokens: prev.output_tokens + (cur.outputTokens ?? 0),
+                        input_tokens: prev.input_tokens + usage.input_tokens,
+                        output_tokens: prev.output_tokens + usage.output_tokens,
                         cache_creation_input_tokens:
-                          (prev.cache_creation_input_tokens ?? 0) + (cur.inputUsage?.cache_creation_input_tokens ?? 0),
+                          (prev.cache_creation_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
                         cache_read_input_tokens:
-                          (prev.cache_read_input_tokens ?? 0) + (cur.inputUsage?.cache_read_input_tokens ?? 0),
+                          (prev.cache_read_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0),
                       },
                     },
                   }
                 })
               }
             } else {
-              set(s => ({ streaming: { ...s.streaming, [sessId]: { text: '' } } }))
+              set(s => ({ streamingText: { ...s.streamingText, [sessId]: '' } }))
             }
           }
         }
 
-        // For tool_use, thinking, rate_limit_event, and anything unhandled — add as raw message
-        if (
-          outerType === 'thinking' ||
-          outerType === 'rate_limit_event' ||
-          (outerType === 'stream_event' &&
-            !['message_start', 'content_block_start', 'content_block_delta',
-              'content_block_stop', 'message_delta', 'message_stop'].includes(
-              ((raw.event ?? raw) as Record<string, unknown>)?.type as string
-            ))
-        ) {
+        // Show thinking blocks and unhandled events collapsed
+        if (outerType === 'thinking') {
+          const thinking = (raw.thinking as string) ?? JSON.stringify(raw)
           const msgs = get().messages[sessId] ?? []
-          const rawMsg: Message = {
-            id: `raw-${Date.now()}-${Math.random()}`,
-            session_id: sessId,
-            role: outerType === 'thinking' ? 'thinking' : 'raw',
-            content: JSON.stringify(event.event, null, 2),
-            seq: msgs.length,
-            created_at: new Date().toISOString(),
-          }
           set(s => ({
-            messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), rawMsg] },
+            messages: {
+              ...s.messages,
+              [sessId]: [...(s.messages[sessId] ?? []), {
+                id: `think-${Date.now()}`,
+                session_id: sessId,
+                role: 'thinking' as const,
+                content: thinking,
+                seq: msgs.length,
+                created_at: new Date().toISOString(),
+              }],
+            },
+          }))
+        } else if (
+          outerType !== 'stream_event' &&
+          outerType !== 'rate_limit_event' &&
+          outerType !== 'thinking'
+        ) {
+          // Truly unknown — show as raw
+          const msgs = get().messages[sessId] ?? []
+          set(s => ({
+            messages: {
+              ...s.messages,
+              [sessId]: [...(s.messages[sessId] ?? []), {
+                id: `raw-${Date.now()}-${Math.random()}`,
+                session_id: sessId,
+                role: 'raw' as const,
+                content: JSON.stringify(event.event, null, 2),
+                seq: msgs.length,
+                created_at: new Date().toISOString(),
+              }],
+            },
           }))
         }
         break

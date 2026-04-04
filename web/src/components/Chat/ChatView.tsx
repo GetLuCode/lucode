@@ -19,7 +19,7 @@ export function ChatView() {
   const messages = useStore(s =>
     activeSessionId ? (s.messages[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   )
-  const streaming = useStore(s => activeSessionId ? s.streaming[activeSessionId] : undefined)
+  const streamingText = useStore(s => activeSessionId ? (s.streamingText[activeSessionId] ?? '') : '')
   const sessionStatus = useStore(s =>
     activeSessionId ? (s.sessionStatus[activeSessionId] ?? 'idle') : 'idle'
   )
@@ -37,11 +37,11 @@ export function ChatView() {
 
   const session = sessions.find(s => s.id === activeSessionId)
   const isRunning = sessionStatus === 'running' || sessionStatus === 'waiting_hook'
-  const hasStreamingText = streaming && streaming.text.length > 0
+  const hasStreamingText = streamingText.length > 0
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length, streaming?.text])
+  }, [messages.length, streamingText])
 
   const handleSend = () => {
     if (!input.trim() || !activeSessionId || isRunning) return
@@ -96,7 +96,7 @@ export function ChatView() {
         {hasStreamingText && (
           <div className="msg msg--assistant">
             <div className="msg__bubble">
-              <p className="msg__text msg__text--streaming">{streaming!.text}</p>
+              <p className="msg__text msg__text--streaming">{streamingText}</p>
             </div>
           </div>
         )}
