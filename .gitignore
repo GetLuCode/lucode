@@ -1,0 +1,25 @@
+# Binaries
+orchestrator
+hook
+tmp/
+
+# Go
+go.sum
+
+# Node / Frontend
+web/node_modules/
+web/dist/
+
+# DB
+*.db
+*.db-wal
+*.db-shm
+~/.claude-orchestrator/
+
+# Hook logs
+*.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
