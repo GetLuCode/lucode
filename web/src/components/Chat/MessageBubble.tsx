@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { marked } from 'marked'
-import { IconVolume, IconCopy, IconCheck } from '@tabler/icons-react'
+import { IconVolume, IconVolumeOff, IconCopy, IconCheck } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
-import { tts } from '../../hooks/useTTS'
-import { getVoicePrefs } from '../../lib/voicePrefs'
 import type { Message } from '../../types'
 
 marked.use({ gfm: true, breaks: false })
@@ -14,14 +12,16 @@ marked.use({ gfm: true, breaks: false })
 interface Props {
   message: Message
   sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => void
+  isBeingRead?: boolean
+  onSpeak?: (messageId: string, content: string) => void
+  onStopSpeaking?: () => void
 }
 
-export function MessageBubble({ message, sendHookRespond }: Props) {
+export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking }: Props) {
   const [copied, setCopied] = useState(false)
 
   const handleSpeak = () => {
-    const voicePrefs = getVoicePrefs()
-    tts.speak(message.content, voicePrefs.lang)
+    onSpeak?.(message.id, message.content)
   }
 
   const handleCopy = async () => {
@@ -38,15 +38,27 @@ export function MessageBubble({ message, sendHookRespond }: Props) {
         animate={{ opacity: 1 }}
         transition={{ duration: 0.15, ease: 'easeOut' }}
       >
-        <div className="msg__bubble">
+        <div className={`msg__bubble${isBeingRead ? ' msg__bubble--reading' : ''}`}>
           <BubbleContent message={message} sendHookRespond={sendHookRespond} />
           {message.role === 'assistant' && (
             <div className="msg__actions">
               <div className="tooltip-wrapper">
-                <button className="msg__action-btn" onClick={handleSpeak} aria-label="Read aloud">
-                  <IconVolume size={13} />
-                </button>
-                <div className="tooltip tooltip--up">Read aloud</div>
+                {isBeingRead ? (
+                  <button
+                    className="msg__action-btn msg__action-btn--active"
+                    onClick={onStopSpeaking}
+                    aria-label="Stop reading"
+                  >
+                    <IconVolumeOff size={13} />
+                  </button>
+                ) : (
+                  <button className="msg__action-btn" onClick={handleSpeak} aria-label="Read aloud">
+                    <IconVolume size={13} />
+                  </button>
+                )}
+                <div className="tooltip tooltip--up">
+                  {isBeingRead ? 'Stop reading' : 'Read aloud'}
+                </div>
               </div>
               <div className="tooltip-wrapper">
                 <button className="msg__action-btn" onClick={handleCopy} aria-label="Copy">

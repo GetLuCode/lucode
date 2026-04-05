@@ -19,10 +19,12 @@ interface Props {
   lang: string
   autoSend: boolean
   autoRead: boolean
+  noEcho: boolean
   onClose: () => void
   onLangChange: (lang: string) => void
   onAutoSendToggle: () => void
   onAutoReadToggle: () => void
+  onNoEchoToggle: () => void
 }
 
 export function VoiceSettingsModal({
@@ -30,10 +32,12 @@ export function VoiceSettingsModal({
   lang,
   autoSend,
   autoRead,
+  noEcho,
   onClose,
   onLangChange,
   onAutoSendToggle,
   onAutoReadToggle,
+  onNoEchoToggle,
 }: Props) {
   if (!isOpen) return null
 
@@ -120,6 +124,22 @@ export function VoiceSettingsModal({
             </label>
             <p className="voice-modal__help-text">
               Automatically read Claude's responses aloud
+            </p>
+          </div>
+
+          {/* No-echo toggle */}
+          <div className="voice-modal__option">
+            <label className="voice-modal__toggle-label">
+              <input
+                type="checkbox"
+                checked={noEcho}
+                onChange={onNoEchoToggle}
+                className="voice-modal__checkbox"
+              />
+              <span className="voice-modal__toggle-text">No-echo mode</span>
+            </label>
+            <p className="voice-modal__help-text">
+              When active, coherent speech stops TTS playback. Use if you have speakers (not headphones). Clicking mic while TTS plays also stops it.
             </p>
           </div>
         </div>
