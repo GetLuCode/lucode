@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '../../store'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
-import { useTTS, tts } from '../../hooks/useTTS'
+import { tts } from '../../hooks/useTTS'
 import { getVoicePrefs, saveVoicePrefs } from '../../lib/voicePrefs'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
@@ -48,8 +48,10 @@ export function ChatView() {
   const [voiceLang, setVoiceLang] = useState(() => getVoicePrefs().lang)
   const [autoSend, setAutoSend] = useState(() => getVoicePrefs().autoSend)
   const [autoRead, setAutoRead] = useState(() => getVoicePrefs().autoRead)
+  const [noEcho, setNoEcho] = useState(() => getVoicePrefs().noEcho)
   const [interimText, setInterimText] = useState('')
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -61,14 +63,41 @@ export function ChatView() {
   // Open WebSocket connection for the active session
   const { sendHookRespond } = useSessionWS(activeSessionId)
 
+  // isRunning ref — available in voice callbacks without stale closure issues
+  const isRunningRef = useRef(false)
+
+  // Refs for values needed inside voice callbacks (avoid stale closures)
+  const noEchoRef = useRef(noEcho)
+  noEchoRef.current = noEcho
+  const speakingMessageIdRef = useRef<string | null>(null)
+
   // Voice input
   const { isListening, start: startListening, stop: stopListening } = useVoiceInput({
     lang: voiceLang,
     onTranscript: (text) => {
+      // Voice commands — consumed silently, never sent to chat
+      const normalized = text.trim().toLowerCase().replace(/[.,!?;:]+$/, '')
+      if (/^(stop|detener|detente)$/.test(normalized)) {
+        if (speakingMessageIdRef.current) {
+          tts.stop()
+          setSpeakingMessageId(null)
+          speakingMessageIdRef.current = null
+        }
+        return
+      }
+
+      // No-echo: coherent speech detected — stop TTS if playing
+      if (noEchoRef.current && speakingMessageIdRef.current) {
+        tts.stop()
+        setSpeakingMessageId(null)
+        speakingMessageIdRef.current = null
+        return // discard the transcript that was picking up TTS audio
+      }
+
       setInput((prev) => prev + (prev ? ' ' : '') + text)
       setInterimText('')
-      // Auto-send if enabled
-      if (autoSend && activeSessionId) {
+      // Auto-send only if not already running a turn (prevents double-turn)
+      if (autoSend && activeSessionId && !isRunningRef.current) {
         setTimeout(() => {
           const newInput = input + (input ? ' ' : '') + text
           if (newInput.trim()) {
@@ -85,11 +114,10 @@ export function ChatView() {
     },
   })
 
-  // Use TTS hook to track speaking state
-  useTTS()
 
   const session = sessions.find(s => s.id === activeSessionId)
   const isRunning = sessionStatus === 'running' || sessionStatus === 'waiting_hook'
+  isRunningRef.current = isRunning
   const hasStreamingText = streamingText.length > 0
   const hasStreamingThinking = streamingThinking.length > 0
   const hasMore = pagination?.hasMore ?? false
@@ -126,6 +154,15 @@ export function ChatView() {
     isLoadingMoreRef.current = false
   }, [activeSessionId])
 
+  // Stop TTS as soon as voice input is detected (interim = browser heard something)
+  useEffect(() => {
+    if (interimText && speakingMessageIdRef.current) {
+      tts.stop()
+      setSpeakingMessageId(null)
+      speakingMessageIdRef.current = null
+    }
+  }, [interimText])
+
   // Auto-read new assistant messages (uses module-level cache to survive session switches)
   useEffect(() => {
     if (!autoRead || messages.length === 0) return
@@ -134,12 +171,26 @@ export function ChatView() {
     if (
       lastMessage?.role === 'assistant' &&
       !autoReadCache.has(lastMessage.id) &&
-      !streamingText // Don't read while still streaming
+      !streamingText
     ) {
       autoReadCache.add(lastMessage.id)
-      tts.speak(lastMessage.content, voiceLang)
+
+      // No-echo (speakers): pause mic while TTS plays, restore after
+      const wasListening = isListening
+      if (wasListening && !noEchoRef.current) stopListening()
+
+      speakingMessageIdRef.current = lastMessage.id
+      setSpeakingMessageId(lastMessage.id)
+
+      tts.speak(lastMessage.content, voiceLang, {
+        onEnd: () => {
+          speakingMessageIdRef.current = null
+          setSpeakingMessageId(null)
+          if (wasListening && !noEchoRef.current) startListening()
+        },
+      })
     }
-  }, [messages, autoRead, streamingText, voiceLang])
+  }, [messages, autoRead, streamingText, voiceLang]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const triggerLoadMore = useCallback(async () => {
     if (!activeSessionId || isLoadingMoreRef.current) return
@@ -222,12 +273,44 @@ export function ChatView() {
     saveVoicePrefs({ autoRead: newValue })
   }
 
+  const handleNoEchoToggle = () => {
+    const newValue = !noEcho
+    setNoEcho(newValue)
+    saveVoicePrefs({ noEcho: newValue })
+  }
+
   const handleMicToggle = () => {
+    // No-echo mode: clicking mic while TTS plays stops the audio
+    if (noEcho && speakingMessageId) {
+      tts.stop()
+      setSpeakingMessageId(null)
+      speakingMessageIdRef.current = null
+      return
+    }
     if (isListening) {
       stopListening()
     } else {
       startListening()
     }
+  }
+
+  const handleStopSpeaking = () => {
+    tts.stop()
+    setSpeakingMessageId(null)
+    speakingMessageIdRef.current = null
+  }
+
+  const handleSpeakMessage = (messageId: string, content: string) => {
+    // Stop any current playback first
+    tts.stop()
+    setSpeakingMessageId(messageId)
+    speakingMessageIdRef.current = messageId
+    tts.speak(content, voiceLang, {
+      onEnd: () => {
+        setSpeakingMessageId(null)
+        speakingMessageIdRef.current = null
+      },
+    })
   }
 
   if (!activeSessionId && !pendingSession) {
@@ -290,7 +373,13 @@ export function ChatView() {
                 boxSizing: 'border-box',
               }}
             >
-              <MessageBubble message={messages[virtualItem.index]} sendHookRespond={sendHookRespond} />
+              <MessageBubble
+                message={messages[virtualItem.index]}
+                sendHookRespond={sendHookRespond}
+                isBeingRead={speakingMessageId === messages[virtualItem.index]?.id}
+                onSpeak={handleSpeakMessage}
+                onStopSpeaking={handleStopSpeaking}
+              />
             </div>
           ))}
         </div>
@@ -374,10 +463,12 @@ export function ChatView() {
         lang={voiceLang}
         autoSend={autoSend}
         autoRead={autoRead}
+        noEcho={noEcho}
         onClose={() => setVoiceSettingsOpen(false)}
         onLangChange={handleVoiceLangChange}
         onAutoSendToggle={handleAutoSendToggle}
         onAutoReadToggle={handleAutoReadToggle}
+        onNoEchoToggle={handleNoEchoToggle}
       />
     </div>
   )

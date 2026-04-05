@@ -1858,9 +1858,23 @@ html, body, #root {
   background: var(--bg-hover);
 }
 
+.msg__action-btn--active {
+  color: var(--accent) !important;
+}
+
 .msg__action-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Blink animation on message currently being read aloud */
+.msg__bubble--reading {
+  animation: reading-blink 1.6s ease-in-out infinite;
+}
+
+@keyframes reading-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
 }
 
 /* Listening animation */

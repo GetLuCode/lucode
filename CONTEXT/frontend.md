@@ -51,10 +51,13 @@ main.tsx
             ├── Sidebar/NavPanel.tsx      — projects tree + sessions (collapsed view)
             ├── Toast/HookToastContainer.tsx — renders all pending hook toasts (top-right) ⭐
             └── Chat/ChatView.tsx            — main chat panel
-                ├── Chat/MessageBubble.tsx   — renders message: user (text+images) / assistant / 
+                ├── Chat/MessageBubble.tsx   — renders message: user (text+images) / assistant /
                 │                              thinking / hook (decision badge) / raw
-                ├── Chat/InputControls.tsx   — effort + thinking toggle + model selector ⭐
-                │   └── Chat/AttachmentButton.tsx — file picker for images ⭐
+                │                              assistant: Read aloud / Stop + Copy buttons ⭐
+                ├── Chat/InputControls.tsx   — effort + thinking + mic + settings ⭐
+                │   ├── Chat/AttachmentButton.tsx — file picker for images ⭐
+                │   └── voice-controls-group (mic + gear) ⭐
+                ├── Chat/VoiceBar.tsx (VoiceSettingsModal) — lang, auto-send, auto-read, no-echo ⭐
                 ├── Chat/ThinkingIndicator.tsx — animated dots while Claude is working
                 └── Image preview + send button
 ```
@@ -303,23 +306,67 @@ Model value is sent as-is to `POST /api/sessions/{id}/turn`. The backend maps it
 
 Row of controls below textarea:
 
-**Left side** (image + thinking):
+**Left side** (image + thinking + voice):
 - **AttachmentButton** (paperclip +): file picker for images
-- **Thinking toggle** (brain icon): `enabled | disabled` (adaptive is server-side default)
-  - Toggles `thinking: "enabled" | "disabled"`
-  - Icon changes color when active (accent green)
-  - Tooltip on hover
+- **Thinking toggle** (brain icon): `enabled | disabled`
+- **Voice controls group** (mic + gear, visually grouped):
+  - **Mic button** (IconMicrophone/IconMicrophoneOff): toggles STT recording. Red pulse animation while listening. In no-echo mode, clicking while TTS plays stops the audio instead.
+  - **Settings button** (IconSettings): opens `VoiceSettingsModal`
 
 **Center/Right** (effort + model + send):
-- **Effort selector** (Headless UI Listbox)
-  - Options: `auto | low | medium | high | max`
-  - Sent to CLI as `--effort=<value>` (if not "auto")
-- **Model selector** (Headless UI Listbox)
-  - Options: Haiku 4.5, Sonnet 4.6, Opus 4.6
-  - Overrides project default per-message
-- **Send button**: `↑` (up arrow), disabled when input empty or session running
+- **Effort selector**, **Model selector**, **Send button** — unchanged
 
 All controls disabled when `isRunning=true`.
+
+## Voice Features ⭐ — `web/src/hooks/`, `web/src/lib/voicePrefs.ts`, `web/src/components/Chat/VoiceBar.tsx`
+
+### STT — `web/src/hooks/useVoiceInput.ts`
+Uses `window.SpeechRecognition || window.webkitSpeechRecognition`.
+- `continuous: true`, `interimResults: true`, `lang` from preferences
+- Callbacks are stored in refs so the effect only re-runs on `lang` change (avoids stale-closure / recreation bug)
+- `onTranscript(text)` — final results; `onInterim(text)` — live preview shown as textarea placeholder
+
+### TTS — `web/src/hooks/useTTS.ts`
+Singleton module `tts` (not a React hook) with:
+- `tts.speak(text, lang, { onEnd? })` — strips markdown + emojis before speaking
+- `tts.stop()` — cancels current utterance
+- `tts.isSpeakingNow()` — synchronous check
+
+**Markdown/emoji stripping**: removes code blocks, inline code, bold/italic, headers, links, emojis (unicode ranges) so TTS doesn't read symbols aloud.
+
+### Voice Preferences — `web/src/lib/voicePrefs.ts`
+Persisted in `localStorage`: `voice_lang`, `voice_autosend`, `voice_autoread`, `voice_noecho`.
+
+### VoiceSettingsModal — `web/src/components/Chat/VoiceBar.tsx`
+Opens from gear button. Options:
+- **Language** — 10 locales (es-ES, es-MX, en-US, en-GB, fr-FR, de-DE, pt-BR, it-IT, ja-JP, zh-CN)
+- **Auto-send** — sends message automatically when STT recording ends
+- **Auto-read** — reads each new assistant message aloud
+- **No-echo mode** — for headphones: keeps mic active while TTS plays; coherent speech (final STT result) stops TTS. Without this mode, mic is paused during TTS.
+
+### ChatView voice state
+```typescript
+speakingMessageId: string | null  // which message is currently being read
+noEchoRef / isRunningRef          // mutable refs for voice callbacks (avoid stale closures)
+autoReadCache: Set<string>        // module-level, survives session switches
+```
+
+**Auto-read flow**: `tts.speak()` with `onEnd` callback that clears `speakingMessageId` and restores mic if needed.
+
+**No-echo / stop TTS triggers** (in priority order):
+1. Voice command "stop", "detener", "detente" (trailing punctuation stripped) → silent, not sent to chat
+2. No-echo mode ON + final STT transcript → stop TTS, discard transcript
+3. `interimText` set while TTS playing → stop TTS
+4. Click mic button while TTS playing (no-echo ON) → stop TTS
+5. Click stop button on blinking message bubble
+6. Click "Read aloud" on a different message → stops current, starts new
+
+**Block double-turn**: `isRunningRef.current` checked before auto-send so a voice transcript can't start a second Claude turn.
+
+### MessageBubble assistant actions
+- **Read aloud / Stop** button: shows `IconVolume` normally, `IconVolumeOff` (accent color) when `isBeingRead=true`. Click to start/stop via `onSpeak(id, content)` / `onStopSpeaking()` props — both go through ChatView so `speakingMessageId` stays in sync.
+- **Blink animation** (`.msg__bubble--reading`): 1.6s opacity pulse on the message currently being read.
+- **Copy** button: copies raw markdown to clipboard, 2s checkmark feedback.
 
 ## HookToastContainer + HookToast ⭐ — `web/src/components/Toast/`
 
