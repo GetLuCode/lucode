@@ -1,4 +1,4 @@
-import type { Project, Session, MessagesPage } from './types'
+import type { Project, Session, MessagesPage, Message } from './types'
 
 const BASE = 'http://localhost:8090'
 
@@ -43,3 +43,7 @@ export const listMessages = (id: string, opts?: { limit?: number; beforeSeq?: nu
   const qs = params.toString()
   return req<MessagesPage>('GET', `/api/sessions/${id}/messages${qs ? `?${qs}` : ''}`)
 }
+
+export const getMessageContext = (messageId: string) => req<Message[]>('GET', `/api/messages/${messageId}/context`)
+export const toggleStarMessage = (messageId: string) => req<{ starred: boolean }>('PATCH', `/api/messages/${messageId}/star`)
+export const listStarredMessages = (sessionId: string) => req<Message[]>('GET', `/api/sessions/${sessionId}/starred`)

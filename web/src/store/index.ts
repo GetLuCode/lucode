@@ -46,9 +46,16 @@ interface AppState {
   streamingThinking: Record<string, string>
   sessionUsage: Record<string, TokenUsage>
   filePreview: FilePreview | null
+  starredMessages: Record<string, Message[]>
+  starredPanelOpen: boolean
 
   openFilePreview: (preview: FilePreview) => void
   closeFilePreview: () => void
+  toggleStar: (messageId: string, sessionId: string) => Promise<void>
+  loadStarredMessages: (sessionId: string) => Promise<void>
+  openStarredPanel: () => void
+  closeStarredPanel: () => void
+  loadMessageContext: (messageId: string, sessionId: string) => Promise<void>
   loadProjects: () => Promise<void>
   createProject: (data: Partial<Project>) => Promise<Project>
   deleteProject: (id: string) => Promise<void>
@@ -216,9 +223,13 @@ export const useStore = create<AppState>((set, get) => ({
   streamingThinking: {},
   sessionUsage: {},
   filePreview: null,
+  starredMessages: {},
+  starredPanelOpen: false,
 
   openFilePreview: (preview) => set({ filePreview: preview }),
   closeFilePreview: () => set({ filePreview: null }),
+  openStarredPanel: () => set({ starredPanelOpen: true }),
+  closeStarredPanel: () => set({ starredPanelOpen: false }),
 
   loadProjects: async () => {
     const projects = await api.listProjects()
@@ -395,6 +406,56 @@ export const useStore = create<AppState>((set, get) => ({
         },
       }
     })
+  },
+
+  toggleStar: async (messageId, sessionId) => {
+    await api.toggleStarMessage(messageId)
+    set(s => ({
+      messages: {
+        ...s.messages,
+        [sessionId]: (s.messages[sessionId] ?? []).map(m =>
+          m.id === messageId ? { ...m, starred: !m.starred } : m
+        ),
+      },
+    }))
+    // Reload starred messages list
+    try {
+      const starred = await api.listStarredMessages(sessionId)
+      set(s => ({
+        starredMessages: { ...s.starredMessages, [sessionId]: starred },
+      }))
+    } catch (e) {
+      console.error('Failed to reload starred messages:', e)
+    }
+  },
+
+  loadStarredMessages: async (sessionId) => {
+    try {
+      const starred = await api.listStarredMessages(sessionId)
+      set(s => ({
+        starredMessages: { ...s.starredMessages, [sessionId]: starred },
+      }))
+    } catch (e) {
+      console.error('Failed to load starred messages:', e)
+    }
+  },
+
+  loadMessageContext: async (messageId, sessionId) => {
+    try {
+      const contextMessages = await api.getMessageContext(messageId)
+      set(s => {
+        const existing = s.messages[sessionId] ?? []
+        const existingIds = new Set(existing.map(m => m.id))
+        const newMessages = contextMessages.filter(m => !existingIds.has(m.id))
+        const combined = [...existing, ...newMessages]
+        const sorted = combined.sort((a, b) => a.seq - b.seq)
+        return {
+          messages: { ...s.messages, [sessionId]: sorted },
+        }
+      })
+    } catch (e) {
+      console.error('Failed to load message context:', e)
+    }
   },
 
   handleWSEvent: (event: WSEvent) => {
