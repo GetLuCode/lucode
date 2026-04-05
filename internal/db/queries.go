@@ -141,6 +141,14 @@ func UpdateSessionStatus(db *sql.DB, id, status string) error {
 	return err
 }
 
+func UpdateSessionName(db *sql.DB, id, name string) error {
+	_, err := db.Exec(
+		`UPDATE sessions SET name=? WHERE id=?`,
+		name, id,
+	)
+	return err
+}
+
 func DeleteSession(db *sql.DB, id string) error {
 	_, err := db.Exec(`DELETE FROM sessions WHERE id=?`, id)
 	return err

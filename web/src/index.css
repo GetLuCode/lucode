@@ -283,6 +283,13 @@ html, body, #root {
   font-size: 11px;
   color: var(--text-muted);
 }
+.session-list__edit-input {
+  flex: 1;
+  padding: 2px 4px;
+  font-size: 13px;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+}
 
 /* Status dots */
 .status-dot {

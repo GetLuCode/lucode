@@ -28,6 +28,8 @@ export const listSessions = (pid: string) => req<Session[]>('GET', `/api/project
 export const createSession = (pid: string, data: { message?: string; name?: string; model?: string }) =>
   req<Session>('POST', `/api/projects/${pid}/sessions`, data)
 export const deleteSession = (id: string) => req<void>('DELETE', `/api/sessions/${id}`)
+export const renameSession = (id: string, name: string) =>
+  req<void>('PATCH', `/api/sessions/${id}`, { name })
 export const sendTurn = (id: string, message: string, model?: string) =>
   req<void>('POST', `/api/sessions/${id}/turn`, { message, model })
 export const forkSession = (id: string, name: string, message?: string) =>
