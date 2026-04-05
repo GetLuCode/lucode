@@ -1,6 +1,8 @@
 import { Listbox } from '@headlessui/react'
-import { IconBrain, IconBulb, IconMicrophone, IconMicrophoneOff, IconSettings } from '@tabler/icons-react'
+import { IconBulb, IconMicrophone, IconMicrophoneOff } from '@tabler/icons-react'
 import { AttachmentButton } from './AttachmentButton'
+import { ThinkingToggle } from './ThinkingToggle'
+import { SettingsMenu } from './SettingsMenu'
 
 const MODELS = [
   { label: 'Haiku 4.5', value: 'haiku' },
@@ -56,46 +58,20 @@ export function InputControls({
       {/* Left: Attachment and thinking toggle */}
       <div className="input-controls__group input-controls__group--left">
         <AttachmentButton onImageSelect={onImageSelect} disabled={isRunning} />
+        <ThinkingToggle thinking={String(thinking)} onThinkingChange={onThinkingChange} disabled={isRunning} />
+
+        {/* Voice controls group - mic button only */}
         <div className="tooltip-wrapper">
           <button
-            className={`thinking-toggle ${thinking === 'enabled' ? 'thinking-toggle--active' : ''}`}
-            onClick={() => onThinkingChange(thinking === 'enabled' ? 'disabled' : 'enabled')}
+            className={`thinking-toggle ${isListening ? 'thinking-toggle--listening' : ''}`}
+            onClick={onMicToggle}
             disabled={isRunning}
-            title={thinking === 'enabled' ? 'Disable thinking' : 'Enable thinking'}
+            title={isListening ? 'Stop recording' : 'Start voice input'}
           >
-            <IconBrain size={18} />
+            {isListening ? <IconMicrophoneOff size={18} /> : <IconMicrophone size={18} />}
           </button>
           <div className="tooltip">
-            {thinking === 'enabled' ? 'Disable thinking' : 'Enable thinking'}
-          </div>
-        </div>
-
-        {/* Voice controls group */}
-        <div className="voice-controls-group">
-          <div className="tooltip-wrapper">
-            <button
-              className={`thinking-toggle ${isListening ? 'thinking-toggle--listening' : ''}`}
-              onClick={onMicToggle}
-              disabled={isRunning}
-              title={isListening ? 'Stop recording' : 'Start voice input'}
-            >
-              {isListening ? <IconMicrophoneOff size={18} /> : <IconMicrophone size={18} />}
-            </button>
-            <div className="tooltip">
-              {isListening ? 'Stop recording' : 'Start voice input'}
-            </div>
-          </div>
-
-          <div className="tooltip-wrapper">
-            <button
-              className="thinking-toggle voice-controls-group__settings"
-              onClick={onSettingsClick}
-              disabled={isRunning}
-              title="Voice settings"
-            >
-              <IconSettings size={18} />
-            </button>
-            <div className="tooltip">Voice settings</div>
+            {isListening ? 'Stop recording' : 'Start voice input'}
           </div>
         </div>
 
@@ -110,6 +86,9 @@ export function InputControls({
           </button>
           <div className="tooltip">{hasPendingIdeas ? 'Ideas — pending items' : 'Ideas'}</div>
         </div>
+
+        {/* Settings menu */}
+        <SettingsMenu onVoiceSettingsClick={onSettingsClick} disabled={isRunning} />
       </div>
 
       {/* Center/Right: Selects and send button */}

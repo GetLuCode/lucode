@@ -310,13 +310,16 @@ Model value is sent as-is to `POST /api/sessions/{id}/turn`. The backend maps it
 
 Row of controls below textarea:
 
-**Left side** (image + thinking + voice + ideas):
+**Left side** (image + thinking + voice + ideas + settings):
 - **AttachmentButton** (paperclip +): file picker for images
-- **Thinking toggle** (brain icon): `enabled | disabled`
-- **Voice controls group** (mic + gear, visually grouped):
-  - **Mic button** (IconMicrophone/IconMicrophoneOff): toggles STT recording. Red pulse animation while listening. In no-echo mode, clicking while TTS plays stops the audio instead.
-  - **Settings button** (IconSettings): opens `VoiceSettingsModal`
-- **Ideas button** (lightbulb 💡) ⭐: opens `IdeasModal`. Pulses yellow (`ideas-btn--pending`) when there are unfinished ideas in any scope.
+- **Thinking toggle** (brain icon): cycles through `disabled | adaptive | enabled` states
+  - **disabled**: gray icon with red diagonal line
+  - **adaptive** (default): gray icon
+  - **enabled**: brain icon + "Thinking" label with colored background
+- **Mic button** (IconMicrophone/IconMicrophoneOff): toggles STT recording. Red pulse animation while listening. In no-echo mode, clicking while TTS plays stops the audio instead.
+- **Ideas button** (lightbulb 💡): opens `IdeasModal`. Pulses yellow (`ideas-btn--pending`) when there are unfinished ideas in any scope.
+- **Settings menu** (gear icon): dropdown menu with submenus
+  - **Voice** submenu: opens `VoiceSettingsModal`
 
 **Center/Right** (effort + model + send):
 - **Effort selector**, **Model selector**, **Send button** — unchanged
