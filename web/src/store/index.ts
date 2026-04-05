@@ -44,9 +44,9 @@ interface AppState {
   setActiveSession: (id: string) => Promise<void>
   setPendingSession: (projectId: string, model: string) => void
   clearPendingSession: () => void
-  createSession: (pid: string, data: { message?: string; name?: string; model?: string }) => Promise<Session>
+  createSession: (pid: string, data: { message?: string; name?: string; model?: string; effort?: string; thinking?: string }) => Promise<Session>
   deleteSession: (id: string) => Promise<void>
-  sendMessage: (id: string, msg: string, model?: string) => void
+  sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string) => void
   respondHook: (sessId: string, decision: 'approve' | 'deny', reason?: string) => void
   forkSession: (id: string, name: string) => Promise<Session>
   renameSession: (id: string, name: string) => Promise<void>
@@ -257,7 +257,7 @@ export const useStore = create<AppState>((set, get) => ({
     }))
   },
 
-  sendMessage: (id, msg, model) => {
+  sendMessage: (id, msg, model, effort, thinking) => {
     const pending = get().pendingSession
 
     // If sending first message in a pending session
@@ -266,6 +266,8 @@ export const useStore = create<AppState>((set, get) => ({
         message: msg,
         name: toTitle(msg),
         model: model || pending.model,
+        effort,
+        thinking,
       }).then(session => {
         set(s => ({
           sessions: [session, ...s.sessions],
@@ -288,7 +290,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     // Normal sendTurn for existing sessions
-    api.sendTurn(id, msg, model).catch(console.error)
+    api.sendTurn(id, msg, model, effort, thinking).catch(console.error)
     const seq = (get().messages[id]?.length ?? 0)
     const userMsg: Message = {
       id: `opt-${Date.now()}`,
