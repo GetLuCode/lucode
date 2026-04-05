@@ -194,6 +194,61 @@ func ListMessages(db *sql.DB, sessionID string) ([]Message, error) {
 	return out, rows.Err()
 }
 
+// ListMessagesPaginated returns up to limit messages in ASC order.
+// When beforeSeq is non-nil, only messages with seq < *beforeSeq are returned.
+// hasMore is true when there are additional (older) messages beyond the page.
+func ListMessagesPaginated(db *sql.DB, sessionID string, limit int, beforeSeq *int) ([]Message, bool, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	// Fetch limit+1 rows in DESC order to detect hasMore, then reverse.
+	if beforeSeq != nil {
+		rows, err = db.Query(
+			`SELECT id, session_id, role, content, seq, created_at
+			 FROM messages WHERE session_id=? AND seq < ?
+			 ORDER BY seq DESC LIMIT ?`,
+			sessionID, *beforeSeq, limit+1,
+		)
+	} else {
+		rows, err = db.Query(
+			`SELECT id, session_id, role, content, seq, created_at
+			 FROM messages WHERE session_id=?
+			 ORDER BY seq DESC LIMIT ?`,
+			sessionID, limit+1,
+		)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	var out []Message
+	for rows.Next() {
+		var m Message
+		var createdAt string
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.Seq, &createdAt); err != nil {
+			return nil, false, err
+		}
+		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+
+	// Reverse to restore ASC order
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, hasMore, nil
+}
+
 func NextMessageSeq(db *sql.DB, sessionID string) (int, error) {
 	var seq sql.NullInt64
 	err := db.QueryRow(`SELECT MAX(seq) FROM messages WHERE session_id=?`, sessionID).Scan(&seq)

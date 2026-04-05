@@ -36,6 +36,12 @@ export interface Message {
   usage?: MessageUsage
 }
 
+export interface MessagesPage {
+  messages: Message[]
+  has_more: boolean
+  oldest_seq: number
+}
+
 export interface PendingHook {
   session_id: string
   tool_use_id: string

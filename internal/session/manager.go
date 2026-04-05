@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -117,6 +118,7 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	seq, _ := dbpkg.NextMessageSeq(m.db, ps.SessionID)
+	accum := newTurnAccum()
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -137,17 +139,14 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 
 		log.Printf("[event] session=%s type=%s partial=%v isResult=%v", sid8, event.EventType, event.Partial, isResult)
 
-		// Persist final (non-partial) stream events
-		if event.EventType == "stream_event" && !event.Partial && event.Event != nil {
-			role := guessRole(event.Event)
-			_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
-				ID:        uuid.New().String(),
-				SessionID: ps.SessionID,
-				Role:      role,
-				Content:   string(event.Event),
-				Seq:       seq,
-			})
-			seq++
+		// Accumulate streaming content and persist only finalized messages
+		// (thinking on content_block_stop, assistant text on message_stop).
+		if event.EventType == "stream_event" && event.Event != nil {
+			for _, msg := range accum.process(event.Event, ps.SessionID) {
+				msg.Seq = seq
+				_ = dbpkg.InsertMessage(m.db, msg)
+				seq++
+			}
 		}
 
 		m.hub.Broadcast(ps.SessionID, event)
@@ -228,12 +227,12 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 	})
 
 	if !sent {
-		// Hook binary already disconnected (timed out and auto-allowed before user responded).
-		// Inform the user so they know their approval arrived too late.
+		// Hook binary already disconnected (timed out and auto-denied before user responded).
+		// Inform the user so they know their response arrived too late.
 		m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
 			"type":       "info",
 			"session_id": sessID,
-			"message":    "Hook approval timed out — tool was automatically allowed before your response.",
+			"message":    "Hook approval timed out — tool was automatically denied.",
 		})
 	}
 
@@ -271,7 +270,7 @@ func (m *Manager) onHookDisconnect(sessID, toolUseID string) {
 	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
 		"type":       "info",
 		"session_id": sessID,
-		"message":    "Hook approval timed out — tool was automatically allowed.",
+		"message":    "Hook approval timed out — tool was automatically denied.",
 	})
 }
 
@@ -289,15 +288,94 @@ func (m *Manager) GetStatus(sessID string) Status {
 	return Status(sess.Status)
 }
 
-// guessRole returns "assistant" for most events; "tool_result" for user-side tool responses.
-func guessRole(raw json.RawMessage) string {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return "assistant"
+// turnAccum accumulates Claude streaming events during a turn and emits
+// finalized DB messages only at natural boundaries (message_stop, thinking block stop).
+// This mirrors the frontend's handleWSEvent logic so stored messages render correctly.
+type turnAccum struct {
+	text       strings.Builder
+	thinking   strings.Builder
+	blockTypes map[int]string // block index → "text" | "thinking"
+}
+
+func newTurnAccum() *turnAccum {
+	return &turnAccum{blockTypes: make(map[int]string)}
+}
+
+// process handles one raw stream_event line and returns any messages ready to persist.
+func (a *turnAccum) process(raw json.RawMessage, sessionID string) []dbpkg.Message {
+	// The raw line has shape: {"type":"stream_event","session_id":"...","event":{...}}
+	var outer struct {
+		Event json.RawMessage `json:"event"`
 	}
-	t := jsonStr(m["type"])
-	if t == "user" {
-		return "tool_result"
+	if err := json.Unmarshal(raw, &outer); err != nil || outer.Event == nil {
+		return nil
 	}
-	return "assistant"
+
+	var inner map[string]json.RawMessage
+	if err := json.Unmarshal(outer.Event, &inner); err != nil {
+		return nil
+	}
+
+	switch jsonStr(inner["type"]) {
+	case "content_block_start":
+		var idx int
+		json.Unmarshal(inner["index"], &idx)
+		var block struct {
+			Type string `json:"type"`
+		}
+		if cb, ok := inner["content_block"]; ok {
+			json.Unmarshal(cb, &block)
+		}
+		a.blockTypes[idx] = block.Type
+
+	case "content_block_delta":
+		var delta struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Thinking string `json:"thinking"`
+		}
+		if d, ok := inner["delta"]; ok {
+			json.Unmarshal(d, &delta)
+		}
+		switch delta.Type {
+		case "text_delta":
+			a.text.WriteString(delta.Text)
+		case "thinking_delta":
+			a.thinking.WriteString(delta.Thinking)
+		}
+
+	case "content_block_stop":
+		var idx int
+		json.Unmarshal(inner["index"], &idx)
+		blockType := a.blockTypes[idx]
+		delete(a.blockTypes, idx)
+
+		if blockType == "thinking" {
+			text := a.thinking.String()
+			a.thinking.Reset()
+			if text != "" {
+				return []dbpkg.Message{{
+					ID:        uuid.New().String(),
+					SessionID: sessionID,
+					Role:      "thinking",
+					Content:   text,
+				}}
+			}
+		}
+
+	case "message_stop":
+		text := a.text.String()
+		a.text.Reset()
+		a.blockTypes = make(map[int]string)
+		if text != "" {
+			return []dbpkg.Message{{
+				ID:        uuid.New().String(),
+				SessionID: sessionID,
+				Role:      "assistant",
+				Content:   text,
+			}}
+		}
+	}
+
+	return nil
 }
