@@ -2,14 +2,22 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '../../store'
 import { useSessionWS } from '../../hooks/useSessionWS'
+import { useVoiceInput } from '../../hooks/useVoiceInput'
+import { useTTS, tts } from '../../hooks/useTTS'
+import { getVoicePrefs, saveVoicePrefs } from '../../lib/voicePrefs'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { InputControls } from './InputControls'
+import { VoiceSettingsModal } from './VoiceBar'
 import type { Message } from '../../types'
 
 // Stable references — never inline [] or {} in Zustand selectors,
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
+
+// Module-level cache of message IDs that have been auto-read.
+// Persists across session switches within the same page session.
+const autoReadCache = new Set<string>()
 
 export function ChatView() {
   const activeSessionId = useStore(s => s.activeSessionId)
@@ -36,6 +44,13 @@ export function ChatView() {
   const [thinking, setThinking] = useState('adaptive')
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mediaType: string } | null>(null)
 
+  // Voice input and TTS
+  const [voiceLang, setVoiceLang] = useState(() => getVoicePrefs().lang)
+  const [autoSend, setAutoSend] = useState(() => getVoicePrefs().autoSend)
+  const [autoRead, setAutoRead] = useState(() => getVoicePrefs().autoRead)
+  const [interimText, setInterimText] = useState('')
+  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -44,7 +59,34 @@ export function ChatView() {
   const isLoadingMoreRef = useRef(false)
 
   // Open WebSocket connection for the active session
-  useSessionWS(activeSessionId)
+  const { sendHookRespond } = useSessionWS(activeSessionId)
+
+  // Voice input
+  const { isListening, start: startListening, stop: stopListening } = useVoiceInput({
+    lang: voiceLang,
+    onTranscript: (text) => {
+      setInput((prev) => prev + (prev ? ' ' : '') + text)
+      setInterimText('')
+      // Auto-send if enabled
+      if (autoSend && activeSessionId) {
+        setTimeout(() => {
+          const newInput = input + (input ? ' ' : '') + text
+          if (newInput.trim()) {
+            const targetId = activeSessionId || 'pending'
+            sendMessage(targetId, newInput.trim(), model, effort, thinking, attachedImage)
+            setInput('')
+            setAttachedImage(null)
+          }
+        }, 0)
+      }
+    },
+    onInterim: (text) => {
+      setInterimText(text)
+    },
+  })
+
+  // Use TTS hook to track speaking state
+  useTTS()
 
   const session = sessions.find(s => s.id === activeSessionId)
   const isRunning = sessionStatus === 'running' || sessionStatus === 'waiting_hook'
@@ -83,6 +125,21 @@ export function ChatView() {
     isAtBottomRef.current = true
     isLoadingMoreRef.current = false
   }, [activeSessionId])
+
+  // Auto-read new assistant messages (uses module-level cache to survive session switches)
+  useEffect(() => {
+    if (!autoRead || messages.length === 0) return
+
+    const lastMessage = messages[messages.length - 1]
+    if (
+      lastMessage?.role === 'assistant' &&
+      !autoReadCache.has(lastMessage.id) &&
+      !streamingText // Don't read while still streaming
+    ) {
+      autoReadCache.add(lastMessage.id)
+      tts.speak(lastMessage.content, voiceLang)
+    }
+  }, [messages, autoRead, streamingText, voiceLang])
 
   const triggerLoadMore = useCallback(async () => {
     if (!activeSessionId || isLoadingMoreRef.current) return
@@ -148,6 +205,31 @@ export function ChatView() {
     }
   }
 
+  const handleVoiceLangChange = (lang: string) => {
+    setVoiceLang(lang)
+    saveVoicePrefs({ lang })
+  }
+
+  const handleAutoSendToggle = () => {
+    const newValue = !autoSend
+    setAutoSend(newValue)
+    saveVoicePrefs({ autoSend: newValue })
+  }
+
+  const handleAutoReadToggle = () => {
+    const newValue = !autoRead
+    setAutoRead(newValue)
+    saveVoicePrefs({ autoRead: newValue })
+  }
+
+  const handleMicToggle = () => {
+    if (isListening) {
+      stopListening()
+    } else {
+      startListening()
+    }
+  }
+
   if (!activeSessionId && !pendingSession) {
     return (
       <div className="chat chat--empty">
@@ -208,7 +290,7 @@ export function ChatView() {
                 boxSizing: 'border-box',
               }}
             >
-              <MessageBubble message={messages[virtualItem.index]} />
+              <MessageBubble message={messages[virtualItem.index]} sendHookRespond={sendHookRespond} />
             </div>
           ))}
         </div>
@@ -254,7 +336,13 @@ export function ChatView() {
         <div className="chat__input-wrap">
           <textarea
             className="chat__input"
-            placeholder={isRunning ? 'Claude is thinking…' : 'Message Claude… (paste images here)'}
+            placeholder={
+              isRunning
+                ? 'Claude is thinking…'
+                : interimText
+                  ? interimText
+                  : 'Message Claude… (paste images here)'
+            }
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -273,9 +361,24 @@ export function ChatView() {
             onSend={handleSend}
             isRunning={isRunning}
             canSend={input.trim().length > 0}
+            onMicToggle={handleMicToggle}
+            isListening={isListening}
+            onSettingsClick={() => setVoiceSettingsOpen(true)}
           />
         </div>
       </div>
+
+      {/* Voice Settings Modal */}
+      <VoiceSettingsModal
+        isOpen={voiceSettingsOpen}
+        lang={voiceLang}
+        autoSend={autoSend}
+        autoRead={autoRead}
+        onClose={() => setVoiceSettingsOpen(false)}
+        onLangChange={handleVoiceLangChange}
+        onAutoSendToggle={handleAutoSendToggle}
+        onAutoReadToggle={handleAutoReadToggle}
+      />
     </div>
   )
 }

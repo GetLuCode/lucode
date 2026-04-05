@@ -1,5 +1,5 @@
 import { Listbox } from '@headlessui/react'
-import { IconBrain } from '@tabler/icons-react'
+import { IconBrain, IconMicrophone, IconMicrophoneOff, IconSettings } from '@tabler/icons-react'
 import { AttachmentButton } from './AttachmentButton'
 
 const MODELS = [
@@ -27,6 +27,9 @@ interface Props {
   onSend: () => void
   isRunning: boolean
   canSend: boolean
+  onMicToggle?: () => void
+  isListening?: boolean
+  onSettingsClick?: () => void
 }
 
 export function InputControls({
@@ -40,6 +43,9 @@ export function InputControls({
   onSend,
   isRunning,
   canSend,
+  onMicToggle = () => {},
+  isListening = false,
+  onSettingsClick = () => {},
 }: Props) {
   return (
     <div className="input-controls">
@@ -57,6 +63,35 @@ export function InputControls({
           </button>
           <div className="tooltip">
             {thinking === 'enabled' ? 'Disable thinking' : 'Enable thinking'}
+          </div>
+        </div>
+
+        {/* Voice controls group */}
+        <div className="voice-controls-group">
+          <div className="tooltip-wrapper">
+            <button
+              className={`thinking-toggle ${isListening ? 'thinking-toggle--listening' : ''}`}
+              onClick={onMicToggle}
+              disabled={isRunning}
+              title={isListening ? 'Stop recording' : 'Start voice input'}
+            >
+              {isListening ? <IconMicrophoneOff size={18} /> : <IconMicrophone size={18} />}
+            </button>
+            <div className="tooltip">
+              {isListening ? 'Stop recording' : 'Start voice input'}
+            </div>
+          </div>
+
+          <div className="tooltip-wrapper">
+            <button
+              className="thinking-toggle voice-controls-group__settings"
+              onClick={onSettingsClick}
+              disabled={isRunning}
+              title="Voice settings"
+            >
+              <IconSettings size={18} />
+            </button>
+            <div className="tooltip">Voice settings</div>
           </div>
         </div>
       </div>

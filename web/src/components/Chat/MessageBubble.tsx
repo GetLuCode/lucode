@@ -1,19 +1,35 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { marked } from 'marked'
+import { IconVolume, IconCopy, IconCheck } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
-import { useSessionWS } from '../../hooks/useSessionWS'
+import { tts } from '../../hooks/useTTS'
+import { getVoicePrefs } from '../../lib/voicePrefs'
 import type { Message } from '../../types'
 
 marked.use({ gfm: true, breaks: false })
 
 interface Props {
   message: Message
+  sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => void
 }
 
-export function MessageBubble({ message }: Props) {
+export function MessageBubble({ message, sendHookRespond }: Props) {
+  const [copied, setCopied] = useState(false)
+
+  const handleSpeak = () => {
+    const voicePrefs = getVoicePrefs()
+    tts.speak(message.content, voicePrefs.lang)
+  }
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(message.content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   return (
     <div>
       <motion.div
@@ -23,7 +39,23 @@ export function MessageBubble({ message }: Props) {
         transition={{ duration: 0.15, ease: 'easeOut' }}
       >
         <div className="msg__bubble">
-          <BubbleContent message={message} />
+          <BubbleContent message={message} sendHookRespond={sendHookRespond} />
+          {message.role === 'assistant' && (
+            <div className="msg__actions">
+              <div className="tooltip-wrapper">
+                <button className="msg__action-btn" onClick={handleSpeak} aria-label="Read aloud">
+                  <IconVolume size={13} />
+                </button>
+                <div className="tooltip tooltip--up">Read aloud</div>
+              </div>
+              <div className="tooltip-wrapper">
+                <button className="msg__action-btn" onClick={handleCopy} aria-label="Copy">
+                  {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                </button>
+                <div className="tooltip tooltip--up">{copied ? 'Copied!' : 'Copy'}</div>
+              </div>
+            </div>
+          )}
           {message.usage && <TokenBadge usage={message.usage} />}
           <time className={`msg__time msg__time--${message.role}`}>
             {fmtTime(message.created_at)}
@@ -34,7 +66,7 @@ export function MessageBubble({ message }: Props) {
   )
 }
 
-function BubbleContent({ message }: { message: Message }) {
+function BubbleContent({ message, sendHookRespond }: { message: Message; sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => void }) {
   switch (message.role) {
     case 'user':
       return <UserContent content={message.content} />
@@ -84,7 +116,7 @@ function BubbleContent({ message }: { message: Message }) {
           decisionIcon={decisionIcon}
           decisionLabel={decisionLabel}
           decisionClass={decisionClass}
-          sessionId={message.session_id}
+          sendHookRespond={sendHookRespond}
         />
       )
     }
@@ -183,25 +215,24 @@ function HookMessage({
   decisionIcon,
   decisionLabel,
   decisionClass,
-  sessionId,
+  sendHookRespond,
 }: {
   hookData: HookData
   decisionIcon: string
   decisionLabel: string
   decisionClass: string
-  sessionId: string
+  sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => void
 }) {
-  const { sendHookRespond } = useSessionWS(sessionId)
   const isPending = hookData.decision === 'pending'
 
   const handleApprove = () => {
-    if (hookData.tool_use_id) {
+    if (hookData.tool_use_id && sendHookRespond) {
       sendHookRespond(hookData.tool_use_id, 'approve')
     }
   }
 
   const handleDeny = () => {
-    if (hookData.tool_use_id) {
+    if (hookData.tool_use_id && sendHookRespond) {
       sendHookRespond(hookData.tool_use_id, 'deny')
     }
   }

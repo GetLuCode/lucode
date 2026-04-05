@@ -2,6 +2,28 @@
 
 ## Critical Issues (Prevent Infinite Loops)
 
+### ⚠️ useSessionWS Must Be Called Only Once Per Session
+**Problem**: Calling `useSessionWS(sessionId)` in multiple components (e.g. in `MessageBubble`/`HookMessage` AND in `ChatView`) opens one WebSocket connection per call. With a virtual list of N hook messages, this creates N concurrent WS connections, all failing with "WebSocket is closed before the connection is established".
+
+**Why**: Each `useSessionWS` call creates its own `WebSocket`, starts a reconnect loop on close, and never coordinates with other instances for the same session.
+
+**Solution**: Call `useSessionWS` **only in `ChatView`** (one per active session). Pass `sendHookRespond` as a prop down to any component that needs to respond to hooks.
+
+```typescript
+// ✅ ChatView.tsx — single WS connection
+const { sendHookRespond } = useSessionWS(activeSessionId)
+// pass sendHookRespond as prop to MessageBubble → HookMessage
+
+// ❌ WRONG — never call in MessageBubble, HookMessage, or any list item
+const { sendHookRespond } = useSessionWS(sessionId)
+```
+
+**Fixed**: In `MessageBubble.tsx`, replaced `useSessionWS` call with a `sendHookRespond` prop passed from `ChatView`.
+
+---
+
+
+
 ### ⚠️ Zustand Selector Stability
 **Problem**: Inline array/object creation in selectors (`?? []` or `{...}` each render).
 **Why**: `Object.is` comparison fails when reference changes, causes infinite re-renders.
