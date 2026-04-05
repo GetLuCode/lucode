@@ -4,6 +4,7 @@ import { marked } from 'marked'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
+import { useSessionWS } from '../../hooks/useSessionWS'
 import type { Message } from '../../types'
 
 marked.use({ gfm: true, breaks: false })
@@ -62,6 +63,7 @@ function BubbleContent({ message }: { message: Message }) {
         tool_name: string
         tool_input: unknown
         decision: 'pending' | 'approve' | 'deny' | 'timeout'
+        tool_use_id?: string
       }
       const decisionIcon = {
         pending: '⏳',
@@ -77,19 +79,13 @@ function BubbleContent({ message }: { message: Message }) {
       }[hookData.decision]
       const decisionClass = `msg__hook-decision msg__hook-decision--${hookData.decision}`
       return (
-        <div className="msg__hook">
-          <div className="msg__hook-header">
-            <div>
-              <div className="msg__hook-title">⚙ Tool Use — {hookData.tool_name}</div>
-              <div className={decisionClass}>
-                {decisionIcon} {decisionLabel}
-              </div>
-            </div>
-          </div>
-          <div className="msg__hook-input">
-            <ToolInputRenderer toolName={hookData.tool_name} input={hookData.tool_input} />
-          </div>
-        </div>
+        <HookMessage
+          hookData={hookData}
+          decisionIcon={decisionIcon}
+          decisionLabel={decisionLabel}
+          decisionClass={decisionClass}
+          sessionId={message.session_id}
+        />
       )
     }
 
@@ -173,4 +169,66 @@ function fmtTime(dateStr: string): string {
 
 function fmt(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+}
+
+interface HookData {
+  tool_name: string
+  tool_input: unknown
+  decision: 'pending' | 'approve' | 'deny' | 'timeout'
+  tool_use_id?: string
+}
+
+function HookMessage({
+  hookData,
+  decisionIcon,
+  decisionLabel,
+  decisionClass,
+  sessionId,
+}: {
+  hookData: HookData
+  decisionIcon: string
+  decisionLabel: string
+  decisionClass: string
+  sessionId: string
+}) {
+  const { sendHookRespond } = useSessionWS(sessionId)
+  const isPending = hookData.decision === 'pending'
+
+  const handleApprove = () => {
+    if (hookData.tool_use_id) {
+      sendHookRespond(hookData.tool_use_id, 'approve')
+    }
+  }
+
+  const handleDeny = () => {
+    if (hookData.tool_use_id) {
+      sendHookRespond(hookData.tool_use_id, 'deny')
+    }
+  }
+
+  return (
+    <div className="msg__hook">
+      <div className="msg__hook-header">
+        <div>
+          <div className="msg__hook-title">⚙ Tool Use — {hookData.tool_name}</div>
+          <div className={decisionClass}>
+            {decisionIcon} {decisionLabel}
+          </div>
+        </div>
+      </div>
+      <div className="msg__hook-input">
+        <ToolInputRenderer toolName={hookData.tool_name} input={hookData.tool_input} />
+      </div>
+      {isPending && (
+        <div className="msg__hook-actions">
+          <button className="btn btn--deny" onClick={handleDeny}>
+            Deny
+          </button>
+          <button className="btn btn--approve" onClick={handleApprove}>
+            Approve
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }

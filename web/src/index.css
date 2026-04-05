@@ -1175,6 +1175,16 @@ html, body, #root {
   backdrop-filter: blur(12px);
 }
 
+.hook-toast--clickable {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.hook-toast--clickable:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow), 0 0 12px rgba(0, 212, 170, 0.2);
+}
+
 .hook-toast__header {
   display: flex;
   gap: 12px;
@@ -1447,6 +1457,47 @@ html, body, #root {
 .msg__hook-input {
   padding: 12px;
   font-size: 12px;
+}
+
+.msg__hook-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(0,0,0,0.1);
+}
+
+.msg__hook-actions .btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.msg__hook-actions .btn--approve {
+  background: rgba(159, 239, 218, 0.2);
+  color: #9fefda;
+  border: 1px solid rgba(159, 239, 218, 0.3);
+}
+
+.msg__hook-actions .btn--approve:hover {
+  background: rgba(159, 239, 218, 0.3);
+  border-color: rgba(159, 239, 218, 0.5);
+}
+
+.msg__hook-actions .btn--deny {
+  background: rgba(255, 95, 95, 0.2);
+  color: #ff8a8a;
+  border: 1px solid rgba(255, 95, 95, 0.3);
+}
+
+.msg__hook-actions .btn--deny:hover {
+  background: rgba(255, 95, 95, 0.3);
+  border-color: rgba(255, 95, 95, 0.5);
 }
 
 /* ---- Input Controls ---- */

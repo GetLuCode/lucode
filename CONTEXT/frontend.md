@@ -3,9 +3,28 @@
 ## Stack
 
 - **React 18** + TypeScript + Vite (dev `:5173`, build to `web/dist/`)
+- **react-router-dom** ⭐ — client-side routing, URL-based navigation
 - **Zustand** — global state store (`web/src/store/index.ts`)
 - **Framer Motion** — message stagger animations, modal transitions
 - **Native WebSocket** — one connection per active session
+
+## Router — `web/src/routes.tsx` ⭐
+
+URL-based navigation for persistent page state on reload:
+
+```
+/                                    — landing (no project/session selected)
+/projects/:projectId                 — project selected, no session
+/projects/:projectId/sessions/:sessionId  — project + session selected
+```
+
+**Sync mechanism** (`App.tsx`):
+- `useParams()` reads `:projectId` and `:sessionId` from URL
+- Effects sync URL params → Zustand store (`setActiveProject`, `setActiveSession`)
+- NavPanel and App both call `useNavigate()` to push URL changes
+- On page reload: URL params restore the last viewed project/session
+
+**No routing logic in components** — App.tsx is always rendered. Route params only set Zustand state; layout never changes based on route.
 
 ## Layout
 
@@ -25,17 +44,19 @@
 ## Component Tree
 
 ```
-App.tsx
-├── Sidebar/ProjectList.tsx      — list + create/delete projects
-├── Sidebar/SessionList.tsx      — list + create/delete/fork + inline rename sessions
-├── Toast/HookToastContainer.tsx — renders all pending hook toasts (top-right) ⭐
-└── Chat/ChatView.tsx            — main chat panel
-    ├── Chat/MessageBubble.tsx   — renders message: user (text+images) / assistant / 
-    │                              thinking / hook (decision badge) / raw
-    ├── Chat/InputControls.tsx   — effort + thinking toggle + model selector ⭐
-    │   └── Chat/AttachmentButton.tsx — file picker for images ⭐
-    ├── Chat/ThinkingIndicator.tsx — animated dots while Claude is working
-    └── Image preview + send button
+main.tsx
+└── BrowserRouter ⭐
+    └── AppRoutes ⭐ (web/src/routes.tsx)
+        └── App.tsx (all routes render this)
+            ├── Sidebar/NavPanel.tsx      — projects tree + sessions (collapsed view)
+            ├── Toast/HookToastContainer.tsx — renders all pending hook toasts (top-right) ⭐
+            └── Chat/ChatView.tsx            — main chat panel
+                ├── Chat/MessageBubble.tsx   — renders message: user (text+images) / assistant / 
+                │                              thinking / hook (decision badge) / raw
+                ├── Chat/InputControls.tsx   — effort + thinking toggle + model selector ⭐
+                │   └── Chat/AttachmentButton.tsx — file picker for images ⭐
+                ├── Chat/ThinkingIndicator.tsx — animated dots while Claude is working
+                └── Image preview + send button
 ```
 
 ⭐ = Recent additions
@@ -165,6 +186,38 @@ Opens `ws://localhost:8090/ws?role=client&session_id=<id>` when a session is act
 - On reconnect, backend re-sends pending hooks (if any) so modal reappears
 - `sendHookRespond(toolUseId, decision, reason?)` — sends `hook_respond` with `tool_use_id`
 
+## App.tsx — `web/src/App.tsx` ⭐
+
+Main component that handles router integration and state sync:
+
+```typescript
+const { projectId, sessionId } = useParams()  // Read URL params
+const navigate = useNavigate()
+
+// On mount: load projects
+useEffect(() => loadProjects(), [loadProjects])
+
+// URL → Store: when URL params change, update active project/session
+useEffect(() => {
+  if (projectId) setActiveProject(projectId)
+}, [projectId, setActiveProject])
+
+useEffect(() => {
+  if (sessionId) setActiveSession(sessionId)
+}, [sessionId, setActiveSession])
+
+// Store → URL: when store selection changes, push new URL
+useEffect(() => {
+  if (activeProjectId && activeSessionId) {
+    navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
+  } else if (activeProjectId) {
+    navigate(`/projects/${activeProjectId}`, { replace: true })
+  }
+}, [activeProjectId, activeSessionId, navigate])
+```
+
+**Key**: two-way sync ensures URL and store stay in sync, so page refresh restores state.
+
 ## ChatView — `web/src/components/Chat/ChatView.tsx`
 
 ### Pending session flow ⭐
@@ -199,6 +252,15 @@ Opens `ws://localhost:8090/ws?role=client&session_id=<id>` when a session is act
 Uses `@tanstack/react-virtual` to render only visible messages + 8-item overscan. Measures dynamic heights (thinking blocks, code blocks, images, etc.) with `measureElement`. On page load, fetches latest 50 messages; scrolling up to 200px from top triggers `loadMoreMessages()` for pagination.
 
 Scroll position is preserved via `useLayoutEffect` when prepending older messages — saves previous `scrollHeight`, then restores `scrollTop` after state update.
+
+### Message ordering ⭐
+
+Messages are **sorted by `created_at`** timestamp in ascending order:
+- `loadMessages()` sorts after loading initial messages
+- `loadMoreMessages()` sorts combined (older + existing) before storing
+- New messages always arrive with correct timestamp, maintaining sort order
+
+This ensures correct chronological display even when loading pages out of order.
 
 ### Key selectors (all use stable empty refs to avoid infinite loops)
 
@@ -261,18 +323,17 @@ All controls disabled when `isRunning=true`.
 
 ## HookToastContainer + HookToast ⭐ — `web/src/components/Toast/`
 
-**HookToastContainer**: Fixed top-right overlay, renders one toast per pending hook (all sessions).
+**HookToastContainer**: Fixed top-right overlay, renders one toast per pending hook from **inactive sessions only**.
 
 **HookToast** (per hook):
 - Shows tool name (e.g. "⚙ Tool Use — Bash")
 - Tool input preview (via shared `ToolInputRenderer`)
 - **Countdown progress bar**: 4-minute timeout, updates every second
-  - Formula: `remaining = (endTime - now) / (4*60*1000) * 100`
-  - On timeout expire, toast auto-dismisses (hook binary already disconnected)
-- **Approve / Deny buttons**: Send decision to backend via `sendHookRespond`
+- **Clickable**: Redirects to the session on click (using `useNavigate`)
+- **No action buttons**: Approval/Denial only in chat (see MessageBubble)
 - **Elegant styling**: Semi-transparent backdrop, dark theme consistent
 
-Replaced `ToolApprovalModal` (which was modal overlay, now non-disruptive toasts).
+**Active session behavior**: If a hook is from the active session, no toast is shown; instead, approval buttons appear in the chat message itself.
 
 **Shared tool renderers** ⭐ — `web/src/components/Hook/HookToolInput.tsx`:
 - **Bash** — displays `$ command` in code block + `description` as caption
@@ -282,6 +343,27 @@ Replaced `ToolApprovalModal` (which was modal overlay, now non-disruptive toasts
 - **Fallback** — raw JSON for unknown tools
 
 Used by both HookToast and hook Message role in chat.
+
+## NavPanel — `web/src/components/Sidebar/NavPanel.tsx` ⭐
+
+Merged Projects + Sessions into single collapsible tree. Uses `useNavigate()` to sync URL:
+
+```typescript
+const navigate = useNavigate()
+
+const handleSelectProject = async (id: string) => {
+  await setActiveProject(id)
+  navigate(`/projects/${id}`)  // ⭐ Push URL when selecting
+}
+
+// Session click
+onClick={() => {
+  setActiveSession(s.id)
+  navigate(`/projects/${activeProjectId}/sessions/${s.id}`)  // ⭐ Full path
+}}
+```
+
+All project/session selections trigger `navigate()` to update the URL. Combined with App.tsx's URL → Store sync, this ensures consistent state.
 
 ## MessageBubble — `web/src/components/Chat/MessageBubble.tsx`
 
@@ -308,7 +390,8 @@ Markdown rendering via `marked` library for assistant messages (headings, lists,
 - Shows tool name (e.g. "⚙ Tool Use — Bash")
 - Displays tool input (command, file path, etc.) via `ToolInputRenderer`
 - Decision badge with color: pending ⏳, approved ✓ (green), denied ✕ (red), timeout ⏱ (orange)
-- When displayed, also shows in HookToastContainer (top-right floating toast)
+- **If pending**: Shows [Deny] and [Approve] buttons to make decision directly in chat
+- Also displays as non-interactive toast in HookToastContainer if from inactive session
 
 Token badge shows: `↑input ↓output cache↩read` (tokens used, cache hit stats).
 

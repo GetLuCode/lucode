@@ -1,38 +1,30 @@
 import { AnimatePresence } from 'framer-motion'
 import { useStore } from '../../store'
-import { useSessionWS } from '../../hooks/useSessionWS'
 import { HookToast } from './HookToast'
 
 export function HookToastContainer() {
   const pendingHooks = useStore(s => s.pendingHooks)
+  const activeProjectId = useStore(s => s.activeProjectId)
+  const activeSessionId = useStore(s => s.activeSessionId)
 
-  // Flatten all pending hooks from all sessions to group by session
-  const hooksBySession = Object.entries(pendingHooks)
+  // Flatten all pending hooks from all sessions, except the active one
+  const hooksBySession = Object.entries(pendingHooks).filter(([sessionId]) => sessionId !== activeSessionId)
 
   return (
     <div className="hook-toast-container">
       <AnimatePresence mode="popLayout">
         {hooksBySession.map(([sessionId, hooks]) => (
-          <SessionHooks key={sessionId} sessionId={sessionId} hooks={hooks} />
+          <div key={sessionId}>
+            {hooks.map(hook => (
+              <HookToast
+                key={`${hook.session_id}-${hook.tool_use_id}`}
+                hook={hook}
+                projectId={activeProjectId || undefined}
+              />
+            ))}
+          </div>
         ))}
       </AnimatePresence>
     </div>
-  )
-}
-
-function SessionHooks({ sessionId, hooks }: { sessionId: string; hooks: any[] }) {
-  const { sendHookRespond } = useSessionWS(sessionId)
-
-  return (
-    <>
-      {hooks.map(hook => (
-        <HookToast
-          key={`${hook.session_id}-${hook.tool_use_id}`}
-          hook={hook}
-          onApprove={() => sendHookRespond(hook.tool_use_id, 'approve')}
-          onDeny={() => sendHookRespond(hook.tool_use_id, 'deny')}
-        />
-      ))}
-    </>
   )
 }
