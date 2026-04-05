@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { marked } from 'marked'
+import { ToolInputRenderer } from '../Hook/HookToolInput'
 import type { Message } from '../../types'
 
 marked.use({ gfm: true, breaks: false })
@@ -53,6 +54,42 @@ function BubbleContent({ message }: { message: Message }) {
           <pre className="msg__code">{message.content}</pre>
         </details>
       )
+
+    case 'hook': {
+      const hookData = JSON.parse(message.content) as {
+        tool_name: string
+        tool_input: unknown
+        decision: 'pending' | 'approve' | 'deny' | 'timeout'
+      }
+      const decisionIcon = {
+        pending: '⏳',
+        approve: '✓',
+        deny: '✕',
+        timeout: '⏱',
+      }[hookData.decision]
+      const decisionLabel = {
+        pending: 'Pending…',
+        approve: 'Approved',
+        deny: 'Denied',
+        timeout: 'Timed out',
+      }[hookData.decision]
+      const decisionClass = `msg__hook-decision msg__hook-decision--${hookData.decision}`
+      return (
+        <div className="msg__hook">
+          <div className="msg__hook-header">
+            <div>
+              <div className="msg__hook-title">⚙ Tool Use — {hookData.tool_name}</div>
+              <div className={decisionClass}>
+                {decisionIcon} {decisionLabel}
+              </div>
+            </div>
+          </div>
+          <div className="msg__hook-input">
+            <ToolInputRenderer toolName={hookData.tool_name} input={hookData.tool_input} />
+          </div>
+        </div>
+      )
+    }
 
     default:
       return <pre className="msg__code">{message.content}</pre>

@@ -1,16 +1,13 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '../../store'
-import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
-import { ToolApprovalModal } from './ToolApprovalModal'
-import type { Message, PendingHook } from '../../types'
+import type { Message } from '../../types'
 
 // Stable references — never inline [] or {} in Zustand selectors,
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
-const EMPTY_HOOKS: PendingHook[] = []
 
 const MODELS = [
   { label: 'Haiku 4.5', value: 'haiku' },
@@ -36,7 +33,6 @@ export function ChatView() {
   const sessions = useStore(s => s.sessions)
   const sendMessage = useStore(s => s.sendMessage)
   const loadMoreMessages = useStore(s => s.loadMoreMessages)
-  const pendingHooks = useStore(s => activeSessionId ? (s.pendingHooks[activeSessionId] ?? EMPTY_HOOKS) : EMPTY_HOOKS)
 
   const [input, setInput] = useState('')
   const [model, setModel] = useState('haiku')
@@ -48,11 +44,8 @@ export function ChatView() {
   const isPrependingRef = useRef(false)
   const isLoadingMoreRef = useRef(false)
 
-  const { sendHookRespond } = useSessionWS(activeSessionId)
-
   const session = sessions.find(s => s.id === activeSessionId)
   const isRunning = sessionStatus === 'running' || sessionStatus === 'waiting_hook'
-  const currentHook = pendingHooks[0] ?? null
   const hasStreamingText = streamingText.length > 0
   const hasStreamingThinking = streamingThinking.length > 0
   const hasMore = pagination?.hasMore ?? false
@@ -214,13 +207,6 @@ export function ChatView() {
         {isRunning && !hasStreamingText && !hasStreamingThinking && <ThinkingIndicator />}
         <div ref={bottomRef} />
       </div>
-
-      <ToolApprovalModal
-        hook={currentHook}
-        queueLength={pendingHooks.length}
-        onApprove={() => currentHook && sendHookRespond(currentHook.tool_use_id, 'approve')}
-        onDeny={() => currentHook && sendHookRespond(currentHook.tool_use_id, 'deny')}
-      />
 
       <div className="chat__input-area">
         <div className="chat__input-wrap">

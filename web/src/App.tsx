@@ -3,6 +3,7 @@ import { useStore } from './store'
 import { ProjectList } from './components/Sidebar/ProjectList'
 import { SessionList } from './components/Sidebar/SessionList'
 import { ChatView } from './components/Chat/ChatView'
+import { HookToastContainer } from './components/Toast/HookToastContainer'
 
 export default function App() {
   const loadProjects = useStore(s => s.loadProjects)
@@ -13,6 +14,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <HookToastContainer />
       <aside className="sidebar sidebar--projects">
         <ProjectList />
       </aside>
