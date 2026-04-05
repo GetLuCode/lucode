@@ -1186,6 +1186,11 @@ html, body, #root {
   box-shadow: var(--shadow), 0 0 12px rgba(0, 212, 170, 0.2);
 }
 
+.hook-toast--skill.hook-toast--clickable:hover {
+  border-color: #a78bfa;
+  box-shadow: var(--shadow), 0 0 14px rgba(167, 139, 250, 0.25);
+}
+
 .hook-toast__header {
   display: flex;
   gap: 12px;
@@ -1420,6 +1425,78 @@ html, body, #root {
 .hook-input__preview-btn:hover {
   background: rgba(0,212,170,0.18);
   border-color: var(--accent);
+}
+
+/* ---- Skill tool input ---- */
+.hook-input__skill {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hook-input__skill-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hook-input__skill-glyph {
+  font-size: 16px;
+  color: #a78bfa;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.hook-input__skill-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: #c4b5fd;
+  letter-spacing: 0.02em;
+}
+
+.hook-input__skill-args {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding-left: 24px;
+  border-left: 2px solid rgba(167,139,250,0.25);
+}
+
+/* ---- Skill toast header variant ---- */
+.hook-toast__header--skill {
+  background: linear-gradient(135deg, rgba(109,40,217,0.18) 0%, rgba(0,0,0,0.2) 100%);
+  border-bottom-color: rgba(167,139,250,0.2);
+}
+
+.hook-toast--clickable:hover .hook-toast__header--skill {
+  background: linear-gradient(135deg, rgba(109,40,217,0.25) 0%, rgba(0,0,0,0.2) 100%);
+}
+
+.hook-toast__skill-icon {
+  font-size: 20px;
+  color: #a78bfa;
+  flex-shrink: 0;
+  margin-top: 1px;
+  text-shadow: 0 0 12px rgba(167,139,250,0.6);
+}
+
+.hook-toast__title--skill {
+  color: #c4b5fd;
+}
+
+.hook-toast__skill-badge {
+  display: inline-block;
+  background: rgba(109,40,217,0.22);
+  color: #a78bfa;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(167,139,250,0.3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
 }
 
 /* ---- File Preview Panel ---- */
@@ -1727,6 +1804,26 @@ html, body, #root {
 }
 
 /* Headless UI Listbox */
+.labeled-select {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.labeled-select__label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-left: 2px;
+  transition: color 0.15s;
+}
+
+.labeled-select--disabled .labeled-select__label {
+  opacity: 0.4;
+}
+
 .listbox-wrapper {
   position: relative;
   display: inline-block;

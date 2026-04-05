@@ -16,6 +16,37 @@ const MonacoEditor = lazy(async () => {
 
 const MONACO_THEME = 'vs-dark'
 
+// Wrapper that resets the DiffEditor model before unmount, preventing:
+// "TextModel got disposed before DiffEditorWidget model got reset"
+function SafeDiffEditor({ lang, original, modified }: { lang: string; original: string; modified: string }) {
+  const editorRef = useRef<{ setModel: (m: null) => void } | null>(null)
+
+  useEffect(() => {
+    return () => {
+      editorRef.current?.setModel(null)
+    }
+  }, [])
+
+  return (
+    <MonacoDiffEditor
+      height="100%"
+      language={lang}
+      original={original}
+      modified={modified}
+      theme={MONACO_THEME}
+      keepCurrentModels
+      onMount={(editor) => { editorRef.current = editor }}
+      options={{
+        ...BASE_OPTIONS,
+        renderSideBySide: true,
+        enableSplitViewResizing: true,
+        originalEditable: false,
+        ignoreTrimWhitespace: false,
+      }}
+    />
+  )
+}
+
 const BASE_OPTIONS = {
   readOnly: true,
   minimap: { enabled: false },
@@ -69,6 +100,7 @@ export function FilePreviewPanel() {
   }
 
   if (!preview) return null
+  const display = preview
 
   return (
     <div className="file-preview" style={{ width }} ref={panelRef}>
@@ -76,10 +108,10 @@ export function FilePreviewPanel() {
       <div className="file-preview__drag-handle" onMouseDown={onMouseDown} />
 
       <div className="file-preview__header">
-        <FilePath path={preview.filePath} />
+        <FilePath path={display.filePath} />
         <div className="file-preview__header-right">
           <span className="file-preview__mode-badge">
-            {preview.mode === 'diff' ? 'modifications' : 'content'}
+            {display.mode === 'diff' ? 'modifications' : 'content'}
           </span>
           <button
             className="file-preview__close"
@@ -93,26 +125,17 @@ export function FilePreviewPanel() {
 
       <div className="file-preview__body">
         <Suspense fallback={<div className="file-preview__loading">Loading editor…</div>}>
-          {preview.mode === 'diff' ? (
-            <MonacoDiffEditor
-              height="100%"
-              language={preview.lang}
-              original={preview.original ?? ''}
-              modified={preview.modified ?? ''}
-              theme={MONACO_THEME}
-              options={{
-                ...BASE_OPTIONS,
-                renderSideBySide: true,
-                enableSplitViewResizing: true,
-                originalEditable: false,
-                ignoreTrimWhitespace: false,
-              }}
+          {display.mode === 'diff' ? (
+            <SafeDiffEditor
+              lang={display.lang}
+              original={display.original ?? ''}
+              modified={display.modified ?? ''}
             />
           ) : (
             <MonacoEditor
               height="100%"
-              language={preview.lang}
-              value={preview.content ?? ''}
+              language={display.lang}
+              value={display.content ?? ''}
               theme={MONACO_THEME}
               options={BASE_OPTIONS}
             />
