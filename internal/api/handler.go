@@ -329,15 +329,18 @@ func (h *Handler) wsUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// On client connect, re-send any pending hook so the modal shows up after reconnect
+	// On client connect, re-send any pending hooks so modals show up after reconnect
 	if role == wspkg.RoleClient {
-		if ph, ok, _ := dbpkg.GetPendingHook(h.db, sessID); ok {
-			h.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
-				"type":       "hook_pending",
-				"session_id": sessID,
-				"tool_name":  ph.ToolName,
-				"tool_input": json.RawMessage(ph.ToolInput),
-			})
+		if hooks, _ := dbpkg.ListPendingHooks(h.db, sessID); len(hooks) > 0 {
+			for _, ph := range hooks {
+				h.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+					"type":        "hook_pending",
+					"session_id":  sessID,
+					"tool_use_id": ph.ToolUseID,
+					"tool_name":   ph.ToolName,
+					"tool_input":  json.RawMessage(ph.ToolInput),
+				})
+			}
 		}
 	}
 

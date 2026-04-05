@@ -442,6 +442,31 @@ html, body, #root {
 .msg__thinking[open] .msg__thinking-label { color: var(--accent); }
 .msg__thinking .msg__text { margin-top: 8px; font-size: 13px; }
 
+/* Streaming thinking bubble (live, before block finalized) */
+.msg__bubble--thinking {
+  background: transparent !important;
+  padding-left: 0;
+}
+.msg__thinking-summary {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  list-style: none;
+  user-select: none;
+  padding: 4px 0;
+  cursor: default;
+}
+.msg__thinking-summary::-webkit-details-marker { display: none; }
+.msg__text--thinking {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 /* Raw event block */
 .msg__raw {
   cursor: pointer;

@@ -21,10 +21,12 @@ interface AppState {
   activeProjectId: string | null
   activeSessionId: string | null
   messages: Record<string, Message[]>
-  pendingHook: PendingHook | null
+  // Queue of pending hooks per session — supports concurrent parallel tool calls
+  pendingHooks: Record<string, PendingHook[]>
   sessionStatus: Record<string, string>
   // Plain strings — Zustand Object.is comparison on strings is reliable
   streamingText: Record<string, string>
+  streamingThinking: Record<string, string>
   sessionUsage: Record<string, TokenUsage>
 
   loadProjects: () => Promise<void>
@@ -41,8 +43,10 @@ interface AppState {
   handleWSEvent: (event: WSEvent) => void
 }
 
-// Mutable map of in-progress token usage — not stored in Zustand (no need to re-render)
+// Mutable maps outside Zustand — no re-render needed
 const pendingUsageMap: Record<string, PendingUsage> = {}
+// sessId → blockIndex → 'text' | 'thinking'
+const blockTypeMap: Record<string, Record<number, string>> = {}
 
 export const useStore = create<AppState>((set, get) => ({
   projects: [],
@@ -50,9 +54,10 @@ export const useStore = create<AppState>((set, get) => ({
   activeProjectId: null,
   activeSessionId: null,
   messages: {},
-  pendingHook: null,
+  pendingHooks: {},
   sessionStatus: {},
   streamingText: {},
+  streamingThinking: {},
   sessionUsage: {},
 
   loadProjects: async () => {
@@ -117,7 +122,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   respondHook: (_sessId, _decision, _reason) => {
-    set({ pendingHook: null })
+    // Hook queue is drained via hook_resolved WS events; nothing to do here
   },
 
   forkSession: async (id, name) => {
@@ -154,24 +159,69 @@ export const useStore = create<AppState>((set, get) => ({
           const innerType = inner?.type as string
 
           if (innerType === 'message_start') {
-            // Init pending usage tracker (plain mutable object, not Zustand state)
             const msg = inner.message as Record<string, unknown> | undefined
             pendingUsageMap[sessId] = { inputUsage: msg?.usage as TokenUsage | undefined }
-            // Clear streaming text for this session
-            set(s => ({ streamingText: { ...s.streamingText, [sessId]: '' } }))
+            blockTypeMap[sessId] = {}
+            set(s => ({
+              streamingText: { ...s.streamingText, [sessId]: '' },
+              streamingThinking: { ...s.streamingThinking, [sessId]: '' },
+            }))
+
+          } else if (innerType === 'content_block_start') {
+            const index = inner.index as number
+            const block = inner.content_block as Record<string, unknown> | undefined
+            if (!blockTypeMap[sessId]) blockTypeMap[sessId] = {}
+            blockTypeMap[sessId][index] = (block?.type as string) ?? 'text'
 
           } else if (innerType === 'content_block_delta') {
             const delta = inner.delta as Record<string, unknown> | undefined
+            const index = inner.index as number
+
             if (delta?.type === 'text_delta') {
               const chunk = (delta.text as string) ?? ''
-              // Append to plain string — triggers reliable Zustand re-render
               set(s => ({
                 streamingText: {
                   ...s.streamingText,
                   [sessId]: (s.streamingText[sessId] ?? '') + chunk,
                 },
               }))
+            } else if (delta?.type === 'thinking_delta') {
+              const chunk = (delta.thinking as string) ?? ''
+              set(s => ({
+                streamingThinking: {
+                  ...s.streamingThinking,
+                  [sessId]: (s.streamingThinking[sessId] ?? '') + chunk,
+                },
+              }))
             }
+            void index
+
+          } else if (innerType === 'content_block_stop') {
+            const index = inner.index as number
+            const blockType = blockTypeMap[sessId]?.[index]
+
+            if (blockType === 'thinking') {
+              // Finalize thinking block → add to messages list
+              const thinkingText = get().streamingThinking[sessId] ?? ''
+              if (thinkingText) {
+                const msgs = get().messages[sessId] ?? []
+                set(s => ({
+                  messages: {
+                    ...s.messages,
+                    [sessId]: [...(s.messages[sessId] ?? []), {
+                      id: `think-${Date.now()}`,
+                      session_id: sessId,
+                      role: 'thinking' as const,
+                      content: thinkingText,
+                      seq: msgs.length,
+                      created_at: new Date().toISOString(),
+                    }],
+                  },
+                  streamingThinking: { ...s.streamingThinking, [sessId]: '' },
+                }))
+              }
+            }
+            if (blockTypeMap[sessId]) delete blockTypeMap[sessId][index]
 
           } else if (innerType === 'message_delta') {
             const usage = inner.usage as { output_tokens?: number } | undefined
@@ -184,6 +234,7 @@ export const useStore = create<AppState>((set, get) => ({
             const text = get().streamingText[sessId] ?? ''
             const pending = pendingUsageMap[sessId]
             delete pendingUsageMap[sessId]
+            delete blockTypeMap[sessId]
 
             if (text) {
               const msgs = get().messages[sessId] ?? []
@@ -209,9 +260,9 @@ export const useStore = create<AppState>((set, get) => ({
               set(s => ({
                 messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), finalMsg] },
                 streamingText: { ...s.streamingText, [sessId]: '' },
+                streamingThinking: { ...s.streamingThinking, [sessId]: '' },
               }))
 
-              // Accumulate session totals
               if (usage) {
                 set(s => {
                   const prev = s.sessionUsage[sessId] ?? { input_tokens: 0, output_tokens: 0 }
@@ -231,64 +282,42 @@ export const useStore = create<AppState>((set, get) => ({
                 })
               }
             } else {
-              set(s => ({ streamingText: { ...s.streamingText, [sessId]: '' } }))
+              set(s => ({
+                streamingText: { ...s.streamingText, [sessId]: '' },
+                streamingThinking: { ...s.streamingThinking, [sessId]: '' },
+              }))
             }
           }
-        }
-
-        // Show thinking blocks and unhandled events collapsed
-        if (outerType === 'thinking') {
-          const thinking = (raw.thinking as string) ?? JSON.stringify(raw)
-          const msgs = get().messages[sessId] ?? []
-          set(s => ({
-            messages: {
-              ...s.messages,
-              [sessId]: [...(s.messages[sessId] ?? []), {
-                id: `think-${Date.now()}`,
-                session_id: sessId,
-                role: 'thinking' as const,
-                content: thinking,
-                seq: msgs.length,
-                created_at: new Date().toISOString(),
-              }],
-            },
-          }))
-        } else if (
-          outerType !== 'stream_event' &&
-          outerType !== 'rate_limit_event' &&
-          outerType !== 'thinking'
-        ) {
-          // Truly unknown — show as raw
-          const msgs = get().messages[sessId] ?? []
-          set(s => ({
-            messages: {
-              ...s.messages,
-              [sessId]: [...(s.messages[sessId] ?? []), {
-                id: `raw-${Date.now()}-${Math.random()}`,
-                session_id: sessId,
-                role: 'raw' as const,
-                content: JSON.stringify(event.event, null, 2),
-                seq: msgs.length,
-                created_at: new Date().toISOString(),
-              }],
-            },
-          }))
         }
         break
       }
 
-      case 'hook_pending':
-        set({
-          pendingHook: {
-            session_id: event.session_id,
-            tool_name: event.tool_name,
-            tool_input: event.tool_input,
-          },
+      case 'hook_pending': {
+        const newHook: PendingHook = {
+          session_id: event.session_id,
+          tool_use_id: event.tool_use_id,
+          tool_name: event.tool_name,
+          tool_input: event.tool_input,
+        }
+        set(s => {
+          const existing = s.pendingHooks[event.session_id] ?? []
+          // Avoid duplicates (reconnect replay)
+          if (existing.some(h => h.tool_use_id === event.tool_use_id)) return s
+          return { pendingHooks: { ...s.pendingHooks, [event.session_id]: [...existing, newHook] } }
         })
         break
+      }
 
       case 'hook_resolved':
-        set({ pendingHook: null })
+        set(s => {
+          const existing = s.pendingHooks[event.session_id] ?? []
+          return {
+            pendingHooks: {
+              ...s.pendingHooks,
+              [event.session_id]: existing.filter(h => h.tool_use_id !== event.tool_use_id),
+            },
+          }
+        })
         break
 
       case 'turn_complete':
@@ -306,6 +335,34 @@ export const useStore = create<AppState>((set, get) => ({
           sessions: s.sessions.map(sess =>
             sess.id === event.session_id ? { ...sess, status: 'error' } : sess
           ),
+          messages: {
+            ...s.messages,
+            [event.session_id]: [...(s.messages[event.session_id] ?? []), {
+              id: `err-${Date.now()}`,
+              session_id: event.session_id,
+              role: 'system' as const,
+              content: `Error: ${event.message}`,
+              seq: (s.messages[event.session_id]?.length ?? 0),
+              created_at: new Date().toISOString(),
+            }],
+          },
+        }))
+        break
+
+      case 'info':
+        // Non-fatal informational message — add to chat, don't change session status
+        set(s => ({
+          messages: {
+            ...s.messages,
+            [event.session_id]: [...(s.messages[event.session_id] ?? []), {
+              id: `info-${Date.now()}`,
+              session_id: event.session_id,
+              role: 'system' as const,
+              content: `ℹ ${event.message}`,
+              seq: (s.messages[event.session_id]?.length ?? 0),
+              created_at: new Date().toISOString(),
+            }],
+          },
         }))
         break
     }

@@ -9,8 +9,6 @@ export function useSessionWS(sessionId: string | null) {
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryDelay = useRef(1000)
   const handleWSEvent = useStore(s => s.handleWSEvent)
-  const respondHook = useStore(s => s.respondHook)
-  const pendingHook = useStore(s => s.pendingHook)
 
   const connect = useCallback(() => {
     if (!sessionId) return
@@ -43,9 +41,9 @@ export function useSessionWS(sessionId: string | null) {
     }
   }, [sessionId, handleWSEvent])
 
-  // Expose send function for hook_respond
+  // Send hook_respond with tool_use_id so backend routes to the right hook client
   const sendHookRespond = useCallback(
-    (decision: 'approve' | 'deny', reason?: string) => {
+    (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => {
       if (!sessionId) return
       const ws = wsRef.current
       if (ws?.readyState === WebSocket.OPEN) {
@@ -53,14 +51,14 @@ export function useSessionWS(sessionId: string | null) {
           JSON.stringify({
             type: 'hook_respond',
             session_id: sessionId,
+            tool_use_id: toolUseId,
             decision,
             reason: reason ?? '',
           })
         )
       }
-      respondHook(sessionId, decision, reason)
     },
-    [sessionId, respondHook]
+    [sessionId]
   )
 
   useEffect(() => {
@@ -72,5 +70,5 @@ export function useSessionWS(sessionId: string | null) {
     }
   }, [connect])
 
-  return { sendHookRespond, pendingHook }
+  return { sendHookRespond }
 }

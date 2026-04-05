@@ -4,9 +4,10 @@ import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { ToolApprovalModal } from './ToolApprovalModal'
-import type { Message } from '../../types'
+import type { Message, PendingHook } from '../../types'
 
 const EMPTY_MESSAGES: Message[] = []
+const EMPTY_HOOKS: PendingHook[] = []
 
 const MODELS = [
   { label: 'Haiku 4.5', value: 'haiku' },
@@ -20,13 +21,14 @@ export function ChatView() {
     activeSessionId ? (s.messages[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   )
   const streamingText = useStore(s => activeSessionId ? (s.streamingText[activeSessionId] ?? '') : '')
+  const streamingThinking = useStore(s => activeSessionId ? (s.streamingThinking[activeSessionId] ?? '') : '')
   const sessionStatus = useStore(s =>
     activeSessionId ? (s.sessionStatus[activeSessionId] ?? 'idle') : 'idle'
   )
   const sessionUsage = useStore(s => activeSessionId ? s.sessionUsage[activeSessionId] : undefined)
   const sessions = useStore(s => s.sessions)
   const sendMessage = useStore(s => s.sendMessage)
-  const pendingHook = useStore(s => s.pendingHook)
+  const pendingHooks = useStore(s => activeSessionId ? (s.pendingHooks[activeSessionId] ?? EMPTY_HOOKS) : EMPTY_HOOKS)
 
   const [input, setInput] = useState('')
   const [model, setModel] = useState('haiku')
@@ -37,7 +39,10 @@ export function ChatView() {
 
   const session = sessions.find(s => s.id === activeSessionId)
   const isRunning = sessionStatus === 'running' || sessionStatus === 'waiting_hook'
+  // First hook in queue is what the modal shows
+  const currentHook = pendingHooks[0] ?? null
   const hasStreamingText = streamingText.length > 0
+  const hasStreamingThinking = streamingThinking.length > 0
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -92,6 +97,18 @@ export function ChatView() {
           <MessageBubble key={msg.id} message={msg} index={i} />
         ))}
 
+        {/* Live streaming thinking */}
+        {hasStreamingThinking && (
+          <div className="msg msg--thinking">
+            <div className="msg__bubble msg__bubble--thinking">
+              <details open>
+                <summary className="msg__thinking-summary">Thinking…</summary>
+                <p className="msg__text msg__text--streaming msg__text--thinking">{streamingThinking}</p>
+              </details>
+            </div>
+          </div>
+        )}
+
         {/* Live streaming text */}
         {hasStreamingText && (
           <div className="msg msg--assistant">
@@ -101,14 +118,15 @@ export function ChatView() {
           </div>
         )}
 
-        {isRunning && !hasStreamingText && <ThinkingIndicator />}
+        {isRunning && !hasStreamingText && !hasStreamingThinking && <ThinkingIndicator />}
         <div ref={bottomRef} />
       </div>
 
       <ToolApprovalModal
-        hook={pendingHook && pendingHook.session_id === activeSessionId ? pendingHook : null}
-        onApprove={() => sendHookRespond('approve')}
-        onDeny={() => sendHookRespond('deny')}
+        hook={currentHook}
+        queueLength={pendingHooks.length}
+        onApprove={() => currentHook && sendHookRespond(currentHook.tool_use_id, 'approve')}
+        onDeny={() => currentHook && sendHookRespond(currentHook.tool_use_id, 'deny')}
       />
 
       <div className="chat__input-area">
