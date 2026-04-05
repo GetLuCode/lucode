@@ -54,9 +54,13 @@ main.tsx
                 ├── Chat/MessageBubble.tsx   — renders message: user (text+images) / assistant /
                 │                              thinking / hook (decision badge) / raw
                 │                              assistant: Read aloud / Stop + Copy buttons ⭐
-                ├── Chat/InputControls.tsx   — effort + thinking + mic + settings ⭐
+                ├── Chat/InputControls.tsx   — effort + thinking + mic + settings + ideas button ⭐
                 │   ├── Chat/AttachmentButton.tsx — file picker for images ⭐
-                │   └── voice-controls-group (mic + gear) ⭐
+                │   ├── voice-controls-group (mic + gear) ⭐
+                │   └── ideas-btn (pulsing when pending) ⭐
+                ├── Chat/IdeasModal.tsx (IdeasModal) — project/global ideas todo list ⭐
+                │                              textarea multiline, text truncated to 2 lines
+                │                              click to expand, mark done, delete
                 ├── Chat/VoiceBar.tsx (VoiceSettingsModal) — lang, auto-send, auto-read, no-echo ⭐
                 ├── Chat/ThinkingIndicator.tsx — animated dots while Claude is working
                 └── Image preview + send button
@@ -306,12 +310,13 @@ Model value is sent as-is to `POST /api/sessions/{id}/turn`. The backend maps it
 
 Row of controls below textarea:
 
-**Left side** (image + thinking + voice):
+**Left side** (image + thinking + voice + ideas):
 - **AttachmentButton** (paperclip +): file picker for images
 - **Thinking toggle** (brain icon): `enabled | disabled`
 - **Voice controls group** (mic + gear, visually grouped):
   - **Mic button** (IconMicrophone/IconMicrophoneOff): toggles STT recording. Red pulse animation while listening. In no-echo mode, clicking while TTS plays stops the audio instead.
   - **Settings button** (IconSettings): opens `VoiceSettingsModal`
+- **Ideas button** (lightbulb 💡) ⭐: opens `IdeasModal`. Pulses yellow (`ideas-btn--pending`) when there are unfinished ideas in any scope.
 
 **Center/Right** (effort + model + send):
 - **Effort selector**, **Model selector**, **Send button** — unchanged
@@ -380,6 +385,28 @@ voiceURI: string | null              // selected voice from browser SpeechSynthe
 - **Read aloud / Stop** button: shows `IconVolume` normally, `IconVolumeOff` (accent color) when `isBeingRead=true`. Click to start/stop via `onSpeak(id, content)` / `onStopSpeaking()` props — both go through ChatView so `speakingMessageId` stays in sync.
 - **Blink animation** (`.msg__bubble--reading`): 1.6s opacity pulse on the message currently being read.
 - **Copy** button: copies raw markdown to clipboard, 2s checkmark feedback.
+
+## Ideas Modal ⭐ — `web/src/components/Chat/IdeasModal.tsx`
+
+Centered modal for managing quick ideas/todos scoped per-project or globally. Data persisted in SQLite (`ideas` table).
+
+**Features**:
+- **Tabs**: Project (for current project) + Global scopes
+- **List display** (flex: 1, max-height 340px):
+  - Text clamped to 2 lines (`-webkit-line-clamp: 2`)
+  - Click text to expand/collapse full content
+  - Checkbox to toggle `done` status (strikethrough when complete)
+  - Trash button to delete
+- **Add row**:
+  - **Textarea** (multiline, auto-resizing, 2-140px height)
+  - **Keyboard**: `Ctrl+Enter` to add, `Escape` to close
+  - Button to add idea
+- **State** — `IdeasModal` calls `onPendingChange(count)` callback whenever ideas change, so parent can track pending count in real-time
+- **API calls** via `web/src/lib/ideasStorage.ts`:
+  - `fetchIdeas(scope)` → GET `/api/ideas?scope=`
+  - `createIdea(scope, text)` → POST `/api/ideas`
+  - `toggleIdea(id, done)` → PATCH `/api/ideas/{id}`
+  - `deleteIdea(id)` → DELETE `/api/ideas/{id}`
 
 ## HookToastContainer + HookToast ⭐ — `web/src/components/Toast/`
 
