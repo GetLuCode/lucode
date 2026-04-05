@@ -27,7 +27,7 @@ DELETE /api/sessions/{id}               delete session
 POST   /api/sessions/{id}/turn          send next message (resumes existing session)
 POST   /api/sessions/{id}/fork          fork session to new branch
 
-GET    /api/sessions/{id}/messages      full message history
+GET    /api/sessions/{id}/messages      paginated messages (50 default, cursor-based)
 
 GET    /ws?role=client&session_id=<id>  browser UI WebSocket
 GET    /ws?role=hook&session_id=<id>    hook binary WebSocket
@@ -74,14 +74,18 @@ Non-blocking. Returns `ErrSessionBusy` if `procs[sessID]` already active.
 
 ### `streamOutput` goroutine
 
-Reads stdout line by line with `bufio.Scanner` (1 MB buffer):
+Reads stdout line by line with `bufio.Scanner` (1 MB buffer). Uses `turnAccum` to accumulate streaming content:
 
 ```
 line → ParseLine() → ParsedEvent
-  if stream_event && !partial → persist to DB
+  if stream_event:
+    run through turnAccum.process() → returns finalized Message if complete
+    persist finalized messages to DB (text on message_stop, thinking on content_block_stop)
   broadcast to all WS clients for session
   if isResult → broadcast turn_complete, set idle, delete from procs
 ```
+
+`turnAccum` accumulates `text_delta` and `thinking_delta` chunks and emits clean text messages, not raw stream-event JSON. This ensures stored messages are renderable without needing post-processing.
 
 On scanner error or process exit without result event → broadcasts `error`, sets status `error`.
 
