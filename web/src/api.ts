@@ -1,4 +1,4 @@
-import type { Project, Session, Message } from './types'
+import type { Project, Session, MessagesPage } from './types'
 
 const BASE = 'http://localhost:8090'
 
@@ -34,4 +34,10 @@ export const forkSession = (id: string, name: string, message?: string) =>
   req<Session>('POST', `/api/sessions/${id}/fork`, { name, message })
 
 // Messages
-export const listMessages = (id: string) => req<Message[]>('GET', `/api/sessions/${id}/messages`)
+export const listMessages = (id: string, opts?: { limit?: number; beforeSeq?: number }) => {
+  const params = new URLSearchParams()
+  if (opts?.limit != null) params.set('limit', String(opts.limit))
+  if (opts?.beforeSeq != null) params.set('before_seq', String(opts.beforeSeq))
+  const qs = params.toString()
+  return req<MessagesPage>('GET', `/api/sessions/${id}/messages${qs ? `?${qs}` : ''}`)
+}

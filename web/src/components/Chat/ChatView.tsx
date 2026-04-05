@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '../../store'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from './MessageBubble'
@@ -6,6 +7,8 @@ import { ThinkingIndicator } from './ThinkingIndicator'
 import { ToolApprovalModal } from './ToolApprovalModal'
 import type { Message, PendingHook } from '../../types'
 
+// Stable references — never inline [] or {} in Zustand selectors,
+// they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
 const EMPTY_HOOKS: PendingHook[] = []
 
@@ -20,6 +23,9 @@ export function ChatView() {
   const messages = useStore(s =>
     activeSessionId ? (s.messages[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   )
+  const pagination = useStore(s =>
+    activeSessionId ? s.messagePagination[activeSessionId] : undefined
+  )
   const streamingText = useStore(s => activeSessionId ? (s.streamingText[activeSessionId] ?? '') : '')
   const streamingThinking = useStore(s => activeSessionId ? (s.streamingThinking[activeSessionId] ?? '') : '')
   const sessionStatus = useStore(s =>
@@ -28,31 +34,84 @@ export function ChatView() {
   const sessionUsage = useStore(s => activeSessionId ? s.sessionUsage[activeSessionId] : undefined)
   const sessions = useStore(s => s.sessions)
   const sendMessage = useStore(s => s.sendMessage)
+  const loadMoreMessages = useStore(s => s.loadMoreMessages)
   const pendingHooks = useStore(s => activeSessionId ? (s.pendingHooks[activeSessionId] ?? EMPTY_HOOKS) : EMPTY_HOOKS)
 
   const [input, setInput] = useState('')
   const [model, setModel] = useState('haiku')
+
+  const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const isAtBottomRef = useRef(true)
+  const prevScrollHeightRef = useRef(0)
+  const isPrependingRef = useRef(false)
+  const isLoadingMoreRef = useRef(false)
 
   const { sendHookRespond } = useSessionWS(activeSessionId)
 
   const session = sessions.find(s => s.id === activeSessionId)
   const isRunning = sessionStatus === 'running' || sessionStatus === 'waiting_hook'
-  // First hook in queue is what the modal shows
   const currentHook = pendingHooks[0] ?? null
   const hasStreamingText = streamingText.length > 0
   const hasStreamingThinking = streamingThinking.length > 0
+  const hasMore = pagination?.hasMore ?? false
+  const isLoadingMore = pagination?.isLoadingMore ?? false
 
+  // Virtual list
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 80,
+    overscan: 8,
+  })
+
+  // Auto-scroll to bottom when new messages arrive (only if already at bottom)
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (isAtBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages.length, streamingText])
+
+  // Preserve scroll position after prepend (runs synchronously before paint)
+  useLayoutEffect(() => {
+    if (isPrependingRef.current && scrollRef.current) {
+      const el = scrollRef.current
+      el.scrollTop += el.scrollHeight - prevScrollHeightRef.current
+      isPrependingRef.current = false
+    }
+  }, [messages.length])
+
+  // Reset to bottom when switching sessions
+  useEffect(() => {
+    isAtBottomRef.current = true
+    isLoadingMoreRef.current = false
+  }, [activeSessionId])
+
+  const triggerLoadMore = useCallback(async () => {
+    if (!activeSessionId || isLoadingMoreRef.current) return
+    isLoadingMoreRef.current = true
+    prevScrollHeightRef.current = scrollRef.current?.scrollHeight ?? 0
+    isPrependingRef.current = true
+    await loadMoreMessages(activeSessionId)
+    isLoadingMoreRef.current = false
+  }, [activeSessionId, loadMoreMessages])
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    isAtBottomRef.current = distFromBottom < 150
+
+    if (el.scrollTop < 200 && hasMore && !isLoadingMoreRef.current) {
+      triggerLoadMore()
+    }
+  }, [hasMore, triggerLoadMore])
 
   const handleSend = () => {
     if (!input.trim() || !activeSessionId || isRunning) return
     sendMessage(activeSessionId, input.trim(), model)
     setInput('')
-    textareaRef.current?.focus()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -73,6 +132,8 @@ export function ChatView() {
     )
   }
 
+  const virtualItems = virtualizer.getVirtualItems()
+
   return (
     <div className="chat">
       <div className="chat__header">
@@ -92,14 +153,39 @@ export function ChatView() {
         </div>
       </div>
 
-      <div className="chat__messages">
-        {messages.map((msg, i) => (
-          <MessageBubble key={msg.id} message={msg} index={i} />
-        ))}
+      <div className="chat__messages" ref={scrollRef} onScroll={handleScroll}>
+        {/* Load-more indicator */}
+        {isLoadingMore && (
+          <div className="chat__loading-more">Loading older messages…</div>
+        )}
+        {!isLoadingMore && hasMore && (
+          <div className="chat__has-more" />
+        )}
+
+        {/* Virtual list */}
+        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+          {virtualItems.map(virtualItem => (
+            <div
+              key={virtualItem.key}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                transform: `translateY(${virtualItem.start}px)`,
+                width: '100%',
+                paddingBottom: '12px',
+                boxSizing: 'border-box',
+              }}
+            >
+              <MessageBubble message={messages[virtualItem.index]} />
+            </div>
+          ))}
+        </div>
 
         {/* Live streaming thinking */}
         {hasStreamingThinking && (
-          <div className="msg msg--thinking">
+          <div className="msg msg--thinking" style={{ marginTop: '12px' }}>
             <div className="msg__bubble msg__bubble--thinking">
               <details open>
                 <summary className="msg__thinking-summary">Thinking…</summary>
@@ -111,7 +197,7 @@ export function ChatView() {
 
         {/* Live streaming text */}
         {hasStreamingText && (
-          <div className="msg msg--assistant">
+          <div className="msg msg--assistant" style={{ marginTop: hasStreamingThinking ? '12px' : '12px' }}>
             <div className="msg__bubble">
               <p className="msg__text msg__text--streaming">{streamingText}</p>
             </div>
@@ -132,7 +218,6 @@ export function ChatView() {
       <div className="chat__input-area">
         <div className="chat__input-wrap">
           <textarea
-            ref={textareaRef}
             className="chat__input"
             placeholder={isRunning ? 'Claude is thinking…' : 'Message Claude…'}
             value={input}

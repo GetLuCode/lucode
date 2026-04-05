@@ -1,24 +1,32 @@
+import { useMemo } from 'react'
 import { motion } from 'framer-motion'
+import { marked } from 'marked'
 import type { Message } from '../../types'
+
+marked.use({ gfm: true, breaks: false })
 
 interface Props {
   message: Message
-  index: number
 }
 
-export function MessageBubble({ message, index }: Props) {
+export function MessageBubble({ message }: Props) {
   return (
-    <motion.div
-      className={`msg msg--${message.role}`}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, delay: Math.min(index * 0.02, 0.3), ease: 'easeOut' }}
-    >
-      <div className="msg__bubble">
-        <BubbleContent message={message} />
-        {message.usage && <TokenBadge usage={message.usage} />}
-      </div>
-    </motion.div>
+    <>
+      <motion.div
+        className={`msg msg--${message.role}`}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.15, ease: 'easeOut' }}
+      >
+        <div className="msg__bubble">
+          <BubbleContent message={message} />
+          {message.usage && <TokenBadge usage={message.usage} />}
+        </div>
+      </motion.div>
+      <time className={`msg__time msg__time--${message.role}`}>
+        {fmtTime(message.created_at)}
+      </time>
+    </>
   )
 }
 
@@ -28,7 +36,7 @@ function BubbleContent({ message }: { message: Message }) {
       return <p className="msg__text">{message.content}</p>
 
     case 'assistant':
-      return <p className="msg__text">{message.content}</p>
+      return <MarkdownContent content={message.content} />
 
     case 'thinking':
       return (
@@ -51,17 +59,29 @@ function BubbleContent({ message }: { message: Message }) {
   }
 }
 
+function MarkdownContent({ content }: { content: string }) {
+  const html = useMemo(() => marked.parse(content) as string, [content])
+  return <div className="msg__markdown" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
 function TokenBadge({ usage }: { usage: NonNullable<Message['usage']> }) {
   const parts: string[] = []
-  if (usage.input_tokens) parts.push(`↑${fmt(usage.input_tokens)}`)
-  if (usage.output_tokens) parts.push(`↓${fmt(usage.output_tokens)}`)
+  if (usage.input_tokens)            parts.push(`↑${fmt(usage.input_tokens)}`)
+  if (usage.output_tokens)           parts.push(`↓${fmt(usage.output_tokens)}`)
   if (usage.cache_read_input_tokens) parts.push(`cache↩${fmt(usage.cache_read_input_tokens)}`)
 
-  return (
-    <div className="msg__tokens">
-      {parts.join('  ·  ')}
-    </div>
-  )
+  return <div className="msg__tokens">{parts.join('  ·  ')}</div>
+}
+
+function fmtTime(dateStr: string): string {
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return ''
+  const now = new Date()
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (d.toDateString() === now.toDateString()) return time
+  const date = d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  if (d.getFullYear() === now.getFullYear()) return `${date} · ${time}`
+  return `${date} ${d.getFullYear()} · ${time}`
 }
 
 function fmt(n: number): string {

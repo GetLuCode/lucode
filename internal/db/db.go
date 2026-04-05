@@ -55,6 +55,20 @@ CREATE TABLE IF NOT EXISTS messages (
     seq        INTEGER NOT NULL,
     created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, seq);
+`); err != nil {
+		return err
+	}
+
+	// Remove messages that were incorrectly stored as raw stream-event JSON blobs.
+	// These were written by an old version of manager.go that persisted every
+	// streaming delta instead of only finalized text/thinking. They render as
+	// raw JSON in the UI; deleting them lets re-created sessions store correctly.
+	if _, err := db.Exec(`
+DELETE FROM messages
+WHERE content LIKE '{"type":"stream_event"%'
+   OR content LIKE '{"type":"thinking"%'
 `); err != nil {
 		return err
 	}

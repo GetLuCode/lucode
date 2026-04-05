@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 
 	dbpkg "claude-orchestrator/internal/db"
 	sessionpkg "claude-orchestrator/internal/session"
@@ -298,7 +299,22 @@ func (h *Handler) forkSession(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	messages, err := dbpkg.ListMessages(h.db, id)
+
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
+	var beforeSeq *int
+	if b := r.URL.Query().Get("before_seq"); b != "" {
+		if n, err := strconv.Atoi(b); err == nil {
+			beforeSeq = &n
+		}
+	}
+
+	messages, hasMore, err := dbpkg.ListMessagesPaginated(h.db, id, limit, beforeSeq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -306,7 +322,17 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 	if messages == nil {
 		messages = []dbpkg.Message{}
 	}
-	jsonResp(w, http.StatusOK, messages)
+
+	oldestSeq := -1
+	if len(messages) > 0 {
+		oldestSeq = messages[0].Seq
+	}
+
+	jsonResp(w, http.StatusOK, map[string]any{
+		"messages":   messages,
+		"has_more":   hasMore,
+		"oldest_seq": oldestSeq,
+	})
 }
 
 func (h *Handler) wsUpgrade(w http.ResponseWriter, r *http.Request) {

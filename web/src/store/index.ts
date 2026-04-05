@@ -15,12 +15,19 @@ interface PendingUsage {
   outputTokens?: number
 }
 
+interface MessagePagination {
+  hasMore: boolean
+  oldestSeq: number | null
+  isLoadingMore: boolean
+}
+
 interface AppState {
   projects: Project[]
   sessions: Session[]
   activeProjectId: string | null
   activeSessionId: string | null
   messages: Record<string, Message[]>
+  messagePagination: Record<string, MessagePagination>
   // Queue of pending hooks per session — supports concurrent parallel tool calls
   pendingHooks: Record<string, PendingHook[]>
   sessionStatus: Record<string, string>
@@ -40,6 +47,7 @@ interface AppState {
   respondHook: (sessId: string, decision: 'approve' | 'deny', reason?: string) => void
   forkSession: (id: string, name: string) => Promise<Session>
   loadMessages: (id: string) => Promise<void>
+  loadMoreMessages: (id: string) => Promise<void>
   handleWSEvent: (event: WSEvent) => void
 }
 
@@ -48,12 +56,137 @@ const pendingUsageMap: Record<string, PendingUsage> = {}
 // sessId → blockIndex → 'text' | 'thinking'
 const blockTypeMap: Record<string, Record<number, string>> = {}
 
+// ---------------------------------------------------------------------------
+// replayStoredMessages
+// ---------------------------------------------------------------------------
+// Messages stored in the DB may have content = raw stream-event JSON
+// (e.g. '{"type":"stream_event","event":{"type":"content_block_delta",...}}').
+// This function replays them through the same state-machine as handleWSEvent
+// so the result is the same list of clean Message objects the live WS path
+// produces.  Messages that are already clean (plain text) pass through unchanged.
+// ---------------------------------------------------------------------------
+function replayStoredMessages(raw: Message[]): Message[] {
+  const result: Message[] = []
+  let text = ''
+  let thinking = ''
+  const blockType: Record<number, string> = {}
+  let inputUsage: TokenUsage | undefined
+  let outputTokens: number | undefined
+  let baseMsg: Message | null = null
+
+  for (const msg of raw) {
+    // User messages are always plain text — pass through.
+    if (msg.role === 'user') {
+      result.push(msg)
+      continue
+    }
+
+    // Detect old-format JSON content.
+    let parsed: Record<string, unknown> | null = null
+    if (msg.content.startsWith('{')) {
+      try { parsed = JSON.parse(msg.content) } catch { /* not JSON */ }
+    }
+
+    // Already clean (new backend format or WS-synthesized message) — pass through.
+    if (!parsed || (parsed.type !== 'stream_event' && parsed.type !== 'thinking')) {
+      result.push(msg)
+      continue
+    }
+
+    // Standalone thinking event (some claude versions emit {"type":"thinking",...})
+    if (parsed.type === 'thinking') {
+      const t = parsed.thinking as string | undefined
+      if (t) result.push({ ...msg, role: 'thinking', content: t })
+      continue
+    }
+
+    // stream_event wrapper — extract the inner Claude API event
+    const inner = parsed.event as Record<string, unknown> | undefined
+    if (!inner) continue
+
+    switch (inner.type as string) {
+      case 'message_start':
+        text = ''
+        thinking = ''
+        for (const k in blockType) delete blockType[+k]
+        inputUsage = (inner.message as Record<string, unknown>)?.usage as TokenUsage | undefined
+        outputTokens = undefined
+        baseMsg = msg
+        break
+
+      case 'content_block_start':
+        blockType[inner.index as number] =
+          ((inner.content_block as Record<string, unknown>)?.type as string) ?? 'text'
+        break
+
+      case 'content_block_delta': {
+        const delta = inner.delta as Record<string, unknown> | undefined
+        if (delta?.type === 'text_delta')     text     += (delta.text     as string) ?? ''
+        if (delta?.type === 'thinking_delta') thinking += (delta.thinking as string) ?? ''
+        break
+      }
+
+      case 'content_block_stop': {
+        const idx = inner.index as number
+        if (blockType[idx] === 'thinking' && thinking) {
+          result.push({
+            id: `${msg.id}-think`,
+            session_id: msg.session_id,
+            role: 'thinking',
+            content: thinking,
+            seq: msg.seq,
+            created_at: msg.created_at,
+          })
+          thinking = ''
+        }
+        delete blockType[idx]
+        break
+      }
+
+      case 'message_delta':
+        outputTokens = ((inner.usage as Record<string, unknown>)?.output_tokens as number) ?? undefined
+        break
+
+      case 'message_stop': {
+        if (text) {
+          const usage: Message['usage'] = inputUsage
+            ? {
+                input_tokens:                  inputUsage.input_tokens ?? 0,
+                output_tokens:                 outputTokens ?? 0,
+                cache_creation_input_tokens:   inputUsage.cache_creation_input_tokens,
+                cache_read_input_tokens:       inputUsage.cache_read_input_tokens,
+              }
+            : undefined
+          result.push({
+            id: baseMsg?.id ?? msg.id,
+            session_id: msg.session_id,
+            role: 'assistant',
+            content: text,
+            seq: baseMsg?.seq ?? msg.seq,
+            created_at: baseMsg?.created_at ?? msg.created_at,
+            usage,
+          })
+          text = ''
+        }
+        inputUsage = undefined
+        outputTokens = undefined
+        baseMsg = null
+        break
+      }
+      // All other inner event types (rate_limit_event, etc.) are silent — skip.
+    }
+  }
+
+  return result
+}
+
 export const useStore = create<AppState>((set, get) => ({
   projects: [],
   sessions: [],
   activeProjectId: null,
   activeSessionId: null,
   messages: {},
+  messagePagination: {},
   pendingHooks: {},
   sessionStatus: {},
   streamingText: {},
@@ -132,8 +265,36 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   loadMessages: async (id) => {
-    const messages = await api.listMessages(id)
-    set(s => ({ messages: { ...s.messages, [id]: messages } }))
+    const page = await api.listMessages(id)
+    set(s => ({
+      messages: { ...s.messages, [id]: replayStoredMessages(page.messages) },
+      messagePagination: {
+        ...s.messagePagination,
+        [id]: { hasMore: page.has_more, oldestSeq: page.oldest_seq, isLoadingMore: false },
+      },
+    }))
+  },
+
+  loadMoreMessages: async (id) => {
+    const pagination = get().messagePagination[id]
+    if (!pagination || !pagination.hasMore || pagination.isLoadingMore) return
+
+    set(s => ({
+      messagePagination: {
+        ...s.messagePagination,
+        [id]: { ...s.messagePagination[id], isLoadingMore: true },
+      },
+    }))
+
+    const page = await api.listMessages(id, { beforeSeq: pagination.oldestSeq ?? undefined })
+
+    set(s => ({
+      messages: { ...s.messages, [id]: [...replayStoredMessages(page.messages), ...(s.messages[id] ?? [])] },
+      messagePagination: {
+        ...s.messagePagination,
+        [id]: { hasMore: page.has_more, oldestSeq: page.oldest_seq, isLoadingMore: false },
+      },
+    }))
   },
 
   handleWSEvent: (event: WSEvent) => {
