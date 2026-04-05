@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { marked } from 'marked'
+import Zoom from 'react-medium-image-zoom'
+import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
 import type { Message } from '../../types'
 
@@ -34,7 +36,7 @@ export function MessageBubble({ message }: Props) {
 function BubbleContent({ message }: { message: Message }) {
   switch (message.role) {
     case 'user':
-      return <p className="msg__text">{message.content}</p>
+      return <UserContent content={message.content} />
 
     case 'assistant':
       return <MarkdownContent content={message.content} />
@@ -94,6 +96,54 @@ function BubbleContent({ message }: { message: Message }) {
     default:
       return <pre className="msg__code">{message.content}</pre>
   }
+}
+
+function UserContent({ content }: { content: string }) {
+  // Try to parse as JSON content blocks (with images)
+  let blocks: Array<{ type: string; text?: string; source?: { type: string; media_type: string; data: string } }> = []
+  let text = content
+
+  try {
+    const parsed = JSON.parse(content)
+    if (Array.isArray(parsed)) {
+      blocks = parsed
+      text = ''
+    }
+  } catch {
+    // Not JSON, treat as plain text
+  }
+
+  return (
+    <div className="msg__user-content">
+      {blocks.length > 0 ? (
+        // Render content blocks
+        <>
+          {blocks.map((block, i) => {
+            if (block.type === 'text' && block.text) {
+              return (
+                <p key={i} className="msg__text">
+                  {block.text}
+                </p>
+              )
+            } else if (block.type === 'image' && block.source?.type === 'base64') {
+              const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`
+              return (
+                <div key={i} className="msg__image-container">
+                  <Zoom>
+                    <img src={dataUrl} alt="user-content" className="msg__image" />
+                  </Zoom>
+                </div>
+              )
+            }
+            return null
+          })}
+        </>
+      ) : (
+        // Render as plain text
+        <p className="msg__text">{text}</p>
+      )}
+    </div>
+  )
 }
 
 function MarkdownContent({ content }: { content: string }) {

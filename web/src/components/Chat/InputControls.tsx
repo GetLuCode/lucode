@@ -1,5 +1,6 @@
 import { Listbox } from '@headlessui/react'
 import { IconBrain } from '@tabler/icons-react'
+import { AttachmentButton } from './AttachmentButton'
 
 const MODELS = [
   { label: 'Haiku 4.5', value: 'haiku' },
@@ -22,6 +23,7 @@ interface Props {
   onEffortChange: (effort: string) => void
   thinking: boolean | string
   onThinkingChange: (thinking: string) => void
+  onImageSelect: (base64: string, mediaType: string) => void
   onSend: () => void
   isRunning: boolean
   canSend: boolean
@@ -34,14 +36,16 @@ export function InputControls({
   onEffortChange,
   thinking,
   onThinkingChange,
+  onImageSelect,
   onSend,
   isRunning,
   canSend,
 }: Props) {
   return (
     <div className="input-controls">
-      {/* Left: Thinking toggle */}
+      {/* Left: Attachment and thinking toggle */}
       <div className="input-controls__group input-controls__group--left">
+        <AttachmentButton onImageSelect={onImageSelect} disabled={isRunning} />
         <div className="tooltip-wrapper">
           <button
             className={`thinking-toggle ${thinking === 'enabled' ? 'thinking-toggle--active' : ''}`}

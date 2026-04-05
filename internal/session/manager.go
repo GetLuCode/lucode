@@ -61,13 +61,27 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 
 	dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusRunning))
 
-	// Persist user message
+	// Persist user message (with image if present)
 	seq, _ := dbpkg.NextMessageSeq(m.db, opts.SessionID)
+	content := opts.Message
+	if opts.ImageBase64 != "" {
+		// Store as JSON content blocks
+		contentBlocks := []map[string]interface{}{
+			{"type": "text", "text": opts.Message},
+			{"type": "image", "source": map[string]interface{}{
+				"type":       "base64",
+				"media_type": opts.ImageMediaType,
+				"data":       opts.ImageBase64,
+			}},
+		}
+		contentJSON, _ := json.Marshal(contentBlocks)
+		content = string(contentJSON)
+	}
 	_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
 		ID:        uuid.New().String(),
 		SessionID: opts.SessionID,
 		Role:      "user",
-		Content:   opts.Message,
+		Content:   content,
 		Seq:       seq,
 	})
 

@@ -129,6 +129,10 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		Model    string `json:"model"`
 		Effort   string `json:"effort"`
 		Thinking string `json:"thinking"`
+		Image    struct {
+			Base64    string `json:"base64"`
+			MediaType string `json:"mediaType"`
+		} `json:"image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -169,6 +173,8 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 			ClaudeConfigDir: proj.ClaudeConfigDir,
 			Effort:          body.Effort,
 			Thinking:        body.Thinking,
+			ImageBase64:     body.Image.Base64,
+			ImageMediaType:  body.Image.MediaType,
 		}
 		if err := h.manager.StartTurn(opts); err != nil {
 			log.Printf("api: start turn: %v", err)
@@ -223,6 +229,10 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		Model    string `json:"model"`
 		Effort   string `json:"effort"`
 		Thinking string `json:"thinking"`
+		Image    struct {
+			Base64    string `json:"base64"`
+			MediaType string `json:"mediaType"`
+		} `json:"image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -255,6 +265,8 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		Thinking:        body.Thinking,
 		ClaudeConfigDir: proj.ClaudeConfigDir,
 		Resume:          sess.MessageCount > 0, // first turn uses --session-id, subsequent use --resume
+		ImageBase64:     body.Image.Base64,
+		ImageMediaType:  body.Image.MediaType,
 	}
 
 	if err := h.manager.StartTurn(opts); err != nil {

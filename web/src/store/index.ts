@@ -46,7 +46,7 @@ interface AppState {
   clearPendingSession: () => void
   createSession: (pid: string, data: { message?: string; name?: string; model?: string; effort?: string; thinking?: string }) => Promise<Session>
   deleteSession: (id: string) => Promise<void>
-  sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string) => void
+  sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) => void
   respondHook: (sessId: string, decision: 'approve' | 'deny', reason?: string) => void
   forkSession: (id: string, name: string) => Promise<Session>
   renameSession: (id: string, name: string) => Promise<void>
@@ -257,8 +257,22 @@ export const useStore = create<AppState>((set, get) => ({
     }))
   },
 
-  sendMessage: (id, msg, model, effort, thinking) => {
+  sendMessage: (id, msg, model, effort, thinking, image) => {
     const pending = get().pendingSession
+
+    // Build content: text only or text + image blocks
+    let content = msg
+    if (image) {
+      const blocks = [
+        { type: 'text', text: msg },
+        { type: 'image', source: {
+          type: 'base64',
+          media_type: image.mediaType,
+          data: image.base64,
+        }},
+      ]
+      content = JSON.stringify(blocks)
+    }
 
     // If sending first message in a pending session
     if (pending) {
@@ -268,6 +282,7 @@ export const useStore = create<AppState>((set, get) => ({
         model: model || pending.model,
         effort,
         thinking,
+        image,
       }).then(session => {
         set(s => ({
           sessions: [session, ...s.sessions],
@@ -278,7 +293,7 @@ export const useStore = create<AppState>((set, get) => ({
           id: `opt-${Date.now()}`,
           session_id: session.id,
           role: 'user',
-          content: msg,
+          content,
           seq: 0,
           created_at: new Date().toISOString(),
         }
@@ -290,13 +305,13 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     // Normal sendTurn for existing sessions
-    api.sendTurn(id, msg, model, effort, thinking).catch(console.error)
+    api.sendTurn(id, msg, model, effort, thinking, image).catch(console.error)
     const seq = (get().messages[id]?.length ?? 0)
     const userMsg: Message = {
       id: `opt-${Date.now()}`,
       session_id: id,
       role: 'user',
-      content: msg,
+      content,
       seq,
       created_at: new Date().toISOString(),
     }

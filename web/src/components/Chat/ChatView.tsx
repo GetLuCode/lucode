@@ -34,6 +34,7 @@ export function ChatView() {
   const [model, setModel] = useState('haiku')
   const [effort, setEffort] = useState('auto')
   const [thinking, setThinking] = useState('adaptive')
+  const [attachedImage, setAttachedImage] = useState<{ base64: string; mediaType: string } | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -108,14 +109,42 @@ export function ChatView() {
     if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning) return
     // For pending sessions, we pass a placeholder ID; sendMessage handles the actual creation
     const targetId = activeSessionId || 'pending'
-    sendMessage(targetId, input.trim(), model, effort, thinking)
+    sendMessage(targetId, input.trim(), model, effort, thinking, attachedImage)
     setInput('')
+    setAttachedImage(null)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
+    }
+  }
+
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (!file) continue
+
+        const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+        if (!validTypes.includes(file.type)) {
+          alert('Only JPEG, PNG, GIF, and WebP images are supported')
+          return
+        }
+
+        const reader = new FileReader()
+        reader.onload = (event) => {
+          const base64 = (event.target?.result as string).split(',')[1]
+          setAttachedImage({ base64, mediaType: file.type })
+        }
+        reader.readAsDataURL(file)
+        break
+      }
     }
   }
 
@@ -210,13 +239,26 @@ export function ChatView() {
       </div>
 
       <div className="chat__input-area">
+        {attachedImage && (
+          <div className="chat__image-preview">
+            <img src={`data:${attachedImage.mediaType};base64,${attachedImage.base64}`} alt="attached" />
+            <button
+              className="chat__image-remove"
+              onClick={() => setAttachedImage(null)}
+              title="Remove image"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <div className="chat__input-wrap">
           <textarea
             className="chat__input"
-            placeholder={isRunning ? 'Claude is thinking…' : 'Message Claude…'}
+            placeholder={isRunning ? 'Claude is thinking…' : 'Message Claude… (paste images here)'}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             disabled={isRunning}
             rows={1}
           />
@@ -227,6 +269,7 @@ export function ChatView() {
             onEffortChange={setEffort}
             thinking={thinking}
             onThinkingChange={setThinking}
+            onImageSelect={(base64, mediaType) => setAttachedImage({ base64, mediaType })}
             onSend={handleSend}
             isRunning={isRunning}
             canSend={input.trim().length > 0}

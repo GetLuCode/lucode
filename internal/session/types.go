@@ -33,4 +33,6 @@ type TurnOptions struct {
 	ForkFrom        string // non-empty → --fork-session --resume=ForkFrom --session-id=SessionID
 	Effort          string // low|medium|high|max|auto
 	Thinking        string // enabled|disabled|adaptive
+	ImageBase64     string // base64-encoded image
+	ImageMediaType  string // image/jpeg, image/png, etc.
 }

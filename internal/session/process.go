@@ -17,8 +17,8 @@ type stdinInput struct {
 }
 
 type stdinMsg struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"` // string or []map[string]interface{} for content with images
 }
 
 // spawnResult holds the started process and its stdout reader.
@@ -90,11 +90,30 @@ func spawnClaude(ctx context.Context, opts TurnOptions, backendWSURL string) (*s
 	}()
 
 	// Write user message as stream-json, then close stdin
+	// Build content: text only or text + image
+	var content interface{} = opts.Message
+	if opts.ImageBase64 != "" {
+		content = []map[string]interface{}{
+			{
+				"type": "text",
+				"text": opts.Message,
+			},
+			{
+				"type": "image",
+				"source": map[string]interface{}{
+					"type":       "base64",
+					"media_type": opts.ImageMediaType,
+					"data":       opts.ImageBase64,
+				},
+			},
+		}
+	}
+
 	msg := stdinInput{
 		Type: "user",
 		Message: stdinMsg{
 			Role:    "user",
-			Content: opts.Message,
+			Content: content,
 		},
 	}
 	data, _ := json.Marshal(msg)
