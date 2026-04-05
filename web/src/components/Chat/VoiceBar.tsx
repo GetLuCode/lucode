@@ -1,5 +1,7 @@
+import { Switch } from '@headlessui/react'
 import { IconX } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
+import { useEffect, useState } from 'react'
 
 const LANGUAGES = [
   { label: 'Español (España)', value: 'es-ES' },
@@ -20,11 +22,13 @@ interface Props {
   autoSend: boolean
   autoRead: boolean
   noEcho: boolean
+  voiceURI: string | null
   onClose: () => void
   onLangChange: (lang: string) => void
   onAutoSendToggle: () => void
   onAutoReadToggle: () => void
   onNoEchoToggle: () => void
+  onVoiceChange: (voiceURI: string | null) => void
 }
 
 export function VoiceSettingsModal({
@@ -33,12 +37,28 @@ export function VoiceSettingsModal({
   autoSend,
   autoRead,
   noEcho,
+  voiceURI,
   onClose,
   onLangChange,
   onAutoSendToggle,
   onAutoReadToggle,
   onNoEchoToggle,
+  onVoiceChange,
 }: Props) {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+
+  useEffect(() => {
+    const synth = window.speechSynthesis
+    if (!synth) return
+
+    const load = () => setVoices(synth.getVoices())
+    load()
+    synth.addEventListener('voiceschanged', load)
+    return () => synth.removeEventListener('voiceschanged', load)
+  }, [])
+
+  const langVoices = voices.filter((v) => v.lang.startsWith(lang.split('-')[0]))
+
   if (!isOpen) return null
 
   return (
@@ -95,17 +115,41 @@ export function VoiceSettingsModal({
             </select>
           </div>
 
+          {/* Voice */}
+          {langVoices.length > 0 && (
+            <div className="voice-modal__option">
+              <label htmlFor="voice-voice" className="voice-modal__label">
+                Voice
+              </label>
+              <select
+                id="voice-voice"
+                value={voiceURI ?? ''}
+                onChange={(e) => onVoiceChange(e.target.value || null)}
+                className="voice-modal__select"
+              >
+                <option value="">Default</option>
+                {langVoices.map((v) => (
+                  <option key={v.voiceURI} value={v.voiceURI}>
+                    {v.name}{v.localService ? '' : ' ☁'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Auto-send toggle */}
           <div className="voice-modal__option">
-            <label className="voice-modal__toggle-label">
-              <input
-                type="checkbox"
+            <div className="voice-modal__switch-row">
+              <Switch
                 checked={autoSend}
                 onChange={onAutoSendToggle}
-                className="voice-modal__checkbox"
-              />
+                className="voice-modal__switch"
+                data-checked={autoSend ? '' : undefined}
+              >
+                <span className="voice-modal__switch-thumb" />
+              </Switch>
               <span className="voice-modal__toggle-text">Auto-send after recording</span>
-            </label>
+            </div>
             <p className="voice-modal__help-text">
               Automatically send the message when speech ends
             </p>
@@ -113,15 +157,17 @@ export function VoiceSettingsModal({
 
           {/* Auto-read toggle */}
           <div className="voice-modal__option">
-            <label className="voice-modal__toggle-label">
-              <input
-                type="checkbox"
+            <div className="voice-modal__switch-row">
+              <Switch
                 checked={autoRead}
                 onChange={onAutoReadToggle}
-                className="voice-modal__checkbox"
-              />
+                className="voice-modal__switch"
+                data-checked={autoRead ? '' : undefined}
+              >
+                <span className="voice-modal__switch-thumb" />
+              </Switch>
               <span className="voice-modal__toggle-text">Auto-read responses</span>
-            </label>
+            </div>
             <p className="voice-modal__help-text">
               Automatically read Claude's responses aloud
             </p>
@@ -129,15 +175,17 @@ export function VoiceSettingsModal({
 
           {/* No-echo toggle */}
           <div className="voice-modal__option">
-            <label className="voice-modal__toggle-label">
-              <input
-                type="checkbox"
+            <div className="voice-modal__switch-row">
+              <Switch
                 checked={noEcho}
                 onChange={onNoEchoToggle}
-                className="voice-modal__checkbox"
-              />
+                className="voice-modal__switch"
+                data-checked={noEcho ? '' : undefined}
+              >
+                <span className="voice-modal__switch-thumb" />
+              </Switch>
               <span className="voice-modal__toggle-text">No-echo mode</span>
-            </label>
+            </div>
             <p className="voice-modal__help-text">
               When active, coherent speech stops TTS playback. Use if you have speakers (not headphones). Clicking mic while TTS plays also stops it.
             </p>

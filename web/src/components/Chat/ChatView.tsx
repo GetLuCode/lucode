@@ -5,6 +5,7 @@ import { useSessionWS } from '../../hooks/useSessionWS'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
 import { tts } from '../../hooks/useTTS'
 import { getVoicePrefs, saveVoicePrefs } from '../../lib/voicePrefs'
+import { useTTSReadCache } from '../../hooks/useTTSReadCache'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { InputControls } from './InputControls'
@@ -15,9 +16,6 @@ import type { Message } from '../../types'
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
 
-// Module-level cache of message IDs that have been auto-read.
-// Persists across session switches within the same page session.
-const autoReadCache = new Set<string>()
 
 export function ChatView() {
   const activeSessionId = useStore(s => s.activeSessionId)
@@ -49,6 +47,8 @@ export function ChatView() {
   const [autoSend, setAutoSend] = useState(() => getVoicePrefs().autoSend)
   const [autoRead, setAutoRead] = useState(() => getVoicePrefs().autoRead)
   const [noEcho, setNoEcho] = useState(() => getVoicePrefs().noEcho)
+  const [voiceURI, setVoiceURI] = useState(() => getVoicePrefs().voiceURI)
+  const { isRead, markRead, loaded: ttsDbLoaded } = useTTSReadCache()
   const [interimText, setInterimText] = useState('')
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
@@ -163,17 +163,18 @@ export function ChatView() {
     }
   }, [interimText])
 
-  // Auto-read new assistant messages (uses module-level cache to survive session switches)
+  // Auto-read new assistant messages — skips messages already read (persisted in IndexedDB).
+  // Manual "Read aloud" always works regardless of read status.
   useEffect(() => {
-    if (!autoRead || messages.length === 0) return
+    if (!autoRead || !ttsDbLoaded || messages.length === 0) return
 
     const lastMessage = messages[messages.length - 1]
     if (
       lastMessage?.role === 'assistant' &&
-      !autoReadCache.has(lastMessage.id) &&
+      !isRead(lastMessage.id) &&
       !streamingText
     ) {
-      autoReadCache.add(lastMessage.id)
+      markRead(lastMessage.id)
 
       // No-echo (speakers): pause mic while TTS plays, restore after
       const wasListening = isListening
@@ -182,7 +183,7 @@ export function ChatView() {
       speakingMessageIdRef.current = lastMessage.id
       setSpeakingMessageId(lastMessage.id)
 
-      tts.speak(lastMessage.content, voiceLang, {
+      tts.speak(lastMessage.content, voiceLang, voiceURI, {
         onEnd: () => {
           speakingMessageIdRef.current = null
           setSpeakingMessageId(null)
@@ -190,7 +191,7 @@ export function ChatView() {
         },
       })
     }
-  }, [messages, autoRead, streamingText, voiceLang]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [messages, autoRead, streamingText, voiceLang, ttsDbLoaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const triggerLoadMore = useCallback(async () => {
     if (!activeSessionId || isLoadingMoreRef.current) return
@@ -258,7 +259,13 @@ export function ChatView() {
 
   const handleVoiceLangChange = (lang: string) => {
     setVoiceLang(lang)
-    saveVoicePrefs({ lang })
+    setVoiceURI(null)
+    saveVoicePrefs({ lang, voiceURI: null })
+  }
+
+  const handleVoiceURIChange = (uri: string | null) => {
+    setVoiceURI(uri)
+    saveVoicePrefs({ voiceURI: uri })
   }
 
   const handleAutoSendToggle = () => {
@@ -305,7 +312,7 @@ export function ChatView() {
     tts.stop()
     setSpeakingMessageId(messageId)
     speakingMessageIdRef.current = messageId
-    tts.speak(content, voiceLang, {
+    tts.speak(content, voiceLang, voiceURI, {
       onEnd: () => {
         setSpeakingMessageId(null)
         speakingMessageIdRef.current = null
@@ -464,11 +471,13 @@ export function ChatView() {
         autoSend={autoSend}
         autoRead={autoRead}
         noEcho={noEcho}
+        voiceURI={voiceURI}
         onClose={() => setVoiceSettingsOpen(false)}
         onLangChange={handleVoiceLangChange}
         onAutoSendToggle={handleAutoSendToggle}
         onAutoReadToggle={handleAutoReadToggle}
         onNoEchoToggle={handleNoEchoToggle}
+        onVoiceChange={handleVoiceURIChange}
       />
     </div>
   )

@@ -335,23 +335,36 @@ Singleton module `tts` (not a React hook) with:
 **Markdown/emoji stripping**: removes code blocks, inline code, bold/italic, headers, links, emojis (unicode ranges) so TTS doesn't read symbols aloud.
 
 ### Voice Preferences — `web/src/lib/voicePrefs.ts`
-Persisted in `localStorage`: `voice_lang`, `voice_autosend`, `voice_autoread`, `voice_noecho`.
+Persisted in `localStorage`: `voice_lang`, `voice_autosend`, `voice_autoread`, `voice_noecho`, `voice_uri`.
 
 ### VoiceSettingsModal — `web/src/components/Chat/VoiceBar.tsx`
-Opens from gear button. Options:
+Opens from gear button. Uses **HeadlessUI Switch** components for toggles (styled as track + animated thumb). Options:
 - **Language** — 10 locales (es-ES, es-MX, en-US, en-GB, fr-FR, de-DE, pt-BR, it-IT, ja-JP, zh-CN)
+- **Voice** — dynamic select loaded from `speechSynthesis.getVoices()`, filtered by current language. Shows "Default" + available voices, cloud voices marked with ☁.
 - **Auto-send** — sends message automatically when STT recording ends
-- **Auto-read** — reads each new assistant message aloud
+- **Auto-read** — reads each new assistant message aloud (skips already-read messages via IndexedDB)
 - **No-echo mode** — for headphones: keeps mic active while TTS plays; coherent speech (final STT result) stops TTS. Without this mode, mic is paused during TTS.
+
+### TTS Read Cache — `web/src/hooks/useTTSReadCache.ts` ⭐
+Persists auto-read message IDs in IndexedDB (`tts_read_messages` via Dexie):
+- **On mount**: loads all previously-read message IDs into a Set (fast, in-memory lookup)
+- **On auto-read**: `markRead(id)` adds to Set + writes to IndexedDB (fire-and-forget)
+- **Skip auto-read if**: `isRead(id)` returns true (even after page reload)
+- **Manual "Read aloud"**: always works, bypasses read cache
+- **Reset per-language**: when language changes, `voiceURI` resets to null (voice may not exist in new language)
 
 ### ChatView voice state
 ```typescript
-speakingMessageId: string | null  // which message is currently being read
-noEchoRef / isRunningRef          // mutable refs for voice callbacks (avoid stale closures)
-autoReadCache: Set<string>        // module-level, survives session switches
+speakingMessageId: string | null     // which message is currently being read
+noEchoRef / isRunningRef             // mutable refs for voice callbacks (avoid stale closures)
+voiceURI: string | null              // selected voice from browser SpeechSynthesis API
+{ isRead, markRead, loaded: ttsDbLoaded }  // read cache from useTTSReadCache
 ```
 
-**Auto-read flow**: `tts.speak()` with `onEnd` callback that clears `speakingMessageId` and restores mic if needed.
+**Auto-read flow** (only if `autoRead && ttsDbLoaded`):
+1. Check if last message role is `assistant` + not yet read
+2. Call `markRead(id)` 
+3. Call `tts.speak(content, voiceLang, voiceURI, { onEnd })` with callbacks to clear `speakingMessageId`
 
 **No-echo / stop TTS triggers** (in priority order):
 1. Voice command "stop", "detener", "detente" (trailing punctuation stripped) → silent, not sent to chat
