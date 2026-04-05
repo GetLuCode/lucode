@@ -11,6 +11,7 @@ import { ThinkingIndicator } from './ThinkingIndicator'
 import { InputControls } from './InputControls'
 import { VoiceSettingsModal } from './VoiceBar'
 import { IdeasModal } from './IdeasModal'
+import { FilePreviewPanel } from './FilePreviewPanel'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import type { Message } from '../../types'
 
@@ -38,6 +39,7 @@ export function ChatView() {
   const sessions = useStore(s => s.sessions)
   const sendMessage = useStore(s => s.sendMessage)
   const loadMoreMessages = useStore(s => s.loadMoreMessages)
+  const filePreview = useStore(s => s.filePreview)
 
   const [input, setInput] = useState('')
   const [model, setModel] = useState('haiku')
@@ -357,7 +359,7 @@ export function ChatView() {
   const headerName = isPending ? 'New session' : (session?.name || 'Session')
 
   return (
-    <div className="chat">
+    <div className={`chat${filePreview ? ' chat--preview-open' : ''}`}>
       <div className="chat__header">
         <span className="chat__session-name">{headerName}</span>
         <div className="chat__header-right">
@@ -510,6 +512,9 @@ export function ChatView() {
         onNoEchoToggle={handleNoEchoToggle}
         onVoiceChange={handleVoiceURIChange}
       />
+
+      {/* File preview panel — slides in from right, full chat height */}
+      <FilePreviewPanel />
     </div>
   )
 }

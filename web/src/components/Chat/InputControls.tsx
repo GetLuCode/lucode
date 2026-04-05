@@ -1,5 +1,5 @@
 import { Listbox } from '@headlessui/react'
-import { IconBulb, IconMicrophone, IconMicrophoneOff } from '@tabler/icons-react'
+import { IconBulb, IconMicrophone, IconMicrophoneOff, IconNotes } from '@tabler/icons-react'
 import { AttachmentButton } from './AttachmentButton'
 import { ThinkingToggle } from './ThinkingToggle'
 import { SettingsMenu } from './SettingsMenu'
@@ -82,9 +82,9 @@ export function InputControls({
             onClick={onIdeasClick}
             title={hasPendingIdeas ? 'Ideas (pending)' : 'Ideas'}
           >
-            <IconBulb size={18} />
+            <IconNotes size={18} />
           </button>
-          <div className="tooltip">{hasPendingIdeas ? 'Ideas — pending items' : 'Ideas'}</div>
+          <div className="tooltip">{hasPendingIdeas ? 'Notes — pending items' : 'Notes'}</div>
         </div>
 
         {/* Settings menu */}

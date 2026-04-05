@@ -1,4 +1,5 @@
 // Shared tool input renderers for hook approval modals and messages
+import { useStore } from '../../store'
 
 export function ToolInputRenderer({ toolName, input }: { toolName: string; input: unknown }) {
   const data = input as Record<string, unknown>
@@ -9,6 +10,8 @@ export function ToolInputRenderer({ toolName, input }: { toolName: string; input
     case 'Write':
       return <WriteInput data={data} />
     case 'Edit':
+      return <EditInput data={data} />
+    case 'MultilineEdit':
       return <EditInput data={data} />
     case 'Read':
     case 'Glob':
@@ -31,13 +34,37 @@ function BashInput({ data }: { data: Record<string, unknown> }) {
   )
 }
 
+function detectLanguage(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
+  const map: Record<string, string> = {
+    ts: 'typescript', tsx: 'typescript',
+    js: 'javascript', jsx: 'javascript',
+    go: 'go', py: 'python', rs: 'rust',
+    css: 'css', scss: 'css', html: 'html',
+    json: 'json', md: 'markdown',
+    sh: 'shell', bash: 'shell',
+    yaml: 'yaml', yml: 'yaml',
+    toml: 'ini', xml: 'xml', sql: 'sql',
+    c: 'c', cpp: 'cpp', h: 'cpp',
+  }
+  return map[ext] ?? 'plaintext'
+}
+
 function WriteInput({ data }: { data: Record<string, unknown> }) {
   const filePath = String(data.file_path ?? '')
   const content  = String(data.content   ?? '')
+  const openFilePreview = useStore(s => s.openFilePreview)
+
   return (
     <div className="hook-input__fields">
       <FilePath path={filePath} />
-      <pre className="hook-input__code">{content}</pre>
+      <button
+        className="hook-input__preview-btn"
+        type="button"
+        onClick={() => openFilePreview({ filePath, lang: detectLanguage(filePath), mode: 'content', content })}
+      >
+        View content
+      </button>
     </div>
   )
 }
@@ -46,21 +73,24 @@ function EditInput({ data }: { data: Record<string, unknown> }) {
   const filePath  = String(data.file_path  ?? '')
   const oldString = String(data.old_string ?? '')
   const newString = String(data.new_string ?? '')
+  const openFilePreview = useStore(s => s.openFilePreview)
+
+  const handleOpen = () => {
+    openFilePreview({
+      filePath,
+      lang: detectLanguage(filePath),
+      mode: 'diff',
+      original: oldString,
+      modified: newString,
+    })
+  }
+
   return (
     <div className="hook-input__fields">
       <FilePath path={filePath} />
-      {oldString && (
-        <div className="hook-input__diff">
-          <span className="hook-input__diff-label hook-input__diff-label--remove">−</span>
-          <pre className="hook-input__diff-block hook-input__diff-block--remove">{oldString}</pre>
-        </div>
-      )}
-      {newString && (
-        <div className="hook-input__diff">
-          <span className="hook-input__diff-label hook-input__diff-label--add">+</span>
-          <pre className="hook-input__diff-block hook-input__diff-block--add">{newString}</pre>
-        </div>
-      )}
+      <button className="hook-input__preview-btn" type="button" onClick={handleOpen}>
+        View modifications
+      </button>
     </div>
   )
 }

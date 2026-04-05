@@ -1,4 +1,4 @@
-import { IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
+import { IconCheck, IconPlus, IconTrash, IconX, IconNotes } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import { createIdea, deleteIdea, fetchIdeas, toggleIdea, type Idea } from '../../lib/ideasStorage'
@@ -112,7 +112,7 @@ export function IdeasModal({ isOpen, projectId, onClose, onPendingChange }: Prop
       >
         {/* Header */}
         <div className="ideas-modal__header">
-          <h3 className="ideas-modal__title">Ideas</h3>
+          <h3 className="ideas-modal__title"><IconNotes size={16} /> Notes</h3>
           <button className="voice-modal__close" onClick={onClose} title="Close" aria-label="Close ideas">
             <IconX size={18} />
           </button>
