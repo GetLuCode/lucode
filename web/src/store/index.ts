@@ -341,8 +341,11 @@ export const useStore = create<AppState>((set, get) => ({
 
   loadMessages: async (id) => {
     const page = await api.listMessages(id)
+    const sorted = replayStoredMessages(page.messages).sort((a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    )
     set(s => ({
-      messages: { ...s.messages, [id]: replayStoredMessages(page.messages) },
+      messages: { ...s.messages, [id]: sorted },
       messagePagination: {
         ...s.messagePagination,
         [id]: { hasMore: page.has_more, oldestSeq: page.oldest_seq, isLoadingMore: false },
@@ -363,13 +366,19 @@ export const useStore = create<AppState>((set, get) => ({
 
     const page = await api.listMessages(id, { beforeSeq: pagination.oldestSeq ?? undefined })
 
-    set(s => ({
-      messages: { ...s.messages, [id]: [...replayStoredMessages(page.messages), ...(s.messages[id] ?? [])] },
-      messagePagination: {
-        ...s.messagePagination,
-        [id]: { hasMore: page.has_more, oldestSeq: page.oldest_seq, isLoadingMore: false },
-      },
-    }))
+    set(s => {
+      const combined = [...replayStoredMessages(page.messages), ...(s.messages[id] ?? [])]
+      const sorted = combined.sort((a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      )
+      return {
+        messages: { ...s.messages, [id]: sorted },
+        messagePagination: {
+          ...s.messagePagination,
+          [id]: { hasMore: page.has_more, oldestSeq: page.oldest_seq, isLoadingMore: false },
+        },
+      }
+    })
   },
 
   handleWSEvent: (event: WSEvent) => {
@@ -548,6 +557,7 @@ export const useStore = create<AppState>((set, get) => ({
             session_id: event.session_id,
             role: 'hook',
             content: JSON.stringify({
+              tool_use_id: event.tool_use_id,
               tool_name: event.tool_name,
               tool_input: event.tool_input,
               decision: 'pending',
@@ -578,6 +588,7 @@ export const useStore = create<AppState>((set, get) => ({
               ? {
                   ...msg,
                   content: JSON.stringify({
+                    tool_use_id: (JSON.parse(msg.content) as any).tool_use_id,
                     tool_name: (JSON.parse(msg.content) as any).tool_name,
                     tool_input: (JSON.parse(msg.content) as any).tool_input,
                     decision: event.decision,

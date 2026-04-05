@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
 import type { PendingHook } from '../../types'
 
 interface Props {
   hook: PendingHook
-  onApprove: () => void
-  onDeny: () => void
+  projectId?: string
 }
 
-export function HookToast({ hook, onApprove, onDeny }: Props) {
+export function HookToast({ hook, projectId }: Props) {
   const [remaining, setRemaining] = useState(240) // 4 minutes in seconds
   const [isExpired, setIsExpired] = useState(false)
+  const navigate = useNavigate()
 
   useEffect(() => {
     const createdMs = new Date(hook.created_at).getTime()
@@ -35,13 +36,23 @@ export function HookToast({ hook, onApprove, onDeny }: Props) {
   const minutes = Math.floor(remaining / 60)
   const seconds = remaining % 60
 
+  const handleClick = () => {
+    if (projectId) {
+      navigate(`/projects/${projectId}/sessions/${hook.session_id}`)
+    }
+  }
+
   return (
     <motion.div
-      className="hook-toast"
+      className="hook-toast hook-toast--clickable"
       initial={{ opacity: 0, y: -20, x: 20 }}
       animate={{ opacity: 1, y: 0, x: 0 }}
       exit={{ opacity: 0, y: -20, x: 20 }}
       transition={{ duration: 0.2 }}
+      onClick={handleClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => e.key === 'Enter' && handleClick()}
     >
       <div className="hook-toast__header">
         <div className="hook-toast__icon">⚙</div>
@@ -64,23 +75,6 @@ export function HookToast({ hook, onApprove, onDeny }: Props) {
         <div className="hook-toast__timer">
           {isExpired ? '⏱ Timed out' : `${minutes}:${String(seconds).padStart(2, '0')} remaining`}
         </div>
-      </div>
-
-      <div className="hook-toast__actions">
-        <button
-          className="btn btn--deny hook-toast__btn"
-          onClick={onDeny}
-          disabled={isExpired}
-        >
-          Deny
-        </button>
-        <button
-          className="btn btn--approve hook-toast__btn"
-          onClick={onApprove}
-          disabled={isExpired}
-        >
-          Approve
-        </button>
       </div>
     </motion.div>
   )

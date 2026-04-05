@@ -232,10 +232,11 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 	if err == nil {
 		// Insert hook decision message in DB
 		content, _ := json.Marshal(map[string]any{
-			"tool_name":  hook.ToolName,
-			"tool_input": json.RawMessage(hook.ToolInput),
-			"decision":   decision,
-			"reason":     reason,
+			"tool_use_id": toolUseID,
+			"tool_name":   hook.ToolName,
+			"tool_input":  json.RawMessage(hook.ToolInput),
+			"decision":    decision,
+			"reason":      reason,
 		})
 		seq, _ := dbpkg.NextMessageSeq(m.db, sessID)
 		dbpkg.InsertMessage(m.db, dbpkg.Message{
