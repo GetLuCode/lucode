@@ -90,9 +90,9 @@ The frontend shows a queue of pending hooks (one modal at a time, cycling throug
 
 ## Timeout Handling
 
-Hook binary timeout: **5 minutes** (`conn.SetReadDeadline(time.Now().Add(5 * time.Minute))`). Reset on each ignored non-hook_response message.
+Hook binary timeout: **4 minutes** (`conn.SetReadDeadline(time.Now().Add(4 * time.Minute))`). Reset on each ignored non-hook_response message.
 
-If timeout fires → `allow("read timeout or error — defaulting to allow")` → exits 0.
+If timeout fires → `deny("approval timed out — tool blocked")` → exits 2 (tool automatically denied).
 
 On hook binary exit:
 1. WS connection closes
@@ -103,7 +103,7 @@ On hook binary exit:
 
 If user approves after timeout (hook already gone):
 - `SendToHookClient` returns false
-- Backend broadcasts `info` message: "Hook approval timed out — tool was automatically allowed."
+- Backend broadcasts `info` message: "Hook approval timed out — tool was automatically denied."
 - Backend still broadcasts `hook_resolved` to close the modal
 
 ## Logging
@@ -119,7 +119,7 @@ Hook binary writes logs to `~/.claude/hooks/log-<timestamp>.txt`:
 17:16:38 connecting to ws://localhost:8090/ws?role=hook&session_id=...
 17:16:38 ws connected
 17:16:38 hook_request sent, waiting for response (120s timeout)...
-17:16:38 waiting for hook_response (5min timeout)...
+17:16:38 waiting for hook_response (4min timeout)...
 17:16:38 received: type="stream_event" decision="" reason=""
 17:16:38 ignoring non-hook_response message (type="stream_event")
 ...

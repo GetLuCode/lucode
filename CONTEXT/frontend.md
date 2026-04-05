@@ -48,8 +48,11 @@ deleteSession(id)
 sendTurn(id, message, model?)
 forkSession(id, name, message?)
 
-listMessages(id)
+listMessages(id, opts?: { limit?: number; beforeSeq?: number })
+  → { messages: Message[], has_more: boolean, oldest_seq: number }
 ```
+
+Supports cursor-based pagination: `beforeSeq` parameter for lazy-loading older messages.
 
 ## Zustand Store — `web/src/store/index.ts`
 
@@ -62,6 +65,7 @@ listMessages(id)
   activeProjectId: string | null
   activeSessionId: string | null
   messages: Record<string, Message[]>
+  messagePagination: Record<string, { hasMore, oldestSeq, isLoadingMore }>  // per session
   pendingHooks: Record<string, PendingHook[]>   // queue per session
   sessionStatus: Record<string, string>
   streamingText: Record<string, string>          // flat strings, reliable equality
@@ -81,6 +85,10 @@ const blockTypeMap: Record<string, Record<number, string>> = {}
 ```
 
 `blockTypeMap` is needed because `content_block_delta` events only include the block index, not the type. The type is captured from `content_block_start`.
+
+### Legacy message conversion
+
+`replayStoredMessages(raw: Message[])` converts old-format stored messages (where `content = '{"type":"stream_event",...}'`) to clean text messages. It replays through the same state-machine as live `handleWSEvent`, so messages loaded from REST API match the format of WS-streamed messages. New messages from the backend are already clean and pass through unchanged.
 
 ### Streaming text pipeline
 
@@ -132,6 +140,12 @@ Opens `ws://localhost:8090/ws?role=client&session_id=<id>` when a session is act
 
 ## ChatView — `web/src/components/Chat/ChatView.tsx`
 
+### Virtual scrolling
+
+Uses `@tanstack/react-virtual` to render only visible messages + 8-item overscan. Measures dynamic heights (thinking blocks, code blocks, etc.) with `measureElement`. On page load, fetches latest 50 messages; scrolling up to 200px from top triggers `loadMoreMessages()` for pagination.
+
+Scroll position is preserved via `useLayoutEffect` when prepending older messages — saves previous `scrollHeight`, then restores `scrollTop` after state update.
+
 ### Key selectors (all use stable empty refs to avoid infinite loops)
 
 ```typescript
@@ -173,15 +187,28 @@ Model value is sent as-is to `POST /api/sessions/{id}/turn`. The backend maps it
 
 Receives `hook` (first in queue) and `queueLength`. Shows "N pending" when multiple hooks are queued. Approve/Deny calls `sendHookRespond(hook.tool_use_id, decision)`.
 
+Tool-specific renderers:
+- **Bash** — displays `$ command` in code block + `description` as caption
+- **Write** — shows filepath (dir/filename) + file content in code block
+- **Edit** — shows filepath + diff view (old_string with `−` red, new_string with `+` teal)
+- **Read/Glob/Grep/LS** — clean filepath or pattern display
+- **Fallback** — raw JSON for unknown tools
+
 ## MessageBubble — `web/src/components/Chat/MessageBubble.tsx`
+
+Each message shows a timestamp (HH:mm today, MMM D · HH:mm this year, MMM D YYYY · HH:mm other years).
+
+Markdown rendering via `marked` library for assistant messages (headings, lists, code blocks, blockquotes, tables, links). User and system messages are plain text. Includes CSS styling for all markdown elements with the dark theme.
 
 | `message.role` | Rendered as |
 |---|---|
-| `user` | Plain text bubble |
-| `assistant` | Plain text bubble + token badge |
-| `thinking` | Collapsible `<details>` with "◈ Thinking" summary |
-| `system` | Preformatted (used for error/info messages) |
-| `raw` | Collapsible `<details>` with raw JSON |
+| `user` | Plain text bubble + timestamp |
+| `assistant` | Markdown-rendered bubble + token badge + timestamp |
+| `thinking` | Collapsible `<details>` with "◈ Thinking" summary + timestamp |
+| `system` | Preformatted (used for error/info messages) + timestamp |
+| `raw` | Collapsible `<details>` with raw JSON + timestamp |
+
+Token badge shows: `↑input ↓output cache↩read` (tokens used, cache hit stats).
 
 ## Types — `web/src/types.ts`
 

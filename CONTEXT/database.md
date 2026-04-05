@@ -73,11 +73,18 @@ CREATE TABLE messages (
     seq        INTEGER NOT NULL,
     created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+
+CREATE INDEX idx_messages_session_seq ON messages(session_id, seq);
 ```
 
-`content` for assistant/tool messages is the raw JSON from the stream event. `seq` is assigned from `NextMessageSeq()` which returns `MAX(seq)+1`.
+`content` is clean text, not raw JSON. `seq` is assigned from `NextMessageSeq()` which returns `MAX(seq)+1`.
 
-Only final (non-partial) `stream_event` messages are persisted. Streaming deltas are not stored.
+Only final (non-partial) messages are persisted:
+- `message_stop` event → text finalized, role=`assistant`, content=accumulated text
+- `content_block_stop` for thinking blocks → role=`thinking`, content=accumulated thinking
+- Streaming deltas (`content_block_delta`) are not stored individually.
+
+The index `(session_id, seq)` enables efficient cursor-based pagination in `ListMessagesPaginated()`.
 
 ### `pending_hooks`
 
@@ -108,14 +115,17 @@ ListSessions(db, projectID) []Session
 UpdateSessionStatus(db, id, status)
 DeleteSession(db, id)
 
-InsertMessage(db, m)         // also increments message_count + updates last_active
-ListMessages(db, sessionID) []Message
+InsertMessage(db, m)                                    // also increments message_count + updates last_active
+ListMessages(db, sessionID) []Message                   // (legacy: returns ALL messages)
+ListMessagesPaginated(db, sessionID, limit, beforeSeq) ([]Message, hasMore, error)  // returns page + cursor
 NextMessageSeq(db, sessionID) int
 
-InsertPendingHook(db, h)                         // INSERT OR REPLACE
-ListPendingHooks(db, sessionID) []PendingHook    // used on client reconnect
+InsertPendingHook(db, h)                               // INSERT OR REPLACE
+ListPendingHooks(db, sessionID) []PendingHook          // used on client reconnect
 DeletePendingHook(db, sessionID, toolUseID) (int64, error)  // returns rows affected
 CountPendingHooks(db, sessionID) int
 ```
+
+**Pagination**: `ListMessagesPaginated(db, sessionID, 50, nil)` returns the 50 newest messages in ASC order. `ListMessagesPaginated(db, sessionID, 50, &oldestSeq)` returns 50 messages with `seq < oldestSeq`, also in ASC order. `hasMore=true` means more older messages exist.
 
 `DeletePendingHook` returning rows affected is critical: `0` means "already resolved" (skip cleanup), `1` means "pending when disconnected" (broadcast hook_resolved).
