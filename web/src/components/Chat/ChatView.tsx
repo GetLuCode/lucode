@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { IconChevronDown } from '@tabler/icons-react'
+import { IconChevronDown, IconCheck, IconStar } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
@@ -22,8 +22,24 @@ import type { Message } from '../../types'
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
 
+const MODELS = [
+  { label: 'Haiku 4.5',  value: 'haiku' },
+  { label: 'Sonnet 4.6', value: 'sonnet' },
+  { label: 'Opus 4.6',   value: 'opus' },
+]
 
-export function ChatView() {
+function ChatViewEmpty() {
+  return (
+    <div className="chat chat--empty">
+      <div className="chat__empty-state">
+        <div className="chat__empty-icon">◈</div>
+        <p>Select or create a session to begin</p>
+      </div>
+    </div>
+  )
+}
+
+function ChatViewFull() {
   const activeSessionId = useStore(s => s.activeSessionId)
   const pendingSession = useStore(s => s.pendingSession)
   const messages = useStore(s =>
@@ -72,6 +88,9 @@ export function ChatView() {
   const [pendingIdeasCount, setPendingIdeasCount] = useState(0)
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
+  const headerMenuRef = useRef<HTMLDivElement>(null)
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -94,6 +113,18 @@ export function ChatView() {
     load()
     return () => { cancelled = true }
   }, [activeProjectId])
+
+  // Close header menu on outside click
+  useEffect(() => {
+    if (!headerMenuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
+        setHeaderMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [headerMenuOpen])
 
   // Open WebSocket connection for the active session
   const { sendHookRespond } = useSessionWS(activeSessionId)
@@ -202,6 +233,8 @@ export function ChatView() {
   // Manual "Read aloud" always works regardless of read status.
   useEffect(() => {
     if (!autoRead || !ttsDbLoaded || messages.length === 0) return
+    // Don't interrupt ongoing TTS or auto-read the new session's last message while something is playing
+    if (speakingMessageIdRef.current) return
 
     const lastMessage = messages[messages.length - 1]
     if (
@@ -355,17 +388,6 @@ export function ChatView() {
     })
   }
 
-  if (!activeSessionId && !pendingSession) {
-    return (
-      <div className="chat chat--empty">
-        <div className="chat__empty-state">
-          <div className="chat__empty-icon">◈</div>
-          <p>Select or create a session to begin</p>
-        </div>
-      </div>
-    )
-  }
-
   const handleScrollToMessage = useCallback((messageId: string) => {
     const index = messages.findIndex(m => m.id === messageId)
 
@@ -396,24 +418,53 @@ export function ChatView() {
   return (
     <div className={`chat${filePreview ? ' chat--preview-open' : ''}`}>
       <div className="chat__header">
-        <span className="chat__session-name">{headerName}</span>
-        <button
-          className={`chat__starred-caret${starredPanelOpen ? ' chat__starred-caret--open' : ''}`}
-          onClick={() => {
-            if (starredPanelOpen) {
-              closeStarredPanel()
-            } else {
-              if (activeSessionId) {
-                loadStarredMessages(activeSessionId)
-              }
-              openStarredPanel()
-            }
-          }}
-          aria-label={starredPanelOpen ? 'Close starred messages' : 'View starred messages'}
-          title="Starred messages"
-        >
-          <IconChevronDown size={14} />
-        </button>
+        <div className="chat__header-menu" ref={headerMenuRef}>
+          <button
+            className={`chat__header-trigger${headerMenuOpen ? ' chat__header-trigger--open' : ''}`}
+            onClick={() => setHeaderMenuOpen(v => !v)}
+          >
+            <span className="chat__session-name">{headerName}</span>
+            <span className="chat__header-model-badge">{MODELS.find(m => m.value === model)?.label}</span>
+            <IconChevronDown size={13} className="chat__header-chevron" />
+          </button>
+
+          {headerMenuOpen && (
+            <div className="chat__header-dropdown">
+              {/* Starred messages */}
+              <button
+                className="chat__header-dropdown-item"
+                onClick={() => {
+                  setHeaderMenuOpen(false)
+                  if (starredPanelOpen) {
+                    closeStarredPanel()
+                  } else {
+                    if (activeSessionId) loadStarredMessages(activeSessionId)
+                    openStarredPanel()
+                  }
+                }}
+              >
+                <IconStar size={14} />
+                <span>Starred messages</span>
+                {starredPanelOpen && <IconCheck size={12} className="chat__header-dropdown-check" />}
+              </button>
+
+              <div className="chat__header-dropdown-divider" />
+
+              {/* Model switcher */}
+              <div className="chat__header-dropdown-label">Model</div>
+              {MODELS.map(m => (
+                <button
+                  key={m.value}
+                  className={`chat__header-dropdown-item${model === m.value ? ' chat__header-dropdown-item--active' : ''}`}
+                  onClick={() => { setModel(m.value); setHeaderMenuOpen(false) }}
+                >
+                  <span>{m.label}</span>
+                  {model === m.value && <IconCheck size={12} className="chat__header-dropdown-check" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="chat__header-right">
           {sessionUsage && (
             <span className="chat__usage-total">
@@ -525,7 +576,6 @@ export function ChatView() {
           />
           <InputControls
             model={model}
-            onModelChange={setModel}
             effort={effort}
             onEffortChange={setEffort}
             thinking={thinking}
@@ -539,6 +589,8 @@ export function ChatView() {
             onSettingsClick={() => setVoiceSettingsOpen(true)}
             onIdeasClick={() => setIdeasOpen(true)}
             hasPendingIdeas={pendingIdeasCount > 0}
+            isSpeaking={!!speakingMessageId}
+            onStopReading={handleStopSpeaking}
           />
         </div>
       </div>
@@ -580,6 +632,17 @@ export function ChatView() {
       />
     </div>
   )
+}
+
+export function ChatView() {
+  const activeSessionId = useStore(s => s.activeSessionId)
+  const pendingSession = useStore(s => s.pendingSession)
+
+  if (!activeSessionId && !pendingSession) {
+    return <ChatViewEmpty />
+  }
+
+  return <ChatViewFull />
 }
 
 function fmt(n: number): string {

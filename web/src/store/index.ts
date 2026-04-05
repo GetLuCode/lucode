@@ -59,6 +59,7 @@ interface AppState {
   loadProjects: () => Promise<void>
   createProject: (data: Partial<Project>) => Promise<Project>
   deleteProject: (id: string) => Promise<void>
+  renameProject: (id: string, name: string) => Promise<void>
   setActiveProject: (id: string) => Promise<void>
   setActiveSession: (id: string) => Promise<void>
   setPendingSession: (projectId: string, model: string) => void
@@ -248,6 +249,13 @@ export const useStore = create<AppState>((set, get) => ({
       projects: s.projects.filter(p => p.id !== id),
       sessions: s.sessions.filter(sess => sess.project_id !== id),
       activeProjectId: s.activeProjectId === id ? null : s.activeProjectId,
+    }))
+  },
+
+  renameProject: async (id, name) => {
+    await api.renameProject(id, name)
+    set(s => ({
+      projects: s.projects.map(p => p.id === id ? { ...p, name } : p),
     }))
   },
 

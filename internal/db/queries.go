@@ -66,6 +66,11 @@ func DeleteProject(db *sql.DB, id string) error {
 	return err
 }
 
+func UpdateProjectName(db *sql.DB, id, name string) error {
+	_, err := db.Exec(`UPDATE projects SET name=? WHERE id=?`, name, id)
+	return err
+}
+
 // ---- Session ----
 
 type Session struct {
