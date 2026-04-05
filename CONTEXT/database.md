@@ -68,8 +68,8 @@ CREATE TABLE sessions (
 CREATE TABLE messages (
     id         TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    role       TEXT NOT NULL,    -- user|assistant|tool_result|system|thinking|raw
-    content    TEXT NOT NULL,
+    role       TEXT NOT NULL,    -- user|assistant|hook|thinking|system|raw ⭐
+    content    TEXT NOT NULL,    -- plain text OR JSON ⭐
     seq        INTEGER NOT NULL,
     created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -77,11 +77,22 @@ CREATE TABLE messages (
 CREATE INDEX idx_messages_session_seq ON messages(session_id, seq);
 ```
 
-`content` is clean text, not raw JSON. `seq` is assigned from `NextMessageSeq()` which returns `MAX(seq)+1`.
+**Content format** ⭐:
+- **User messages**:
+  - Plain text: `"message text"`
+  - With image: JSON array (see StartTurn section above)
+- **Hook messages** (role="hook"):
+  ```json
+  { "tool_name": "Bash", "tool_input": {...}, "decision": "approve|deny|timeout" }
+  ```
+- **Other roles** (assistant, thinking, etc.): clean text, not raw JSON
+
+`seq` is assigned from `NextMessageSeq()` which returns `MAX(seq)+1`.
 
 Only final (non-partial) messages are persisted:
 - `message_stop` event → text finalized, role=`assistant`, content=accumulated text
 - `content_block_stop` for thinking blocks → role=`thinking`, content=accumulated thinking
+- Hook decisions → inserted on `onHookRespond` or `onHookDisconnect` with role="hook"
 - Streaming deltas (`content_block_delta`) are not stored individually.
 
 The index `(session_id, seq)` enables efficient cursor-based pagination in `ListMessagesPaginated()`.
