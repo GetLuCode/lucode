@@ -6,7 +6,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	dbpkg "claude-orchestrator/internal/db"
 	sessionpkg "claude-orchestrator/internal/session"
@@ -16,13 +19,14 @@ import (
 )
 
 type Handler struct {
-	db      *sql.DB
-	hub     *wspkg.Hub
-	manager *sessionpkg.Manager
+	db         *sql.DB
+	hub        *wspkg.Hub
+	manager    *sessionpkg.Manager
+	workingDir string
 }
 
-func New(db *sql.DB, hub *wspkg.Hub, manager *sessionpkg.Manager) *Handler {
-	return &Handler{db: db, hub: hub, manager: manager}
+func New(db *sql.DB, hub *wspkg.Hub, manager *sessionpkg.Manager, workingDir string) *Handler {
+	return &Handler{db: db, hub: hub, manager: manager, workingDir: workingDir}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -49,6 +53,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/ideas", h.createIdea)
 	mux.HandleFunc("PATCH /api/ideas/{id}", h.updateIdea)
 	mux.HandleFunc("DELETE /api/ideas/{id}", h.deleteIdea)
+
+	mux.HandleFunc("GET /api/config", h.getConfig)
+	mux.HandleFunc("GET /api/fs/dirs", h.listDirs)
+	mux.HandleFunc("PATCH /api/projects/{id}", h.updateProject)
 
 	mux.HandleFunc("GET /ws", h.wsUpgrade)
 }
@@ -497,6 +505,97 @@ func (h *Handler) updateIdea(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) deleteIdea(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := dbpkg.DeleteIdea(h.db, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) getConfig(w http.ResponseWriter, r *http.Request) {
+	jsonResp(w, http.StatusOK, map[string]string{"working_dir": h.workingDir})
+}
+
+func (h *Handler) listDirs(w http.ResponseWriter, r *http.Request) {
+	pathParam := r.URL.Query().Get("path")
+
+	// Determine the effective root (workingDir or home)
+	effectiveRoot := h.workingDir
+	if effectiveRoot == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			http.Error(w, "cannot determine home dir", http.StatusInternalServerError)
+			return
+		}
+		effectiveRoot = home
+	}
+
+	if pathParam == "" {
+		pathParam = effectiveRoot
+	}
+
+	// Security: don't allow navigation above effectiveRoot
+	absPath, err := filepath.Abs(pathParam)
+	if err != nil {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	absEffectiveRoot, err := filepath.Abs(effectiveRoot)
+	if err != nil {
+		http.Error(w, "invalid root dir", http.StatusInternalServerError)
+		return
+	}
+	// Check if absPath is under or equal to effectiveRoot
+	if absPath != absEffectiveRoot && !strings.HasPrefix(absPath, absEffectiveRoot+string(os.PathSeparator)) {
+		http.Error(w, "path outside root directory", http.StatusBadRequest)
+		return
+	}
+
+	// List subdirectories
+	entries, err := os.ReadDir(pathParam)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			dirs = append(dirs, entry.Name())
+		}
+	}
+
+	// Calculate parent: can't go above effectiveRoot
+	parent := ""
+	if pathParam != effectiveRoot {
+		parent = filepath.Dir(pathParam)
+		// Ensure parent doesn't go above effectiveRoot
+		if parent != effectiveRoot && !strings.HasPrefix(parent, effectiveRoot+string(os.PathSeparator)) {
+			parent = ""
+		}
+	}
+
+	jsonResp(w, http.StatusOK, map[string]any{
+		"path":   pathParam,
+		"parent": parent,
+		"root":   effectiveRoot,
+		"dirs":   dirs,
+	})
+}
+
+func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if err := dbpkg.UpdateProjectName(h.db, id, body.Name); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

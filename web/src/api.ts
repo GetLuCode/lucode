@@ -22,6 +22,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 export const listProjects = () => req<Project[]>('GET', '/api/projects')
 export const createProject = (data: Partial<Project>) => req<Project>('POST', '/api/projects', data)
 export const deleteProject = (id: string) => req<void>('DELETE', `/api/projects/${id}`)
+export const renameProject = (id: string, name: string) => req<void>('PATCH', `/api/projects/${id}`, { name })
 
 // Sessions
 export const listSessions = (pid: string) => req<Session[]>('GET', `/api/projects/${pid}/sessions`)
@@ -47,3 +48,8 @@ export const listMessages = (id: string, opts?: { limit?: number; beforeSeq?: nu
 export const getMessageContext = (messageId: string) => req<Message[]>('GET', `/api/messages/${messageId}/context`)
 export const toggleStarMessage = (messageId: string) => req<{ starred: boolean }>('PATCH', `/api/messages/${messageId}/star`)
 export const listStarredMessages = (sessionId: string) => req<Message[]>('GET', `/api/sessions/${sessionId}/starred`)
+
+// Config & filesystem
+export const getConfig = () => req<{ working_dir: string }>('GET', '/api/config')
+export const listDirs = (path: string) =>
+  req<{ path: string; parent: string; dirs: string[] }>('GET', `/api/fs/dirs?path=${encodeURIComponent(path)}`)

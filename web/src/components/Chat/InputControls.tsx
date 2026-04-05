@@ -1,26 +1,21 @@
-import { Listbox } from '@headlessui/react'
-import { IconBulb, IconMicrophone, IconMicrophoneOff, IconNotes } from '@tabler/icons-react'
+import { IconGauge, IconMicrophone, IconMicrophoneOff, IconNotes, IconPlayerStop } from '@tabler/icons-react'
 import { AttachmentButton } from './AttachmentButton'
 import { ThinkingToggle } from './ThinkingToggle'
 import { SettingsMenu } from './SettingsMenu'
 
-const MODELS = [
-  { label: 'Haiku 4.5', value: 'haiku' },
-  { label: 'Sonnet 4.6', value: 'sonnet' },
-  { label: 'Opus 4.6', value: 'opus' },
-]
+const EFFORTS = ['auto', 'low', 'medium', 'high', 'max'] as const
+type Effort = typeof EFFORTS[number]
 
-const EFFORTS = [
-  { label: 'Auto', value: 'auto' },
-  { label: 'Low', value: 'low' },
-  { label: 'Medium', value: 'medium' },
-  { label: 'High', value: 'high' },
-  { label: 'Max', value: 'max' },
-]
+const EFFORT_LABELS: Record<Effort, string> = {
+  auto: 'Auto',
+  low: 'Low',
+  medium: 'Med',
+  high: 'High',
+  max: 'Max',
+}
 
 interface Props {
   model: string
-  onModelChange: (model: string) => void
   effort: string
   onEffortChange: (effort: string) => void
   thinking: boolean | string
@@ -34,11 +29,12 @@ interface Props {
   onSettingsClick?: () => void
   onIdeasClick?: () => void
   hasPendingIdeas?: boolean
+  isSpeaking?: boolean
+  onStopReading?: () => void
 }
 
 export function InputControls({
   model,
-  onModelChange,
   effort,
   onEffortChange,
   thinking,
@@ -52,28 +48,39 @@ export function InputControls({
   onSettingsClick = () => {},
   onIdeasClick = () => {},
   hasPendingIdeas = false,
+  isSpeaking = false,
+  onStopReading = () => {},
 }: Props) {
+  const handleEffortCycle = () => {
+    const idx = EFFORTS.indexOf(effort as Effort)
+    const next = EFFORTS[(idx + 1) % EFFORTS.length]
+    onEffortChange(next)
+  }
+
+  const effortLabel = EFFORT_LABELS[effort as Effort] ?? effort
+  const isNonDefaultEffort = effort !== 'auto'
+
   return (
     <div className="input-controls">
-      {/* Left: Attachment and thinking toggle */}
+      {/* Left: tools */}
       <div className="input-controls__group input-controls__group--left">
         <AttachmentButton onImageSelect={onImageSelect} disabled={isRunning} />
         <ThinkingToggle thinking={String(thinking)} onThinkingChange={onThinkingChange} disabled={isRunning} />
 
-        {/* Voice controls group - mic button only */}
-        <div className="tooltip-wrapper">
-          <button
-            className={`thinking-toggle ${isListening ? 'thinking-toggle--listening' : ''}`}
-            onClick={onMicToggle}
-            disabled={isRunning}
-            title={isListening ? 'Stop recording' : 'Start voice input'}
-          >
-            {isListening ? <IconMicrophoneOff size={18} /> : <IconMicrophone size={18} />}
-          </button>
-          <div className="tooltip">
-            {isListening ? 'Stop recording' : 'Start voice input'}
+        {/* Effort toggle — only for non-haiku models */}
+        {model !== 'haiku' && (
+          <div className="tooltip-wrapper">
+            <button
+              className={`thinking-toggle thinking-toggle--effort thinking-toggle--effort-${effort}`}
+              onClick={handleEffortCycle}
+              disabled={isRunning}
+            >
+              <IconGauge size={18} />
+              {isNonDefaultEffort && <span className="thinking-toggle__label">{effortLabel}</span>}
+            </button>
+            <div className="tooltip">Effort: {effortLabel}</div>
           </div>
-        </div>
+        )}
 
         {/* Ideas button */}
         <div className="tooltip-wrapper">
@@ -89,58 +96,36 @@ export function InputControls({
 
         {/* Settings menu */}
         <SettingsMenu onVoiceSettingsClick={onSettingsClick} disabled={isRunning} />
+
+        {/* Stop reading button — blinking, visible only when TTS is active */}
+        {isSpeaking && (
+          <div className="tooltip-wrapper">
+            <button
+              className="thinking-toggle stop-reading-btn"
+              onClick={onStopReading}
+              title="Stop reading"
+            >
+              <IconPlayerStop size={18} />
+            </button>
+            <div className="tooltip">Stop reading</div>
+          </div>
+        )}
       </div>
 
-      {/* Center/Right: Selects and send button */}
+      {/* Right: mic + send */}
       <div className="input-controls__group input-controls__group--right">
-        <div className={`labeled-select${model === 'haiku' || isRunning ? ' labeled-select--disabled' : ''}`}>
-          <span className="labeled-select__label">Effort</span>
-          <Listbox value={effort} onChange={onEffortChange} disabled={isRunning || model === 'haiku'}>
-            <div className="listbox-wrapper">
-              <Listbox.Button className="listbox-button">
-                {EFFORTS.find(e => e.value === effort)?.label || 'Effort'}
-                <span className="listbox-caret">▼</span>
-              </Listbox.Button>
-              <Listbox.Options className="listbox-options">
-                {EFFORTS.map(e => (
-                  <Listbox.Option
-                    key={e.value}
-                    value={e.value}
-                    className={({ active, selected }) =>
-                      `listbox-option ${active ? 'listbox-option--active' : ''} ${selected ? 'listbox-option--selected' : ''}`
-                    }
-                  >
-                    {e.label}
-                  </Listbox.Option>
-                ))}
-              </Listbox.Options>
-            </div>
-          </Listbox>
-        </div>
-
-        <div className={`labeled-select${isRunning ? ' labeled-select--disabled' : ''}`}>
-          <span className="labeled-select__label">Model</span>
-          <Listbox value={model} onChange={onModelChange} disabled={isRunning}>
-            <div className="listbox-wrapper">
-              <Listbox.Button className="listbox-button">
-                {MODELS.find(m => m.value === model)?.label || 'Model'}
-                <span className="listbox-caret">▼</span>
-              </Listbox.Button>
-              <Listbox.Options className="listbox-options">
-                {MODELS.map(m => (
-                  <Listbox.Option
-                    key={m.value}
-                    value={m.value}
-                    className={({ active, selected }) =>
-                      `listbox-option ${active ? 'listbox-option--active' : ''} ${selected ? 'listbox-option--selected' : ''}`
-                    }
-                  >
-                    {m.label}
-                  </Listbox.Option>
-                ))}
-              </Listbox.Options>
-            </div>
-          </Listbox>
+        <div className="tooltip-wrapper">
+          <button
+            className={`thinking-toggle ${isListening ? 'thinking-toggle--listening' : ''}`}
+            onClick={onMicToggle}
+            disabled={isRunning}
+            title={isListening ? 'Stop recording' : 'Start voice input'}
+          >
+            {isListening ? <IconMicrophoneOff size={18} /> : <IconMicrophone size={18} />}
+          </button>
+          <div className="tooltip">
+            {isListening ? 'Stop recording' : 'Start voice input'}
+          </div>
         </div>
 
         <button

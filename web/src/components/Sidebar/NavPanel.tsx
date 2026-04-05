@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
+import { IconDots, IconEdit, IconTrash } from '@tabler/icons-react'
+import { WorkspacePicker } from './WorkspacePicker'
 
 export function NavPanel() {
   const navigate = useNavigate()
@@ -14,17 +16,19 @@ export function NavPanel() {
   const setPendingSession = useStore(s => s.setPendingSession)
   const createProject = useStore(s => s.createProject)
   const deleteProject = useStore(s => s.deleteProject)
+  const renameProject = useStore(s => s.renameProject)
   const deleteSession = useStore(s => s.deleteSession)
   const renameSession = useStore(s => s.renameSession)
   const sessionStatus = useStore(s => s.sessionStatus)
 
   const [collapsed, setCollapsed] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
-  const [showNewProject, setShowNewProject] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newDirs, setNewDirs] = useState('')
+  const [showWorkspacePicker, setShowWorkspacePicker] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [editingType, setEditingType] = useState<'project' | 'session' | null>(null)
+  const [activeProjectMenu, setActiveProjectMenu] = useState<string | null>(null)
+  const [activeSessionMenu, setActiveSessionMenu] = useState<string | null>(null)
 
   const toggleProject = (id: string) => {
     setExpandedProjects(prev => {
@@ -41,16 +45,11 @@ export function NavPanel() {
     navigate(`/projects/${id}`)
   }
 
-  const handleCreateProject = async () => {
-    if (!newName.trim()) return
-    const dirs = newDirs.split('\n').map(d => d.trim()).filter(Boolean)
-    const p = await createProject({ name: newName.trim(), work_dirs: dirs })
+  const handleWorkspacePickerConfirm = async (name: string, path: string) => {
+    const p = await createProject({ name, work_dirs: [path] })
     await setActiveProject(p.id)
     setExpandedProjects(prev => new Set([...prev, p.id]))
     navigate(`/projects/${p.id}`)
-    setShowNewProject(false)
-    setNewName('')
-    setNewDirs('')
   }
 
   const handleNewSession = (proj: Project) => {
@@ -58,18 +57,33 @@ export function NavPanel() {
     setPendingSession(proj.id, model)
   }
 
-  const handleStartEdit = (sess: Session, e: React.MouseEvent) => {
+  const handleStartEditProject = (proj: Project, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingId(proj.id)
+    setEditingName(proj.name)
+    setEditingType('project')
+    setActiveProjectMenu(null)
+  }
+
+  const handleStartEditSession = (sess: Session, e: React.MouseEvent) => {
     e.stopPropagation()
     setEditingId(sess.id)
     setEditingName(sess.name)
+    setEditingType('session')
+    setActiveSessionMenu(null)
   }
 
   const handleSaveEdit = async () => {
     if (editingId && editingName.trim()) {
-      await renameSession(editingId, editingName.trim())
+      if (editingType === 'project') {
+        await renameProject(editingId, editingName.trim())
+      } else if (editingType === 'session') {
+        await renameSession(editingId, editingName.trim())
+      }
     }
     setEditingId(null)
     setEditingName('')
+    setEditingType(null)
   }
 
   const statusDot = (sess: Session) => {
@@ -108,32 +122,16 @@ export function NavPanel() {
           <span className="nav-panel__label">Workspace</span>
           <button
             className="icon-btn"
-            onClick={() => setShowNewProject(v => !v)}
-            title="New project"
+            onClick={() => setShowWorkspacePicker(v => !v)}
+            title="New workspace"
           >+</button>
         </div>
 
-        {/* new project form */}
-        {showNewProject && (
-          <div className="nav-panel__new-project">
-            <input
-              className="input"
-              placeholder="Project name"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreateProject()}
-              autoFocus
-            />
-            <textarea
-              className="input"
-              placeholder="Work dirs (one per line)"
-              value={newDirs}
-              onChange={e => setNewDirs(e.target.value)}
-              rows={2}
-            />
-            <button className="btn btn--primary" onClick={handleCreateProject}>Create</button>
-          </div>
-        )}
+        <WorkspacePicker
+          isOpen={showWorkspacePicker}
+          onClose={() => setShowWorkspacePicker(false)}
+          onConfirm={handleWorkspacePickerConfirm}
+        />
 
         {/* tree */}
         <ul className="nav-tree">
@@ -157,7 +155,23 @@ export function NavPanel() {
                     <span className={`nav-tree__chevron-icon${isExpanded ? ' nav-tree__chevron-icon--open' : ''}`}>▸</span>
                   </button>
                   <span className="nav-tree__project-dot" />
-                  <span className="nav-tree__project-name">{p.name}</span>
+                  {editingId === p.id && editingType === 'project' ? (
+                    <input
+                      className="input nav-tree__edit-input"
+                      value={editingName}
+                      onChange={e => setEditingName(e.target.value)}
+                      onKeyDown={e => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter') handleSaveEdit()
+                        if (e.key === 'Escape') { setEditingId(null); setEditingName(''); setEditingType(null) }
+                      }}
+                      onBlur={handleSaveEdit}
+                      onClick={e => e.stopPropagation()}
+                      autoFocus
+                    />
+                  ) : (
+                    <span className="nav-tree__project-name">{p.name}</span>
+                  )}
                   <div className="nav-tree__actions">
                     {isActive && (
                       <button
@@ -166,11 +180,31 @@ export function NavPanel() {
                         title="New session"
                       >+</button>
                     )}
-                    <button
-                      className="icon-btn icon-btn--danger nav-tree__action-btn"
-                      onClick={e => { e.stopPropagation(); deleteProject(p.id) }}
-                      title="Delete project"
-                    >×</button>
+                    <div className="nav-tree__menu-container">
+                      <button
+                        className="icon-btn nav-tree__action-btn"
+                        onClick={e => { e.stopPropagation(); setActiveProjectMenu(activeProjectMenu === p.id ? null : p.id) }}
+                        title="Project menu"
+                      >⋯</button>
+                      {activeProjectMenu === p.id && (
+                        <div className="nav-tree__dropdown">
+                          <button
+                            className="nav-tree__menu-item"
+                            onClick={e => { e.stopPropagation(); handleStartEditProject(p, e) }}
+                          >
+                            <IconEdit size={14} />
+                            <span>Rename</span>
+                          </button>
+                          <button
+                            className="nav-tree__menu-item nav-tree__menu-item--danger"
+                            onClick={e => { e.stopPropagation(); deleteProject(p.id); setActiveProjectMenu(null) }}
+                          >
+                            <IconTrash size={14} />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -194,7 +228,7 @@ export function NavPanel() {
                           <span className="nav-tree__connector" />
                           <span className={statusClass(s)}>{statusDot(s)}</span>
                           <div className="nav-tree__session-info">
-                            {editingId === s.id ? (
+                            {editingId === s.id && editingType === 'session' ? (
                               <input
                                 className="input session-list__edit-input"
                                 value={editingName}
@@ -202,7 +236,7 @@ export function NavPanel() {
                                 onKeyDown={e => {
                                   e.stopPropagation()
                                   if (e.key === 'Enter') handleSaveEdit()
-                                  if (e.key === 'Escape') { setEditingId(null); setEditingName('') }
+                                  if (e.key === 'Escape') { setEditingId(null); setEditingName(''); setEditingType(null) }
                                 }}
                                 onBlur={handleSaveEdit}
                                 onClick={e => e.stopPropagation()}
@@ -210,21 +244,38 @@ export function NavPanel() {
                               />
                             ) : (
                               <>
-                                <span
-                                  className="nav-tree__session-name"
-                                  onDoubleClick={e => handleStartEdit(s, e)}
-                                >
+                                <span className="nav-tree__session-name">
                                   {s.name || 'Untitled'}
                                 </span>
                                 <span className="nav-tree__session-meta">{s.message_count} msgs</span>
                               </>
                             )}
                           </div>
-                          <button
-                            className="icon-btn icon-btn--danger nav-tree__action-btn"
-                            onClick={e => { e.stopPropagation(); deleteSession(s.id) }}
-                            title="Delete session"
-                          >×</button>
+                          <div className="nav-tree__menu-container">
+                            <button
+                              className="icon-btn nav-tree__action-btn"
+                              onClick={e => { e.stopPropagation(); setActiveSessionMenu(activeSessionMenu === s.id ? null : s.id) }}
+                              title="Session menu"
+                            >⋯</button>
+                            {activeSessionMenu === s.id && (
+                              <div className="nav-tree__dropdown">
+                                <button
+                                  className="nav-tree__menu-item"
+                                  onClick={e => { e.stopPropagation(); handleStartEditSession(s, e) }}
+                                >
+                                  <IconEdit size={14} />
+                                  <span>Rename</span>
+                                </button>
+                                <button
+                                  className="nav-tree__menu-item nav-tree__menu-item--danger"
+                                  onClick={e => { e.stopPropagation(); deleteSession(s.id); setActiveSessionMenu(null) }}
+                                >
+                                  <IconTrash size={14} />
+                                  <span>Delete</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </li>
                       ))
                     )}
