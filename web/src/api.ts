@@ -25,13 +25,13 @@ export const deleteProject = (id: string) => req<void>('DELETE', `/api/projects/
 
 // Sessions
 export const listSessions = (pid: string) => req<Session[]>('GET', `/api/projects/${pid}/sessions`)
-export const createSession = (pid: string, data: { message?: string; name?: string; model?: string; effort?: string; thinking?: string }) =>
+export const createSession = (pid: string, data: { message?: string; name?: string; model?: string; effort?: string; thinking?: string; image?: { base64: string; mediaType: string } | null }) =>
   req<Session>('POST', `/api/projects/${pid}/sessions`, data)
 export const deleteSession = (id: string) => req<void>('DELETE', `/api/sessions/${id}`)
 export const renameSession = (id: string, name: string) =>
   req<void>('PATCH', `/api/sessions/${id}`, { name })
-export const sendTurn = (id: string, message: string, model?: string, effort?: string, thinking?: string) =>
-  req<void>('POST', `/api/sessions/${id}/turn`, { message, model, effort, thinking })
+export const sendTurn = (id: string, message: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) =>
+  req<void>('POST', `/api/sessions/${id}/turn`, { message, model, effort, thinking, image })
 export const forkSession = (id: string, name: string, message?: string) =>
   req<Session>('POST', `/api/sessions/${id}/fork`, { name, message })
 
