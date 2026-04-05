@@ -190,12 +190,14 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 // onHookRequest is called by the hub when a hook binary sends hook_request.
 func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 	inputStr := string(toolInput)
+	createdAt := time.Now().UTC()
 
 	_ = dbpkg.InsertPendingHook(m.db, dbpkg.PendingHook{
 		SessionID: sessID,
 		ToolUseID: toolUseID,
 		ToolName:  toolName,
 		ToolInput: inputStr,
+		CreatedAt: createdAt,
 	})
 	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusWaitingHook))
 
@@ -205,11 +207,32 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 		"tool_use_id": toolUseID,
 		"tool_name":   toolName,
 		"tool_input":  toolInput,
+		"created_at":  createdAt.Format(time.RFC3339Nano),
 	})
 }
 
 // onHookRespond is called by the hub when the browser sends hook_respond.
 func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
+	// Retrieve hook info before deleting
+	hook, err := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
+	if err == nil {
+		// Insert hook decision message in DB
+		content, _ := json.Marshal(map[string]any{
+			"tool_name":  hook.ToolName,
+			"tool_input": json.RawMessage(hook.ToolInput),
+			"decision":   decision,
+			"reason":     reason,
+		})
+		seq, _ := dbpkg.NextMessageSeq(m.db, sessID)
+		dbpkg.InsertMessage(m.db, dbpkg.Message{
+			ID:        uuid.New().String(),
+			SessionID: sessID,
+			Role:      "hook",
+			Content:   string(content),
+			Seq:       seq,
+		})
+	}
+
 	dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
 
 	// If no more pending hooks, mark session as running; otherwise stay waiting_hook
@@ -248,12 +271,33 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 // If the hook was still pending (user hadn't responded), we auto-resolve it so the
 // frontend modal closes. The hook binary already exited (allow or timeout).
 func (m *Manager) onHookDisconnect(sessID, toolUseID string) {
+	// Retrieve hook info before deleting
+	hook, _ := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
+
 	deleted, _ := dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
 	if deleted == 0 {
 		// Already resolved by user — nothing to clean up
 		return
 	}
 	log.Printf("[hook] session=%s tool_use_id=%s disconnected while pending — auto-resolving", sessID[:8], toolUseID)
+
+	// Insert hook timeout message in DB
+	if hook.SessionID != "" { // Ensure we got a valid hook record
+		content, _ := json.Marshal(map[string]any{
+			"tool_name":  hook.ToolName,
+			"tool_input": json.RawMessage(hook.ToolInput),
+			"decision":   "timeout",
+			"reason":     "",
+		})
+		seq, _ := dbpkg.NextMessageSeq(m.db, sessID)
+		dbpkg.InsertMessage(m.db, dbpkg.Message{
+			ID:        uuid.New().String(),
+			SessionID: sessID,
+			Role:      "hook",
+			Content:   string(content),
+			Seq:       seq,
+		})
+	}
 
 	remaining, _ := dbpkg.CountPendingHooks(m.db, sessID)
 	if remaining == 0 {

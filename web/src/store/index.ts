@@ -517,27 +517,71 @@ export const useStore = create<AppState>((set, get) => ({
           tool_use_id: event.tool_use_id,
           tool_name: event.tool_name,
           tool_input: event.tool_input,
+          created_at: event.created_at,
         }
         set(s => {
           const existing = s.pendingHooks[event.session_id] ?? []
           // Avoid duplicates (reconnect replay)
           if (existing.some(h => h.tool_use_id === event.tool_use_id)) return s
-          return { pendingHooks: { ...s.pendingHooks, [event.session_id]: [...existing, newHook] } }
+
+          // Create virtual hook message in chat
+          const hookMsgId = `hook-${event.tool_use_id}`
+          const hookMessage: Message = {
+            id: hookMsgId,
+            session_id: event.session_id,
+            role: 'hook',
+            content: JSON.stringify({
+              tool_name: event.tool_name,
+              tool_input: event.tool_input,
+              decision: 'pending',
+            }),
+            seq: (s.messages[event.session_id]?.length ?? 0),
+            created_at: new Date().toISOString(),
+          }
+
+          return {
+            pendingHooks: { ...s.pendingHooks, [event.session_id]: [...existing, newHook] },
+            messages: {
+              ...s.messages,
+              [event.session_id]: [...(s.messages[event.session_id] ?? []), hookMessage],
+            },
+          }
         })
         break
       }
 
-      case 'hook_resolved':
+      case 'hook_resolved': {
         set(s => {
           const existing = s.pendingHooks[event.session_id] ?? []
+          const hookMsgId = `hook-${event.tool_use_id}`
+
+          // Update virtual hook message with decision
+          const updatedMessages = (s.messages[event.session_id] ?? []).map(msg =>
+            msg.id === hookMsgId
+              ? {
+                  ...msg,
+                  content: JSON.stringify({
+                    tool_name: (JSON.parse(msg.content) as any).tool_name,
+                    tool_input: (JSON.parse(msg.content) as any).tool_input,
+                    decision: event.decision,
+                  }),
+                }
+              : msg
+          )
+
           return {
             pendingHooks: {
               ...s.pendingHooks,
               [event.session_id]: existing.filter(h => h.tool_use_id !== event.tool_use_id),
             },
+            messages: {
+              ...s.messages,
+              [event.session_id]: updatedMessages,
+            },
           }
         })
         break
+      }
 
       case 'turn_complete':
         set(s => ({

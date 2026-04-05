@@ -272,10 +272,11 @@ func NextMessageSeq(db *sql.DB, sessionID string) (int, error) {
 // ---- Pending Hook ----
 
 type PendingHook struct {
-	SessionID  string `json:"session_id"`
-	ToolUseID  string `json:"tool_use_id"`
-	ToolName   string `json:"tool_name"`
-	ToolInput  string `json:"tool_input"`
+	SessionID  string    `json:"session_id"`
+	ToolUseID  string    `json:"tool_use_id"`
+	ToolName   string    `json:"tool_name"`
+	ToolInput  string    `json:"tool_input"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 func InsertPendingHook(db *sql.DB, h PendingHook) error {
@@ -302,6 +303,21 @@ func ListPendingHooks(db *sql.DB, sessionID string) ([]PendingHook, error) {
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// GetPendingHook retrieves a single pending hook by session and tool_use ID.
+func GetPendingHook(db *sql.DB, sessionID, toolUseID string) (PendingHook, error) {
+	var h PendingHook
+	var createdAt string
+	err := db.QueryRow(
+		`SELECT session_id, tool_use_id, tool_name, tool_input, created_at FROM pending_hooks WHERE session_id=? AND tool_use_id=?`,
+		sessionID, toolUseID,
+	).Scan(&h.SessionID, &h.ToolUseID, &h.ToolName, &h.ToolInput, &createdAt)
+	if err != nil {
+		return h, err
+	}
+	h.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	return h, nil
 }
 
 // DeletePendingHook deletes a specific pending hook and returns how many rows were deleted.

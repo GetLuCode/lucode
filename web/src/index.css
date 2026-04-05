@@ -930,3 +930,300 @@ html, body, #root {
   padding: 14px 20px;
   border-top: 1px solid var(--border);
 }
+
+/* ---- Hook Toast Container ---- */
+.hook-toast-container {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 420px;
+  pointer-events: none;
+}
+
+.hook-toast {
+  pointer-events: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+}
+
+.hook-toast__header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,0.2);
+}
+
+.hook-toast__icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.hook-toast__title-group {
+  flex: 1;
+  min-width: 0;
+}
+
+.hook-toast__title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.hook-toast__subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.hook-toast__tool-badge {
+  display: inline-block;
+  background: var(--accent-dim);
+  color: var(--accent);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hook-toast__body {
+  padding: 12px 16px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.hook-toast__progress-container {
+  padding: 0 16px 12px;
+}
+
+.hook-toast__progress-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.hook-toast__progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-glow));
+  width: 100%;
+  transition: width 1s linear;
+}
+
+.hook-toast__timer {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.hook-toast__actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: rgba(0,0,0,0.1);
+}
+
+.hook-toast__btn {
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.hook-toast__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- Hook Tool Input (shared styles) ---- */
+.hook-input__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hook-input__cmd {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.hook-input__cmd-prompt {
+  color: var(--accent);
+  margin-right: 4px;
+}
+
+.hook-input__field-caption {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+  font-style: italic;
+}
+
+.hook-input__code {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 0;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.hook-input__filepath {
+  display: flex;
+  gap: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.hook-input__filepath-dir {
+  color: var(--text-muted);
+}
+
+.hook-input__filepath-file {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.hook-input__diff {
+  display: flex;
+  gap: 8px;
+}
+
+.hook-input__diff-label {
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 12px;
+  padding-top: 8px;
+}
+
+.hook-input__diff-label--remove {
+  color: #ff5f5f;
+}
+
+.hook-input__diff-label--add {
+  color: #9fefda;
+}
+
+.hook-input__diff-block {
+  flex: 1;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.hook-input__diff-block--remove {
+  background: rgba(255,95,95,0.08);
+  border-color: rgba(255,95,95,0.2);
+  color: #ff8a8a;
+}
+
+.hook-input__diff-block--add {
+  background: var(--accent-dim);
+  border-color: rgba(0,212,170,0.2);
+  color: #9fefda;
+}
+
+/* ---- Hook Messages in Chat ---- */
+.msg--hook {
+  margin: 12px 0;
+}
+
+.msg__hook {
+  background: var(--bg-panel);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.msg__hook-header {
+  padding: 10px 12px;
+  background: rgba(0,212,170,0.04);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.msg__hook-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.msg__hook-decision {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 3px;
+  background: var(--bg-active);
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.msg__hook-decision--approve {
+  background: rgba(159,239,218,0.1);
+  color: #9fefda;
+}
+
+.msg__hook-decision--deny {
+  background: rgba(255,95,95,0.1);
+  color: #ff8a8a;
+}
+
+.msg__hook-decision--timeout {
+  background: rgba(245,158,11,0.1);
+  color: #fbbf24;
+}
+
+.msg__hook-input {
+  padding: 12px;
+  font-size: 12px;
+}
