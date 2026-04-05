@@ -41,6 +41,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/fork", h.forkSession)
 
 	mux.HandleFunc("GET /api/sessions/{id}/messages", h.listMessages)
+	mux.HandleFunc("GET /api/messages/{id}/context", h.getMessageContext)
+	mux.HandleFunc("PATCH /api/messages/{id}/star", h.toggleStarMessage)
+	mux.HandleFunc("GET /api/sessions/{id}/starred", h.listStarredMessages)
 
 	mux.HandleFunc("GET /api/ideas", h.listIdeas)
 	mux.HandleFunc("POST /api/ideas", h.createIdea)
@@ -375,6 +378,62 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		"has_more":   hasMore,
 		"oldest_seq": oldestSeq,
 	})
+}
+
+func (h *Handler) getMessageContext(w http.ResponseWriter, r *http.Request) {
+	messageID := r.PathValue("id")
+
+	// Get the message to find its seq and session_id
+	message, err := dbpkg.GetMessage(h.db, messageID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "message not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get context: 25 messages before and ~25 after
+	// Use before_seq = seq + 50, limit = 50
+	beforeSeq := message.Seq + 50
+	messages, _, err := dbpkg.ListMessagesPaginated(h.db, message.SessionID, 50, &beforeSeq)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if messages == nil {
+		messages = []dbpkg.Message{}
+	}
+
+	jsonResp(w, http.StatusOK, messages)
+}
+
+func (h *Handler) toggleStarMessage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	starred, err := dbpkg.ToggleStarMessage(h.db, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResp(w, http.StatusOK, map[string]any{"starred": starred})
+}
+
+func (h *Handler) listStarredMessages(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+
+	messages, err := dbpkg.ListStarredMessages(h.db, sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if messages == nil {
+		messages = []dbpkg.Message{}
+	}
+
+	jsonResp(w, http.StatusOK, messages)
 }
 
 func (h *Handler) listIdeas(w http.ResponseWriter, r *http.Request) {

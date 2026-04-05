@@ -104,5 +104,8 @@ CREATE TABLE IF NOT EXISTS ideas (
 		return err
 	}
 
+	// Add starred column to messages (idempotent — ignore error if already exists)
+	db.Exec(`ALTER TABLE messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`)
+
 	return nil
 }

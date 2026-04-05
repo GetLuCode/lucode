@@ -34,6 +34,7 @@ export interface Message {
   seq: number
   created_at: string
   usage?: MessageUsage
+  starred?: boolean
 }
 
 export interface MessagesPage {

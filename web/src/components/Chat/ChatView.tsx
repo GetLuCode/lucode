@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { IconChevronDown } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
@@ -12,7 +13,9 @@ import { InputControls } from './InputControls'
 import { VoiceSettingsModal } from './VoiceBar'
 import { IdeasModal } from './IdeasModal'
 import { FilePreviewPanel } from './FilePreviewPanel'
+import { StarredPanel } from './StarredPanel'
 import { fetchIdeas } from '../../lib/ideasStorage'
+import * as api from '../../api'
 import type { Message } from '../../types'
 
 // Stable references — never inline [] or {} in Zustand selectors,
@@ -40,6 +43,15 @@ export function ChatView() {
   const sendMessage = useStore(s => s.sendMessage)
   const loadMoreMessages = useStore(s => s.loadMoreMessages)
   const filePreview = useStore(s => s.filePreview)
+  const starredPanelOpen = useStore(s => s.starredPanelOpen)
+  const openStarredPanel = useStore(s => s.openStarredPanel)
+  const closeStarredPanel = useStore(s => s.closeStarredPanel)
+  const toggleStar = useStore(s => s.toggleStar)
+  const loadStarredMessages = useStore(s => s.loadStarredMessages)
+  const loadMessageContext = useStore(s => s.loadMessageContext)
+  const starredMessages = useStore(s =>
+    activeSessionId ? (s.starredMessages[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
+  )
 
   const [input, setInput] = useState('')
   const [model, setModel] = useState('haiku')
@@ -354,6 +366,29 @@ export function ChatView() {
     )
   }
 
+  const handleScrollToMessage = useCallback((messageId: string) => {
+    const index = messages.findIndex(m => m.id === messageId)
+
+    // If message not found, fetch context around it
+    if (index === -1) {
+      if (!activeSessionId) return
+
+      loadMessageContext(messageId, activeSessionId).then(() => {
+        // After loading context, try to find and scroll to the message
+        setTimeout(() => {
+          const allMessages = useStore.getState().messages[activeSessionId] ?? []
+          const newIndex = allMessages.findIndex(m => m.id === messageId)
+          if (newIndex !== -1) {
+            virtualizer.scrollToIndex(newIndex, { align: 'center', behavior: 'smooth' })
+          }
+        }, 0)
+      })
+      return
+    }
+
+    virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' })
+  }, [messages, virtualizer, activeSessionId, loadMessageContext])
+
   const virtualItems = virtualizer.getVirtualItems()
 
   const headerName = isPending ? 'New session' : (session?.name || 'Session')
@@ -362,6 +397,23 @@ export function ChatView() {
     <div className={`chat${filePreview ? ' chat--preview-open' : ''}`}>
       <div className="chat__header">
         <span className="chat__session-name">{headerName}</span>
+        <button
+          className={`chat__starred-caret${starredPanelOpen ? ' chat__starred-caret--open' : ''}`}
+          onClick={() => {
+            if (starredPanelOpen) {
+              closeStarredPanel()
+            } else {
+              if (activeSessionId) {
+                loadStarredMessages(activeSessionId)
+              }
+              openStarredPanel()
+            }
+          }}
+          aria-label={starredPanelOpen ? 'Close starred messages' : 'View starred messages'}
+          title="Starred messages"
+        >
+          <IconChevronDown size={14} />
+        </button>
         <div className="chat__header-right">
           {sessionUsage && (
             <span className="chat__usage-total">
@@ -409,6 +461,8 @@ export function ChatView() {
                 isBeingRead={speakingMessageId === messages[virtualItem.index]?.id}
                 onSpeak={handleSpeakMessage}
                 onStopSpeaking={handleStopSpeaking}
+                isStarred={messages[virtualItem.index]?.starred}
+                onStar={toggleStar}
               />
             </div>
           ))}
@@ -515,6 +569,15 @@ export function ChatView() {
 
       {/* File preview panel — slides in from right, full chat height */}
       <FilePreviewPanel />
+
+      {/* Starred messages panel — slides in from right */}
+      <StarredPanel
+        isOpen={starredPanelOpen}
+        messages={starredMessages}
+        onClose={closeStarredPanel}
+        onUnstar={toggleStar}
+        onSelectMessage={handleScrollToMessage}
+      />
     </div>
   )
 }

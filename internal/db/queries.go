@@ -163,6 +163,7 @@ type Message struct {
 	Content   string    `json:"content"`
 	Seq       int       `json:"seq"`
 	CreatedAt time.Time `json:"created_at"`
+	Starred   bool      `json:"starred"`
 }
 
 func InsertMessage(db *sql.DB, m Message) error {
@@ -180,9 +181,25 @@ func InsertMessage(db *sql.DB, m Message) error {
 	return err
 }
 
+func GetMessage(db *sql.DB, messageID string) (Message, error) {
+	var m Message
+	var createdAt string
+	var starred int
+	err := db.QueryRow(
+		`SELECT id, session_id, role, content, seq, created_at, starred FROM messages WHERE id=?`,
+		messageID,
+	).Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.Seq, &createdAt, &starred)
+	if err != nil {
+		return m, err
+	}
+	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	m.Starred = starred != 0
+	return m, nil
+}
+
 func ListMessages(db *sql.DB, sessionID string) ([]Message, error) {
 	rows, err := db.Query(
-		`SELECT id, session_id, role, content, seq, created_at FROM messages WHERE session_id=? ORDER BY seq ASC`,
+		`SELECT id, session_id, role, content, seq, created_at, starred FROM messages WHERE session_id=? ORDER BY seq ASC`,
 		sessionID,
 	)
 	if err != nil {
@@ -193,10 +210,12 @@ func ListMessages(db *sql.DB, sessionID string) ([]Message, error) {
 	for rows.Next() {
 		var m Message
 		var createdAt string
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.Seq, &createdAt); err != nil {
+		var starred int
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.Seq, &createdAt, &starred); err != nil {
 			return nil, err
 		}
 		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		m.Starred = starred != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -213,14 +232,14 @@ func ListMessagesPaginated(db *sql.DB, sessionID string, limit int, beforeSeq *i
 	// Fetch limit+1 rows in DESC order to detect hasMore, then reverse.
 	if beforeSeq != nil {
 		rows, err = db.Query(
-			`SELECT id, session_id, role, content, seq, created_at
+			`SELECT id, session_id, role, content, seq, created_at, starred
 			 FROM messages WHERE session_id=? AND seq < ?
 			 ORDER BY seq DESC LIMIT ?`,
 			sessionID, *beforeSeq, limit+1,
 		)
 	} else {
 		rows, err = db.Query(
-			`SELECT id, session_id, role, content, seq, created_at
+			`SELECT id, session_id, role, content, seq, created_at, starred
 			 FROM messages WHERE session_id=?
 			 ORDER BY seq DESC LIMIT ?`,
 			sessionID, limit+1,
@@ -235,10 +254,12 @@ func ListMessagesPaginated(db *sql.DB, sessionID string, limit int, beforeSeq *i
 	for rows.Next() {
 		var m Message
 		var createdAt string
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.Seq, &createdAt); err != nil {
+		var starred int
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.Seq, &createdAt, &starred); err != nil {
 			return nil, false, err
 		}
 		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		m.Starred = starred != 0
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -267,6 +288,51 @@ func NextMessageSeq(db *sql.DB, sessionID string) (int, error) {
 		return int(seq.Int64) + 1, nil
 	}
 	return 0, nil
+}
+
+// ToggleStarMessage toggles the starred flag on a message and returns the new value.
+func ToggleStarMessage(db *sql.DB, id string) (bool, error) {
+	_, err := db.Exec(
+		`UPDATE messages SET starred = 1 - starred WHERE id=?`,
+		id,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	var starred int
+	err = db.QueryRow(`SELECT starred FROM messages WHERE id=?`, id).Scan(&starred)
+	if err != nil {
+		return false, err
+	}
+	return starred != 0, nil
+}
+
+// ListStarredMessages returns all starred messages for a session, ordered by seq.
+func ListStarredMessages(db *sql.DB, sessionID string) ([]Message, error) {
+	rows, err := db.Query(
+		`SELECT id, session_id, role, content, seq, created_at, starred FROM messages
+		 WHERE session_id=? AND starred=1 ORDER BY seq ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Message
+	for rows.Next() {
+		var m Message
+		var createdAt string
+		var starred int
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.Seq, &createdAt, &starred); err != nil {
+			return nil, err
+		}
+		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		m.Starred = starred != 0
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // ---- Pending Hook ----

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { marked } from 'marked'
-import { IconVolume, IconVolumeOff, IconCopy, IconCheck } from '@tabler/icons-react'
+import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
@@ -15,9 +15,11 @@ interface Props {
   isBeingRead?: boolean
   onSpeak?: (messageId: string, content: string) => void
   onStopSpeaking?: () => void
+  isStarred?: boolean
+  onStar?: (messageId: string) => void
 }
 
-export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking }: Props) {
+export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking, isStarred, onStar }: Props) {
   const [copied, setCopied] = useState(false)
 
   const handleSpeak = () => {
@@ -30,6 +32,10 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleStar = () => {
+    onStar?.(message.id)
+  }
+
   return (
     <div>
       <motion.div
@@ -40,31 +46,45 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
       >
         <div className={`msg__bubble${isBeingRead ? ' msg__bubble--reading' : ''}`}>
           <BubbleContent message={message} sendHookRespond={sendHookRespond} />
-          {message.role === 'assistant' && (
+          {(message.role === 'user' || message.role === 'assistant') && (
             <div className="msg__actions">
+              {message.role === 'assistant' && (
+                <>
+                  <div className="tooltip-wrapper">
+                    {isBeingRead ? (
+                      <button
+                        className="msg__action-btn msg__action-btn--active"
+                        onClick={onStopSpeaking}
+                        aria-label="Stop reading"
+                      >
+                        <IconVolumeOff size={13} />
+                      </button>
+                    ) : (
+                      <button className="msg__action-btn" onClick={handleSpeak} aria-label="Read aloud">
+                        <IconVolume size={13} />
+                      </button>
+                    )}
+                    <div className="tooltip tooltip--up">
+                      {isBeingRead ? 'Stop reading' : 'Read aloud'}
+                    </div>
+                  </div>
+                  <div className="tooltip-wrapper">
+                    <button className="msg__action-btn" onClick={handleCopy} aria-label="Copy">
+                      {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                    </button>
+                    <div className="tooltip tooltip--up">{copied ? 'Copied!' : 'Copy'}</div>
+                  </div>
+                </>
+              )}
               <div className="tooltip-wrapper">
-                {isBeingRead ? (
-                  <button
-                    className="msg__action-btn msg__action-btn--active"
-                    onClick={onStopSpeaking}
-                    aria-label="Stop reading"
-                  >
-                    <IconVolumeOff size={13} />
-                  </button>
-                ) : (
-                  <button className="msg__action-btn" onClick={handleSpeak} aria-label="Read aloud">
-                    <IconVolume size={13} />
-                  </button>
-                )}
-                <div className="tooltip tooltip--up">
-                  {isBeingRead ? 'Stop reading' : 'Read aloud'}
-                </div>
-              </div>
-              <div className="tooltip-wrapper">
-                <button className="msg__action-btn" onClick={handleCopy} aria-label="Copy">
-                  {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                <button
+                  className={`msg__action-btn msg__action-btn--star${isStarred ? ' msg__action-btn--starred' : ''}`}
+                  onClick={handleStar}
+                  aria-label={isStarred ? 'Remove star' : 'Star message'}
+                >
+                  {isStarred ? <IconStarFilled size={13} /> : <IconStar size={13} />}
                 </button>
-                <div className="tooltip tooltip--up">{copied ? 'Copied!' : 'Copy'}</div>
+                <div className="tooltip tooltip--up">{isStarred ? 'Starred' : 'Star'}</div>
               </div>
             </div>
           )}

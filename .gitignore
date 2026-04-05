@@ -24,3 +24,5 @@ web/dist/
 .vscode/
 *.swp
 .context/
+
+NOTES.md
