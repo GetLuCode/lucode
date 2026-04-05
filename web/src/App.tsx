@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { useStore } from './store'
-import { ProjectList } from './components/Sidebar/ProjectList'
-import { SessionList } from './components/Sidebar/SessionList'
+import { NavPanel } from './components/Sidebar/NavPanel'
 import { ChatView } from './components/Chat/ChatView'
 import { HookToastContainer } from './components/Toast/HookToastContainer'
 
@@ -15,12 +14,7 @@ export default function App() {
   return (
     <div className="app">
       <HookToastContainer />
-      <aside className="sidebar sidebar--projects">
-        <ProjectList />
-      </aside>
-      <aside className="sidebar sidebar--sessions">
-        <SessionList />
-      </aside>
+      <NavPanel />
       <main className="main">
         <ChatView />
       </main>
