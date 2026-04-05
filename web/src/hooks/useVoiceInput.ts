@@ -22,6 +22,13 @@ export function useVoiceInput({
   const recognitionRef = useRef<any>(null)
   const supportedRef = useRef(false)
 
+  // Keep callback refs stable so the effect doesn't re-run when handlers change
+  const onTranscriptRef = useRef(onTranscript)
+  const onInterimRef = useRef(onInterim)
+  useEffect(() => { onTranscriptRef.current = onTranscript }, [onTranscript])
+  useEffect(() => { onInterimRef.current = onInterim }, [onInterim])
+
+  // Re-create recognition only when lang changes
   useEffect(() => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -29,16 +36,19 @@ export function useVoiceInput({
 
     if (!SpeechRecognition) return
 
+    // Stop any previous instance before replacing
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop() } catch {}
+    }
+
     const recognition = new SpeechRecognition()
     recognitionRef.current = recognition
 
     recognition.continuous = true
     recognition.interimResults = true
-    recognition.language = lang
+    recognition.lang = lang  // correct property name
 
-    recognition.onstart = () => {
-      setIsListening(true)
-    }
+    recognition.onstart = () => setIsListening(true)
 
     recognition.onresult = (event: any) => {
       let interimTranscript = ''
@@ -46,7 +56,6 @@ export function useVoiceInput({
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript
-
         if (event.results[i].isFinal) {
           finalTranscript += transcript + ' '
         } else {
@@ -54,34 +63,27 @@ export function useVoiceInput({
         }
       }
 
-      if (interimTranscript) {
-        onInterim(interimTranscript)
-      }
-
-      if (finalTranscript) {
-        onTranscript(finalTranscript.trim())
-      }
+      if (interimTranscript) onInterimRef.current(interimTranscript)
+      if (finalTranscript)   onTranscriptRef.current(finalTranscript.trim())
     }
 
     recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error)
-      if (event.error === 'no-speech') {
-        // Timeout after no speech detected
-        recognition.stop()
+      if (event.error !== 'no-speech') {
+        console.error('Speech recognition error:', event.error)
       }
+      setIsListening(false)
+      onInterimRef.current('')
     }
 
     recognition.onend = () => {
       setIsListening(false)
-      onInterim('')
+      onInterimRef.current('')
     }
 
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-      }
+      try { recognition.stop() } catch {}
     }
-  }, [lang, onTranscript, onInterim])
+  }, [lang]) // only lang — callbacks are read via ref
 
   const start = () => {
     if (recognitionRef.current && !isListening) {
