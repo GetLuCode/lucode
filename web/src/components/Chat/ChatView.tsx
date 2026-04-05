@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '../../store'
+import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import type { Message } from '../../types'
@@ -43,6 +44,9 @@ export function ChatView() {
   const prevScrollHeightRef = useRef(0)
   const isPrependingRef = useRef(false)
   const isLoadingMoreRef = useRef(false)
+
+  // Open WebSocket connection for the active session
+  useSessionWS(activeSessionId)
 
   const session = sessions.find(s => s.id === activeSessionId)
   const isRunning = sessionStatus === 'running' || sessionStatus === 'waiting_hook'
