@@ -26,6 +26,7 @@ interface AppState {
   sessions: Session[]
   activeProjectId: string | null
   activeSessionId: string | null
+  pendingSession: { projectId: string; model: string } | null
   messages: Record<string, Message[]>
   messagePagination: Record<string, MessagePagination>
   // Queue of pending hooks per session — supports concurrent parallel tool calls
@@ -41,11 +42,14 @@ interface AppState {
   deleteProject: (id: string) => Promise<void>
   setActiveProject: (id: string) => Promise<void>
   setActiveSession: (id: string) => Promise<void>
+  setPendingSession: (projectId: string, model: string) => void
+  clearPendingSession: () => void
   createSession: (pid: string, data: { message?: string; name?: string; model?: string }) => Promise<Session>
   deleteSession: (id: string) => Promise<void>
   sendMessage: (id: string, msg: string, model?: string) => void
   respondHook: (sessId: string, decision: 'approve' | 'deny', reason?: string) => void
   forkSession: (id: string, name: string) => Promise<Session>
+  renameSession: (id: string, name: string) => Promise<void>
   loadMessages: (id: string) => Promise<void>
   loadMoreMessages: (id: string) => Promise<void>
   handleWSEvent: (event: WSEvent) => void
@@ -55,6 +59,12 @@ interface AppState {
 const pendingUsageMap: Record<string, PendingUsage> = {}
 // sessId → blockIndex → 'text' | 'thinking'
 const blockTypeMap: Record<string, Record<number, string>> = {}
+
+// Helper: truncate message to title
+function toTitle(msg: string): string {
+  const trimmed = msg.trim().replace(/\s+/g, ' ')
+  return trimmed.length > 50 ? trimmed.slice(0, 50) + '…' : trimmed
+}
 
 // ---------------------------------------------------------------------------
 // replayStoredMessages
@@ -185,6 +195,7 @@ export const useStore = create<AppState>((set, get) => ({
   sessions: [],
   activeProjectId: null,
   activeSessionId: null,
+  pendingSession: null,
   messages: {},
   messagePagination: {},
   pendingHooks: {},
@@ -224,6 +235,14 @@ export const useStore = create<AppState>((set, get) => ({
     await get().loadMessages(id)
   },
 
+  setPendingSession: (projectId, model) => {
+    set({ pendingSession: { projectId, model }, activeSessionId: null })
+  },
+
+  clearPendingSession: () => {
+    set({ pendingSession: null })
+  },
+
   createSession: async (pid, data) => {
     const session = await api.createSession(pid, data)
     set(s => ({ sessions: [session, ...s.sessions] }))
@@ -239,6 +258,36 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   sendMessage: (id, msg, model) => {
+    const pending = get().pendingSession
+
+    // If sending first message in a pending session
+    if (pending) {
+      api.createSession(pending.projectId, {
+        message: msg,
+        name: toTitle(msg),
+        model: model || pending.model,
+      }).then(session => {
+        set(s => ({
+          sessions: [session, ...s.sessions],
+          activeSessionId: session.id,
+          pendingSession: null,
+        }))
+        const userMsg: Message = {
+          id: `opt-${Date.now()}`,
+          session_id: session.id,
+          role: 'user',
+          content: msg,
+          seq: 0,
+          created_at: new Date().toISOString(),
+        }
+        set(s => ({
+          messages: { ...s.messages, [session.id]: [userMsg] },
+        }))
+      }).catch(console.error)
+      return
+    }
+
+    // Normal sendTurn for existing sessions
     api.sendTurn(id, msg, model).catch(console.error)
     const seq = (get().messages[id]?.length ?? 0)
     const userMsg: Message = {
@@ -262,6 +311,15 @@ export const useStore = create<AppState>((set, get) => ({
     const session = await api.forkSession(id, name)
     set(s => ({ sessions: [session, ...s.sessions] }))
     return session
+  },
+
+  renameSession: async (id, name) => {
+    await api.renameSession(id, name)
+    set(s => ({
+      sessions: s.sessions.map(sess =>
+        sess.id === id ? { ...sess, name } : sess
+      ),
+    }))
   },
 
   loadMessages: async (id) => {

@@ -20,6 +20,7 @@ const MODELS = [
 
 export function ChatView() {
   const activeSessionId = useStore(s => s.activeSessionId)
+  const pendingSession = useStore(s => s.pendingSession)
   const messages = useStore(s =>
     activeSessionId ? (s.messages[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   )
@@ -56,6 +57,7 @@ export function ChatView() {
   const hasStreamingThinking = streamingThinking.length > 0
   const hasMore = pagination?.hasMore ?? false
   const isLoadingMore = pagination?.isLoadingMore ?? false
+  const isPending = !activeSessionId && pendingSession !== null
 
   // Virtual list
   const virtualizer = useVirtualizer({
@@ -109,8 +111,10 @@ export function ChatView() {
   }, [hasMore, triggerLoadMore])
 
   const handleSend = () => {
-    if (!input.trim() || !activeSessionId || isRunning) return
-    sendMessage(activeSessionId, input.trim(), model)
+    if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning) return
+    // For pending sessions, we pass a placeholder ID; sendMessage handles the actual creation
+    const targetId = activeSessionId || 'pending'
+    sendMessage(targetId, input.trim(), model)
     setInput('')
   }
 
@@ -121,7 +125,7 @@ export function ChatView() {
     }
   }
 
-  if (!activeSessionId) {
+  if (!activeSessionId && !pendingSession) {
     return (
       <div className="chat chat--empty">
         <div className="chat__empty-state">
@@ -134,10 +138,12 @@ export function ChatView() {
 
   const virtualItems = virtualizer.getVirtualItems()
 
+  const headerName = isPending ? 'New session' : (session?.name || 'Session')
+
   return (
     <div className="chat">
       <div className="chat__header">
-        <span className="chat__session-name">{session?.name || 'Session'}</span>
+        <span className="chat__session-name">{headerName}</span>
         <div className="chat__header-right">
           {sessionUsage && (
             <span className="chat__usage-total">
@@ -147,8 +153,9 @@ export function ChatView() {
           <span className={`chat__status chat__status--${sessionStatus}`}>
             {sessionStatus === 'running' && 'thinking…'}
             {sessionStatus === 'waiting_hook' && 'awaiting approval'}
-            {sessionStatus === 'idle' && 'ready'}
-            {sessionStatus === 'error' && 'error'}
+            {isPending && 'ready'}
+            {!isPending && sessionStatus === 'idle' && 'ready'}
+            {!isPending && sessionStatus === 'error' && 'error'}
           </span>
         </div>
       </div>

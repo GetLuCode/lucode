@@ -7,11 +7,13 @@ export function SessionList() {
   const activeSessionId = useStore(s => s.activeSessionId)
   const activeProjectId = useStore(s => s.activeProjectId)
   const setActiveSession = useStore(s => s.setActiveSession)
-  const createSession = useStore(s => s.createSession)
+  const setPendingSession = useStore(s => s.setPendingSession)
   const deleteSession = useStore(s => s.deleteSession)
+  const renameSession = useStore(s => s.renameSession)
   const sessionStatus = useStore(s => s.sessionStatus)
-  const [showNew, setShowNew] = useState(false)
-  const [name, setName] = useState('')
+  const projects = useStore(s => s.projects)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
 
   if (!activeProjectId) {
     return (
@@ -21,12 +23,28 @@ export function SessionList() {
     )
   }
 
-  const handleCreate = async () => {
-    if (!activeProjectId) return
-    const sess = await createSession(activeProjectId, { name: name.trim() || 'New session' })
-    await setActiveSession(sess.id)
-    setShowNew(false)
-    setName('')
+  const handleCreateNew = () => {
+    const proj = projects.find(p => p.id === activeProjectId)
+    const model = proj?.default_model || 'haiku'
+    setPendingSession(activeProjectId, model)
+  }
+
+  const handleStartEdit = (sess: Session) => {
+    setEditingId(sess.id)
+    setEditingName(sess.name)
+  }
+
+  const handleSaveEdit = async () => {
+    if (editingId && editingName.trim()) {
+      await renameSession(editingId, editingName.trim())
+    }
+    setEditingId(null)
+    setEditingName('')
+  }
+
+  const handleCancelEdit = () => {
+    setEditingId(null)
+    setEditingName('')
   }
 
   const statusDot = (sess: Session) => {
@@ -46,22 +64,8 @@ export function SessionList() {
     <div className="session-list">
       <div className="session-list__header">
         <span className="session-list__title">Sessions</span>
-        <button className="icon-btn" onClick={() => setShowNew(v => !v)} title="New session">+</button>
+        <button className="icon-btn" onClick={handleCreateNew} title="New session">+</button>
       </div>
-
-      {showNew && (
-        <div className="session-list__new">
-          <input
-            className="input"
-            placeholder="Session name"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleCreate()}
-            autoFocus
-          />
-          <button className="btn btn--primary" onClick={handleCreate}>Create</button>
-        </div>
-      )}
 
       <ul className="session-list__items">
         {sessions.map((s: Session) => (
@@ -72,8 +76,34 @@ export function SessionList() {
           >
             <span className={statusClass(s)}>{statusDot(s)}</span>
             <div className="session-list__info">
-              <span className="session-list__name">{s.name || 'Untitled'}</span>
-              <span className="session-list__meta">{s.message_count} msgs</span>
+              {editingId === s.id ? (
+                <input
+                  className="input session-list__edit-input"
+                  value={editingName}
+                  onChange={e => setEditingName(e.target.value)}
+                  onKeyDown={e => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') handleSaveEdit()
+                    if (e.key === 'Escape') handleCancelEdit()
+                  }}
+                  onBlur={handleSaveEdit}
+                  onClick={e => e.stopPropagation()}
+                  autoFocus
+                />
+              ) : (
+                <>
+                  <span
+                    className="session-list__name"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation()
+                      handleStartEdit(s)
+                    }}
+                  >
+                    {s.name || 'Untitled'}
+                  </span>
+                  <span className="session-list__meta">{s.message_count} msgs</span>
+                </>
+              )}
             </div>
             <button
               className="icon-btn icon-btn--danger"
