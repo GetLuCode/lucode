@@ -1,5 +1,5 @@
 import { Listbox } from '@headlessui/react'
-import { IconBrain, IconMicrophone, IconMicrophoneOff, IconSettings } from '@tabler/icons-react'
+import { IconBrain, IconBulb, IconMicrophone, IconMicrophoneOff, IconSettings } from '@tabler/icons-react'
 import { AttachmentButton } from './AttachmentButton'
 
 const MODELS = [
@@ -30,6 +30,8 @@ interface Props {
   onMicToggle?: () => void
   isListening?: boolean
   onSettingsClick?: () => void
+  onIdeasClick?: () => void
+  hasPendingIdeas?: boolean
 }
 
 export function InputControls({
@@ -46,6 +48,8 @@ export function InputControls({
   onMicToggle = () => {},
   isListening = false,
   onSettingsClick = () => {},
+  onIdeasClick = () => {},
+  hasPendingIdeas = false,
 }: Props) {
   return (
     <div className="input-controls">
@@ -93,6 +97,18 @@ export function InputControls({
             </button>
             <div className="tooltip">Voice settings</div>
           </div>
+        </div>
+
+        {/* Ideas button */}
+        <div className="tooltip-wrapper">
+          <button
+            className={`thinking-toggle ideas-btn ${hasPendingIdeas ? 'ideas-btn--pending' : ''}`}
+            onClick={onIdeasClick}
+            title={hasPendingIdeas ? 'Ideas (pending)' : 'Ideas'}
+          >
+            <IconBulb size={18} />
+          </button>
+          <div className="tooltip">{hasPendingIdeas ? 'Ideas — pending items' : 'Ideas'}</div>
         </div>
       </div>
 

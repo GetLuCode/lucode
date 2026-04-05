@@ -30,6 +30,11 @@ POST   /api/sessions/{id}/fork          fork session to new branch
 
 GET    /api/sessions/{id}/messages      paginated messages (50 default, cursor-based)
 
+GET    /api/ideas?scope=                list ideas for scope (project_id or 'global') ⭐
+POST   /api/ideas                       create idea ⭐
+PATCH  /api/ideas/{id}                  toggle idea done status ⭐
+DELETE /api/ideas/{id}                  delete idea ⭐
+
 GET    /ws?role=client&session_id=<id>  browser UI WebSocket
 GET    /ws?role=hook&session_id=<id>    hook binary WebSocket
 
@@ -57,6 +62,23 @@ GET    /api/health                      200 OK
   "thinking": "adaptive|enabled|disabled",
   "image": { "base64": "...", "mediaType": "image/png" }
 }
+```
+
+**Ideas endpoints** ⭐:
+```
+GET  /api/ideas?scope=<project_id|global>
+  → 200: [{ "id": "...", "scope": "...", "text": "...", "done": false, "created_at": "..." }]
+
+POST /api/ideas
+  body: { "scope": "...", "text": "..." }
+  → 201: { "id": "...", "scope": "...", "text": "...", "done": false, "created_at": "..." }
+
+PATCH /api/ideas/{id}
+  body: { "done": true|false }
+  → 204
+
+DELETE /api/ideas/{id}
+  → 204
 ```
 
 ### Resume logic (`sendTurn`)

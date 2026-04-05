@@ -112,6 +112,20 @@ CREATE TABLE pending_hooks (
 
 Composite primary key supports multiple concurrent pending hooks (parallel tool calls). Dropped and recreated on every server start — do not store anything here that needs to survive a restart.
 
+### `ideas` ⭐
+
+```sql
+CREATE TABLE ideas (
+    id         TEXT PRIMARY KEY,
+    scope      TEXT NOT NULL,    -- project_id or 'global'
+    text       TEXT NOT NULL,
+    done       INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+```
+
+Quick notes / todo items per-project or globally. `scope='global'` for workspace-wide ideas, `scope=<project_id>` for project-specific. Boolean `done` stored as 0/1. No foreign key on scope (allows orphaning when project deleted, acceptable).
+
 ## Key Queries — `internal/db/queries.go`
 
 ```go
@@ -135,6 +149,11 @@ InsertPendingHook(db, h)                               // INSERT OR REPLACE
 ListPendingHooks(db, sessionID) []PendingHook          // used on client reconnect
 DeletePendingHook(db, sessionID, toolUseID) (int64, error)  // returns rows affected
 CountPendingHooks(db, sessionID) int
+
+InsertIdea(db, idea)                                   // ⭐ create new idea
+ListIdeas(db, scope) []Idea                            // ⭐ get all ideas for scope (project_id or 'global')
+UpdateIdeaDone(db, id, done) error                     // ⭐ toggle done status
+DeleteIdea(db, id) error                               // ⭐ remove idea
 ```
 
 **Pagination**: `ListMessagesPaginated(db, sessionID, 50, nil)` returns the 50 newest messages in ASC order. `ListMessagesPaginated(db, sessionID, 50, &oldestSeq)` returns 50 messages with `seq < oldestSeq`, also in ASC order. `hasMore=true` means more older messages exist.

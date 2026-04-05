@@ -10,6 +10,8 @@ import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { InputControls } from './InputControls'
 import { VoiceSettingsModal } from './VoiceBar'
+import { IdeasModal } from './IdeasModal'
+import { fetchIdeas } from '../../lib/ideasStorage'
 import type { Message } from '../../types'
 
 // Stable references — never inline [] or {} in Zustand selectors,
@@ -32,6 +34,7 @@ export function ChatView() {
     activeSessionId ? (s.sessionStatus[activeSessionId] ?? 'idle') : 'idle'
   )
   const sessionUsage = useStore(s => activeSessionId ? s.sessionUsage[activeSessionId] : undefined)
+  const activeProjectId = useStore(s => s.activeProjectId)
   const sessions = useStore(s => s.sessions)
   const sendMessage = useStore(s => s.sendMessage)
   const loadMoreMessages = useStore(s => s.loadMoreMessages)
@@ -51,6 +54,8 @@ export function ChatView() {
   const { isRead, markRead, loaded: ttsDbLoaded } = useTTSReadCache()
   const [interimText, setInterimText] = useState('')
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
+  const [ideasOpen, setIdeasOpen] = useState(false)
+  const [pendingIdeasCount, setPendingIdeasCount] = useState(0)
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -59,6 +64,22 @@ export function ChatView() {
   const prevScrollHeightRef = useRef(0)
   const isPrependingRef = useRef(false)
   const isLoadingMoreRef = useRef(false)
+
+  // Load pending ideas count (both scopes) when project changes
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const scopes: string[] = ['global']
+      if (activeProjectId) scopes.push(activeProjectId)
+      const results = await Promise.all(scopes.map(s => fetchIdeas(s).catch(() => [])))
+      if (!cancelled) {
+        const pending = results.flat().filter(i => !i.done).length
+        setPendingIdeasCount(pending)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [activeProjectId])
 
   // Open WebSocket connection for the active session
   const { sendHookRespond } = useSessionWS(activeSessionId)
@@ -460,9 +481,19 @@ export function ChatView() {
             onMicToggle={handleMicToggle}
             isListening={isListening}
             onSettingsClick={() => setVoiceSettingsOpen(true)}
+            onIdeasClick={() => setIdeasOpen(true)}
+            hasPendingIdeas={pendingIdeasCount > 0}
           />
         </div>
       </div>
+
+      {/* Ideas Modal */}
+      <IdeasModal
+        isOpen={ideasOpen}
+        projectId={activeProjectId}
+        onClose={() => setIdeasOpen(false)}
+        onPendingChange={setPendingIdeasCount}
+      />
 
       {/* Voice Settings Modal */}
       <VoiceSettingsModal

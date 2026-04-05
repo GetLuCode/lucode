@@ -90,5 +90,19 @@ CREATE TABLE IF NOT EXISTS pending_hooks (
 `); err != nil {
 		return err
 	}
+
+	// Ideas — quick notes scoped to a project (scope=project_id) or global (scope='global')
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS ideas (
+    id         TEXT PRIMARY KEY,
+    scope      TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    done       INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)
+`); err != nil {
+		return err
+	}
+
 	return nil
 }

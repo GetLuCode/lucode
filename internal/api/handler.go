@@ -42,6 +42,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/sessions/{id}/messages", h.listMessages)
 
+	mux.HandleFunc("GET /api/ideas", h.listIdeas)
+	mux.HandleFunc("POST /api/ideas", h.createIdea)
+	mux.HandleFunc("PATCH /api/ideas/{id}", h.updateIdea)
+	mux.HandleFunc("DELETE /api/ideas/{id}", h.deleteIdea)
+
 	mux.HandleFunc("GET /ws", h.wsUpgrade)
 }
 
@@ -370,6 +375,73 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		"has_more":   hasMore,
 		"oldest_seq": oldestSeq,
 	})
+}
+
+func (h *Handler) listIdeas(w http.ResponseWriter, r *http.Request) {
+	scope := r.URL.Query().Get("scope")
+	if scope == "" {
+		http.Error(w, "scope required", http.StatusBadRequest)
+		return
+	}
+	ideas, err := dbpkg.ListIdeas(h.db, scope)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ideas == nil {
+		ideas = []dbpkg.Idea{}
+	}
+	jsonResp(w, http.StatusOK, ideas)
+}
+
+func (h *Handler) createIdea(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Scope string `json:"scope"`
+		Text  string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Scope == "" || body.Text == "" {
+		http.Error(w, "scope and text required", http.StatusBadRequest)
+		return
+	}
+	idea := dbpkg.Idea{
+		ID:    uuid.New().String(),
+		Scope: body.Scope,
+		Text:  body.Text,
+	}
+	if err := dbpkg.InsertIdea(h.db, idea); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusCreated, idea)
+}
+
+func (h *Handler) updateIdea(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Done bool `json:"done"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := dbpkg.UpdateIdeaDone(h.db, id, body.Done); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) deleteIdea(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := dbpkg.DeleteIdea(h.db, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) wsUpgrade(w http.ResponseWriter, r *http.Request) {

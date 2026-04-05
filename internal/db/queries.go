@@ -336,7 +336,66 @@ func CountPendingHooks(db *sql.DB, sessionID string) (int, error) {
 	return n, err
 }
 
+// ---- Idea ----
+
+type Idea struct {
+	ID        string    `json:"id"`
+	Scope     string    `json:"scope"`
+	Text      string    `json:"text"`
+	Done      bool      `json:"done"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func InsertIdea(db *sql.DB, idea Idea) error {
+	_, err := db.Exec(
+		`INSERT INTO ideas (id, scope, text, done) VALUES (?,?,?,?)`,
+		idea.ID, idea.Scope, idea.Text, boolToInt(idea.Done),
+	)
+	return err
+}
+
+func ListIdeas(db *sql.DB, scope string) ([]Idea, error) {
+	rows, err := db.Query(
+		`SELECT id, scope, text, done, created_at FROM ideas WHERE scope=? ORDER BY created_at ASC`,
+		scope,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Idea
+	for rows.Next() {
+		var idea Idea
+		var done int
+		var createdAt string
+		if err := rows.Scan(&idea.ID, &idea.Scope, &idea.Text, &done, &createdAt); err != nil {
+			return nil, err
+		}
+		idea.Done = done != 0
+		idea.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, idea)
+	}
+	return out, rows.Err()
+}
+
+func UpdateIdeaDone(db *sql.DB, id string, done bool) error {
+	_, err := db.Exec(`UPDATE ideas SET done=? WHERE id=?`, boolToInt(done), id)
+	return err
+}
+
+func DeleteIdea(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM ideas WHERE id=?`, id)
+	return err
+}
+
 // ---- helpers ----
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
 
 func nullStr(s string) interface{} {
 	if s == "" {
