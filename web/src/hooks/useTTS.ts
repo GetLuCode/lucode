@@ -32,13 +32,13 @@ export interface TTSCallbacks {
 }
 
 interface TTSModule {
-  speak(text: string, lang: string, callbacks?: TTSCallbacks): void
+  speak(text: string, lang: string, voiceURI?: string | null, callbacks?: TTSCallbacks): void
   stop(): void
   isSpeakingNow(): boolean
 }
 
 const ttsModule: TTSModule = {
-  speak(text: string, lang: string, callbacks?: TTSCallbacks): void {
+  speak(text: string, lang: string, voiceURI?: string | null, callbacks?: TTSCallbacks): void {
     const synth = (window as any).speechSynthesis
     if (!synth) return
 
@@ -52,6 +52,11 @@ const ttsModule: TTSModule = {
     utterance.rate = 1.0
     utterance.pitch = 1.0
     utterance.volume = 1.0
+
+    if (voiceURI) {
+      const voice = synth.getVoices().find((v: SpeechSynthesisVoice) => v.voiceURI === voiceURI)
+      if (voice) utterance.voice = voice
+    }
 
     if (callbacks?.onStart) utterance.onstart = callbacks.onStart
     if (callbacks?.onEnd)   utterance.onend   = callbacks.onEnd
