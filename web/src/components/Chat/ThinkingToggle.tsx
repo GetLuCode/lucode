@@ -1,4 +1,4 @@
-import { IconBrain } from '@tabler/icons-react'
+import { IconBulb } from '@tabler/icons-react'
 
 interface Props {
   thinking: string
@@ -34,7 +34,7 @@ export function ThinkingToggle({ thinking, onThinkingChange, disabled }: Props) 
         disabled={disabled}
         title={getTooltip()}
       >
-        <IconBrain size={18} />
+        <IconBulb size={18} />
         {thinking === 'enabled' && <span className="thinking-toggle__label">Thinking</span>}
       </button>
       <div className="tooltip">{getTooltip()}</div>

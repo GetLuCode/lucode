@@ -1403,6 +1403,121 @@ html, body, #root {
   color: #9fefda;
 }
 
+.hook-input__preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid rgba(0,212,170,0.25);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.hook-input__preview-btn:hover {
+  background: rgba(0,212,170,0.18);
+  border-color: var(--accent);
+}
+
+/* ---- File Preview Panel ---- */
+.file-preview {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  border-left: 1px solid var(--border-bright);
+  box-shadow: -4px 0 24px rgba(0,0,0,0.45);
+  min-width: 320px;
+  max-width: calc(100% - 60px);
+}
+
+.file-preview__drag-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1;
+}
+.file-preview__drag-handle:hover,
+.file-preview__drag-handle:active {
+  background: var(--accent);
+  opacity: 0.4;
+}
+
+.file-preview__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: #252526;
+  flex-shrink: 0;
+  gap: 10px;
+}
+
+.file-preview__header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.file-preview__mode-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid rgba(0,212,170,0.3);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+.file-preview__close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border-bright);
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 5px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.file-preview__close:hover {
+  background: rgba(255,95,95,0.15);
+  border-color: rgba(255,95,95,0.4);
+  color: #ff8a8a;
+}
+
+.file-preview__body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.file-preview__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
 /* ---- Hook Messages in Chat ---- */
 .msg--hook {
   margin: 12px 0;
@@ -1410,14 +1525,12 @@ html, body, #root {
 
 .msg__hook {
   background: var(--bg-panel);
-  border-left: 3px solid var(--accent);
   border-radius: 4px;
   overflow: hidden;
 }
 
 .msg__hook-header {
   padding: 10px 12px;
-  background: rgba(0,212,170,0.04);
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
@@ -1428,32 +1541,19 @@ html, body, #root {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
 
-.msg__hook-decision {
-  font-size: 12px;
-  font-weight: 500;
-  padding: 4px 8px;
-  border-radius: 3px;
-  background: var(--bg-active);
-  color: var(--text-muted);
-  margin-top: 4px;
+.msg__hook-decision-icon {
+  font-size: 13px;
+  line-height: 1;
 }
-
-.msg__hook-decision--approve {
-  background: rgba(159,239,218,0.1);
-  color: #9fefda;
-}
-
-.msg__hook-decision--deny {
-  background: rgba(255,95,95,0.1);
-  color: #ff8a8a;
-}
-
-.msg__hook-decision--timeout {
-  background: rgba(245,158,11,0.1);
-  color: #fbbf24;
-}
+.msg__hook-decision-icon--pending  { color: var(--text-muted); }
+.msg__hook-decision-icon--approve  { color: #9fefda; }
+.msg__hook-decision-icon--deny     { color: #ff8a8a; }
+.msg__hook-decision-icon--timeout  { color: #fbbf24; }
 
 .msg__hook-input {
   padding: 12px;
@@ -1900,6 +2000,12 @@ html, body, #root {
 .msg__action-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.msg__action-btn:hover ~ .tooltip,
+.msg__action-btn--active:hover ~ .tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 /* Blink animation on message currently being read aloud */

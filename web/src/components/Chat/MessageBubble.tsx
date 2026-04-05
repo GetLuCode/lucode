@@ -109,25 +109,9 @@ function BubbleContent({ message, sendHookRespond }: { message: Message; sendHoo
         decision: 'pending' | 'approve' | 'deny' | 'timeout'
         tool_use_id?: string
       }
-      const decisionIcon = {
-        pending: '⏳',
-        approve: '✓',
-        deny: '✕',
-        timeout: '⏱',
-      }[hookData.decision]
-      const decisionLabel = {
-        pending: 'Pending…',
-        approve: 'Approved',
-        deny: 'Denied',
-        timeout: 'Timed out',
-      }[hookData.decision]
-      const decisionClass = `msg__hook-decision msg__hook-decision--${hookData.decision}`
       return (
         <HookMessage
           hookData={hookData}
-          decisionIcon={decisionIcon}
-          decisionLabel={decisionLabel}
-          decisionClass={decisionClass}
           sendHookRespond={sendHookRespond}
         />
       )
@@ -222,17 +206,18 @@ interface HookData {
   tool_use_id?: string
 }
 
+const DECISION_ICON: Record<string, string> = {
+  pending: '⏳',
+  approve: '✓',
+  deny: '✕',
+  timeout: '⏱',
+}
+
 function HookMessage({
   hookData,
-  decisionIcon,
-  decisionLabel,
-  decisionClass,
   sendHookRespond,
 }: {
   hookData: HookData
-  decisionIcon: string
-  decisionLabel: string
-  decisionClass: string
   sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => void
 }) {
   const isPending = hookData.decision === 'pending'
@@ -252,11 +237,11 @@ function HookMessage({
   return (
     <div className="msg__hook">
       <div className="msg__hook-header">
-        <div>
-          <div className="msg__hook-title">⚙ Tool Use — {hookData.tool_name}</div>
-          <div className={decisionClass}>
-            {decisionIcon} {decisionLabel}
-          </div>
+        <div className="msg__hook-title">
+          ⚙ Tool Use — {hookData.tool_name}
+          <span className={`msg__hook-decision-icon msg__hook-decision-icon--${hookData.decision}`}>
+            {DECISION_ICON[hookData.decision]}
+          </span>
         </div>
       </div>
       <div className="msg__hook-input">

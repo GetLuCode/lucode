@@ -21,6 +21,15 @@ interface MessagePagination {
   isLoadingMore: boolean
 }
 
+export interface FilePreview {
+  filePath: string
+  lang: string
+  mode: 'content' | 'diff'
+  content?: string      // mode === 'content'
+  original?: string     // mode === 'diff'
+  modified?: string     // mode === 'diff'
+}
+
 interface AppState {
   projects: Project[]
   sessions: Session[]
@@ -36,7 +45,10 @@ interface AppState {
   streamingText: Record<string, string>
   streamingThinking: Record<string, string>
   sessionUsage: Record<string, TokenUsage>
+  filePreview: FilePreview | null
 
+  openFilePreview: (preview: FilePreview) => void
+  closeFilePreview: () => void
   loadProjects: () => Promise<void>
   createProject: (data: Partial<Project>) => Promise<Project>
   deleteProject: (id: string) => Promise<void>
@@ -203,6 +215,10 @@ export const useStore = create<AppState>((set, get) => ({
   streamingText: {},
   streamingThinking: {},
   sessionUsage: {},
+  filePreview: null,
+
+  openFilePreview: (preview) => set({ filePreview: preview }),
+  closeFilePreview: () => set({ filePreview: null }),
 
   loadProjects: async () => {
     const projects = await api.listProjects()

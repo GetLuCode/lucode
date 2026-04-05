@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",
+    "@monaco-editor/react": "^4.7.0",
     "@tabler/icons-react": "^3.41.1",
     "@tanstack/react-virtual": "^3.13.23",
     "dexie": "^4.4.2",
     "framer-motion": "^12.38.0",
     "marked": "^17.0.5",
+    "monaco-editor": "^0.55.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-medium-image-zoom": "^5.4.2",
