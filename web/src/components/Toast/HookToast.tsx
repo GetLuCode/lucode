@@ -44,7 +44,7 @@ export function HookToast({ hook, projectId }: Props) {
 
   return (
     <motion.div
-      className="hook-toast hook-toast--clickable"
+      className={`hook-toast hook-toast--clickable${hook.tool_name === 'Skill' ? ' hook-toast--skill' : ''}`}
       initial={{ opacity: 0, y: -20, x: 20 }}
       animate={{ opacity: 1, y: 0, x: 0 }}
       exit={{ opacity: 0, y: -20, x: 20 }}
@@ -54,15 +54,29 @@ export function HookToast({ hook, projectId }: Props) {
       tabIndex={0}
       onKeyDown={e => e.key === 'Enter' && handleClick()}
     >
-      <div className="hook-toast__header">
-        <div className="hook-toast__icon">⚙</div>
-        <div className="hook-toast__title-group">
-          <div className="hook-toast__title">Tool Use Request</div>
-          <div className="hook-toast__subtitle">
-            <span className="hook-toast__tool-badge">{hook.tool_name}</span>
+      {hook.tool_name === 'Skill' ? (
+        <div className="hook-toast__header hook-toast__header--skill">
+          <div className="hook-toast__skill-icon">◈</div>
+          <div className="hook-toast__title-group">
+            <div className="hook-toast__title hook-toast__title--skill">Skill Activation</div>
+            <div className="hook-toast__subtitle">
+              <span className="hook-toast__skill-badge">
+                {String((hook.tool_input as Record<string, unknown>)?.skill ?? 'unknown')}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="hook-toast__header">
+          <div className="hook-toast__icon">⚙</div>
+          <div className="hook-toast__title-group">
+            <div className="hook-toast__title">Tool Use Request</div>
+            <div className="hook-toast__subtitle">
+              <span className="hook-toast__tool-badge">{hook.tool_name}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="hook-toast__body">
         <ToolInputRenderer toolName={hook.tool_name} input={hook.tool_input} />

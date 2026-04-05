@@ -18,6 +18,8 @@ export function ToolInputRenderer({ toolName, input }: { toolName: string; input
     case 'Grep':
     case 'LS':
       return <FilePathInput toolName={toolName} data={data} />
+    case 'Skill':
+      return <SkillInput data={data} />
     default:
       return <JsonFallback input={input} />
   }
@@ -103,6 +105,20 @@ function FilePathInput({ toolName, data }: { toolName: string; data: Record<stri
     <div className="hook-input__fields">
       {pattern && <pre className="hook-input__cmd"><span className="hook-input__cmd-prompt">/</span> {pattern}</pre>}
       <FilePath path={path || query} />
+    </div>
+  )
+}
+
+function SkillInput({ data }: { data: Record<string, unknown> }) {
+  const skill = String(data.skill ?? '')
+  const args  = String(data.args  ?? '')
+  return (
+    <div className="hook-input__skill">
+      <div className="hook-input__skill-header">
+        <span className="hook-input__skill-glyph">◈</span>
+        <span className="hook-input__skill-name">{skill}</span>
+      </div>
+      {args && <p className="hook-input__skill-args">{args}</p>}
     </div>
   )
 }

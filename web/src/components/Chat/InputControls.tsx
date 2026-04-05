@@ -93,49 +93,55 @@ export function InputControls({
 
       {/* Center/Right: Selects and send button */}
       <div className="input-controls__group input-controls__group--right">
-        <Listbox value={effort} onChange={onEffortChange} disabled={isRunning}>
-          <div className="listbox-wrapper">
-            <Listbox.Button className="listbox-button">
-              {EFFORTS.find(e => e.value === effort)?.label || 'Effort'}
-              <span className="listbox-caret">▼</span>
-            </Listbox.Button>
-            <Listbox.Options className="listbox-options">
-              {EFFORTS.map(e => (
-                <Listbox.Option
-                  key={e.value}
-                  value={e.value}
-                  className={({ active, selected }) =>
-                    `listbox-option ${active ? 'listbox-option--active' : ''} ${selected ? 'listbox-option--selected' : ''}`
-                  }
-                >
-                  {e.label}
-                </Listbox.Option>
-              ))}
-            </Listbox.Options>
-          </div>
-        </Listbox>
+        <div className={`labeled-select${model === 'haiku' || isRunning ? ' labeled-select--disabled' : ''}`}>
+          <span className="labeled-select__label">Effort</span>
+          <Listbox value={effort} onChange={onEffortChange} disabled={isRunning || model === 'haiku'}>
+            <div className="listbox-wrapper">
+              <Listbox.Button className="listbox-button">
+                {EFFORTS.find(e => e.value === effort)?.label || 'Effort'}
+                <span className="listbox-caret">▼</span>
+              </Listbox.Button>
+              <Listbox.Options className="listbox-options">
+                {EFFORTS.map(e => (
+                  <Listbox.Option
+                    key={e.value}
+                    value={e.value}
+                    className={({ active, selected }) =>
+                      `listbox-option ${active ? 'listbox-option--active' : ''} ${selected ? 'listbox-option--selected' : ''}`
+                    }
+                  >
+                    {e.label}
+                  </Listbox.Option>
+                ))}
+              </Listbox.Options>
+            </div>
+          </Listbox>
+        </div>
 
-        <Listbox value={model} onChange={onModelChange} disabled={isRunning}>
-          <div className="listbox-wrapper">
-            <Listbox.Button className="listbox-button">
-              {MODELS.find(m => m.value === model)?.label || 'Model'}
-              <span className="listbox-caret">▼</span>
-            </Listbox.Button>
-            <Listbox.Options className="listbox-options">
-              {MODELS.map(m => (
-                <Listbox.Option
-                  key={m.value}
-                  value={m.value}
-                  className={({ active, selected }) =>
-                    `listbox-option ${active ? 'listbox-option--active' : ''} ${selected ? 'listbox-option--selected' : ''}`
-                  }
-                >
-                  {m.label}
-                </Listbox.Option>
-              ))}
-            </Listbox.Options>
-          </div>
-        </Listbox>
+        <div className={`labeled-select${isRunning ? ' labeled-select--disabled' : ''}`}>
+          <span className="labeled-select__label">Model</span>
+          <Listbox value={model} onChange={onModelChange} disabled={isRunning}>
+            <div className="listbox-wrapper">
+              <Listbox.Button className="listbox-button">
+                {MODELS.find(m => m.value === model)?.label || 'Model'}
+                <span className="listbox-caret">▼</span>
+              </Listbox.Button>
+              <Listbox.Options className="listbox-options">
+                {MODELS.map(m => (
+                  <Listbox.Option
+                    key={m.value}
+                    value={m.value}
+                    className={({ active, selected }) =>
+                      `listbox-option ${active ? 'listbox-option--active' : ''} ${selected ? 'listbox-option--selected' : ''}`
+                    }
+                  >
+                    {m.label}
+                  </Listbox.Option>
+                ))}
+              </Listbox.Options>
+            </div>
+          </Listbox>
+        </div>
 
         <button
           className="btn btn--send"
