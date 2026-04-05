@@ -3,11 +3,12 @@ import type { PendingHook } from '../../types'
 
 interface Props {
   hook: PendingHook | null
+  queueLength: number
   onApprove: () => void
   onDeny: () => void
 }
 
-export function ToolApprovalModal({ hook, onApprove, onDeny }: Props) {
+export function ToolApprovalModal({ hook, queueLength, onApprove, onDeny }: Props) {
   return (
     <AnimatePresence>
       {hook && (
@@ -28,7 +29,9 @@ export function ToolApprovalModal({ hook, onApprove, onDeny }: Props) {
               <div className="modal__icon">⚙</div>
               <div>
                 <div className="modal__title">Tool Use Request</div>
-                <div className="modal__subtitle">PreToolUse</div>
+                <div className="modal__subtitle">
+                  PreToolUse{queueLength > 1 ? ` · ${queueLength} pending` : ''}
+                </div>
               </div>
             </div>
 

@@ -37,7 +37,12 @@ func ParseLine(sessID string, line []byte) (ParsedEvent, bool, error) {
 				Status:    "running",
 			}, false, nil
 		}
-		// hook_started, hook_response — informational, skip
+		return ParsedEvent{}, false, nil
+
+	case "assistant", "user":
+		// Partial/final message snapshots from --include-partial-messages.
+		// These are redundant with the streaming content_block_delta events
+		// we already broadcast; skip them to avoid flooding the frontend.
 		return ParsedEvent{}, false, nil
 
 	case "result":

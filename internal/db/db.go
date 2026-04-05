@@ -25,7 +25,7 @@ func Init(path string) (*sql.DB, error) {
 }
 
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
+	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS projects (
     id                TEXT PRIMARY KEY,
     name              TEXT NOT NULL,
@@ -55,13 +55,26 @@ CREATE TABLE IF NOT EXISTS messages (
     seq        INTEGER NOT NULL,
     created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+`); err != nil {
+		return err
+	}
 
+	// Recreate pending_hooks with composite (session_id, tool_use_id) primary key
+	// to support concurrent parallel tool calls. Drop old single-PK table if present.
+	if _, err := db.Exec(`DROP TABLE IF EXISTS pending_hooks`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS pending_hooks (
-    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-    tool_name  TEXT NOT NULL,
-    tool_input TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-`)
-	return err
+    session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tool_use_id TEXT NOT NULL,
+    tool_name   TEXT NOT NULL,
+    tool_input  TEXT NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (session_id, tool_use_id)
+)
+`); err != nil {
+		return err
+	}
+	return nil
 }

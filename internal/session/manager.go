@@ -36,8 +36,15 @@ func NewManager(db *sql.DB, hub *wspkg.Hub, backendWSURL string) *Manager {
 		backendWSURL: backendWSURL,
 		procs:        make(map[string]*ProcessState),
 	}
-	hub.OnHookRequest = m.onHookRequest
-	hub.OnHookRespond = m.onHookRespond
+	hub.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
+		m.onHookRequest(sessID, toolUseID, toolName, toolInput)
+	}
+	hub.OnHookRespond = func(sessID, toolUseID, decision, reason string) {
+		m.onHookRespond(sessID, toolUseID, decision, reason)
+	}
+	hub.OnHookDisconnect = func(sessID, toolUseID string) {
+		m.onHookDisconnect(sessID, toolUseID)
+	}
 	return m
 }
 
@@ -182,40 +189,89 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 }
 
 // onHookRequest is called by the hub when a hook binary sends hook_request.
-func (m *Manager) onHookRequest(sessID string, toolName string, toolInput json.RawMessage) {
+func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 	inputStr := string(toolInput)
 
-	_ = dbpkg.UpsertPendingHook(m.db, dbpkg.PendingHook{
+	_ = dbpkg.InsertPendingHook(m.db, dbpkg.PendingHook{
 		SessionID: sessID,
+		ToolUseID: toolUseID,
 		ToolName:  toolName,
 		ToolInput: inputStr,
 	})
 	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusWaitingHook))
 
 	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
-		"type":       "hook_pending",
-		"session_id": sessID,
-		"tool_name":  toolName,
-		"tool_input": toolInput,
+		"type":        "hook_pending",
+		"session_id":  sessID,
+		"tool_use_id": toolUseID,
+		"tool_name":   toolName,
+		"tool_input":  toolInput,
 	})
 }
 
 // onHookRespond is called by the hub when the browser sends hook_respond.
-func (m *Manager) onHookRespond(sessID string, decision string, reason string) {
-	dbpkg.DeletePendingHook(m.db, sessID)
-	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
+func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
+	dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
 
-	// Forward hook_response to the hook binary WS client
-	m.hub.BroadcastToRole(sessID, wspkg.RoleHook, map[string]any{
-		"type":     "hook_response",
-		"decision": decision,
-		"reason":   reason,
+	// If no more pending hooks, mark session as running; otherwise stay waiting_hook
+	remaining, _ := dbpkg.CountPendingHooks(m.db, sessID)
+	if remaining == 0 {
+		dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
+	}
+
+	// Forward hook_response to the specific hook binary WS client by tool_use_id
+	sent := m.hub.SendToHookClient(sessID, toolUseID, map[string]any{
+		"type":        "hook_response",
+		"tool_use_id": toolUseID,
+		"decision":    decision,
+		"reason":      reason,
 	})
 
-	m.hub.Broadcast(sessID, map[string]any{
-		"type":       "hook_resolved",
+	if !sent {
+		// Hook binary already disconnected (timed out and auto-allowed before user responded).
+		// Inform the user so they know their approval arrived too late.
+		m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+			"type":       "info",
+			"session_id": sessID,
+			"message":    "Hook approval timed out — tool was automatically allowed before your response.",
+		})
+	}
+
+	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+		"type":        "hook_resolved",
+		"session_id":  sessID,
+		"tool_use_id": toolUseID,
+		"decision":    decision,
+	})
+}
+
+// onHookDisconnect is called when a hook binary WS client disconnects unexpectedly.
+// If the hook was still pending (user hadn't responded), we auto-resolve it so the
+// frontend modal closes. The hook binary already exited (allow or timeout).
+func (m *Manager) onHookDisconnect(sessID, toolUseID string) {
+	deleted, _ := dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
+	if deleted == 0 {
+		// Already resolved by user — nothing to clean up
+		return
+	}
+	log.Printf("[hook] session=%s tool_use_id=%s disconnected while pending — auto-resolving", sessID[:8], toolUseID)
+
+	remaining, _ := dbpkg.CountPendingHooks(m.db, sessID)
+	if remaining == 0 {
+		dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
+	}
+
+	// Close the modal and show an informational message
+	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+		"type":        "hook_resolved",
+		"session_id":  sessID,
+		"tool_use_id": toolUseID,
+		"decision":    "timeout",
+	})
+	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+		"type":       "info",
 		"session_id": sessID,
-		"decision":   decision,
+		"message":    "Hook approval timed out — tool was automatically allowed.",
 	})
 }
 

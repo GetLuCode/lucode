@@ -209,33 +209,52 @@ func NextMessageSeq(db *sql.DB, sessionID string) (int, error) {
 // ---- Pending Hook ----
 
 type PendingHook struct {
-	SessionID string `json:"session_id"`
-	ToolName  string `json:"tool_name"`
-	ToolInput string `json:"tool_input"`
+	SessionID  string `json:"session_id"`
+	ToolUseID  string `json:"tool_use_id"`
+	ToolName   string `json:"tool_name"`
+	ToolInput  string `json:"tool_input"`
 }
 
-func UpsertPendingHook(db *sql.DB, h PendingHook) error {
+func InsertPendingHook(db *sql.DB, h PendingHook) error {
 	_, err := db.Exec(
-		`INSERT INTO pending_hooks (session_id, tool_name, tool_input) VALUES (?,?,?)
-         ON CONFLICT(session_id) DO UPDATE SET tool_name=excluded.tool_name, tool_input=excluded.tool_input, created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-		h.SessionID, h.ToolName, h.ToolInput,
+		`INSERT INTO pending_hooks (session_id, tool_use_id, tool_name, tool_input) VALUES (?,?,?,?)
+         ON CONFLICT(session_id, tool_use_id) DO UPDATE SET tool_name=excluded.tool_name, tool_input=excluded.tool_input, created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+		h.SessionID, h.ToolUseID, h.ToolName, h.ToolInput,
 	)
 	return err
 }
 
-func GetPendingHook(db *sql.DB, sessionID string) (PendingHook, bool, error) {
-	var h PendingHook
-	err := db.QueryRow(`SELECT session_id, tool_name, tool_input FROM pending_hooks WHERE session_id=?`, sessionID).
-		Scan(&h.SessionID, &h.ToolName, &h.ToolInput)
-	if err == sql.ErrNoRows {
-		return h, false, nil
+func ListPendingHooks(db *sql.DB, sessionID string) ([]PendingHook, error) {
+	rows, err := db.Query(`SELECT session_id, tool_use_id, tool_name, tool_input FROM pending_hooks WHERE session_id=? ORDER BY created_at ASC`, sessionID)
+	if err != nil {
+		return nil, err
 	}
-	return h, err == nil, err
+	defer rows.Close()
+	var out []PendingHook
+	for rows.Next() {
+		var h PendingHook
+		if err := rows.Scan(&h.SessionID, &h.ToolUseID, &h.ToolName, &h.ToolInput); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
 }
 
-func DeletePendingHook(db *sql.DB, sessionID string) error {
-	_, err := db.Exec(`DELETE FROM pending_hooks WHERE session_id=?`, sessionID)
-	return err
+// DeletePendingHook deletes a specific pending hook and returns how many rows were deleted.
+func DeletePendingHook(db *sql.DB, sessionID, toolUseID string) (int64, error) {
+	res, err := db.Exec(`DELETE FROM pending_hooks WHERE session_id=? AND tool_use_id=?`, sessionID, toolUseID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func CountPendingHooks(db *sql.DB, sessionID string) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pending_hooks WHERE session_id=?`, sessionID).Scan(&n)
+	return n, err
 }
 
 // ---- helpers ----
