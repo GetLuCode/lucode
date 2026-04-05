@@ -1556,8 +1556,43 @@ html, body, #root {
   visibility: visible;
 }
 
-.thinking-toggle--active {
+/* Three states: disabled, adaptive, enabled */
+.thinking-toggle--disabled {
+  color: var(--text-muted);
+  position: relative;
+}
+
+.thinking-toggle--disabled::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  width: 20px;
+  height: 2px;
+  background: var(--error);
+  border-radius: 1px;
+}
+
+.thinking-toggle--adaptive {
+  color: var(--text-muted);
+}
+
+.thinking-toggle--enabled {
   color: var(--accent);
+  display: flex;
+  gap: 6px;
+  width: auto;
+  padding: 4px 10px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(0, 212, 170, 0.3);
+}
+
+.thinking-toggle__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  white-space: nowrap;
 }
 
 .thinking-toggle:disabled {
@@ -1892,24 +1927,7 @@ html, body, #root {
   }
 }
 
-/* Voice controls group (mic + settings buttons) */
-.voice-controls-group {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  padding: 2px;
-  background: var(--bg-hover);
-  border-radius: 6px;
-  border: 1px solid var(--border);
-}
-
-.voice-controls-group__settings {
-  color: var(--text-muted) !important;
-}
-
-.voice-controls-group__settings:hover:not(:disabled) {
-  color: var(--accent) !important;
-}
+/* Mic button tooltip wrapper */
 
 /* Voice Settings Modal */
 .voice-modal-backdrop {
@@ -2103,6 +2121,56 @@ html, body, #root {
 @keyframes ideas-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.25; }
+}
+
+/* Settings Menu */
+.settings-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.settings-menu__button {
+  color: var(--text-muted) !important;
+  transition: color 0.15s;
+}
+
+.settings-menu__button:hover:not(:disabled) {
+  color: var(--text) !important;
+}
+
+.settings-menu__popover {
+  position: fixed;
+  bottom: 120px;
+  right: 24px;
+  min-width: 160px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
+  z-index: 1001;
+  overflow: hidden;
+  padding: 4px 0;
+}
+
+.settings-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  text-align: left;
+}
+
+.settings-menu__item:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
 }
 
 /* Ideas Modal backdrop (full screen, separate from voice-modal-backdrop) */
