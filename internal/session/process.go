@@ -142,6 +142,14 @@ func buildArgs(opts TurnOptions) []string {
 		}
 	}
 
+	// Add effort and thinking flags if provided
+	if opts.Effort != "" && opts.Effort != "auto" {
+		args = append(args, "--effort="+opts.Effort)
+	}
+	if opts.Thinking != "" && opts.Thinking != "adaptive" {
+		args = append(args, "--thinking="+opts.Thinking)
+	}
+
 	return args
 }
 

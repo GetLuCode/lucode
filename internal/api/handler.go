@@ -124,9 +124,11 @@ func (h *Handler) deleteProject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	var body struct {
-		Message string `json:"message"`
-		Name    string `json:"name"`
-		Model   string `json:"model"`
+		Message  string `json:"message"`
+		Name     string `json:"name"`
+		Model    string `json:"model"`
+		Effort   string `json:"effort"`
+		Thinking string `json:"thinking"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -165,6 +167,8 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 			Name:            body.Name,
 			WorkDirs:        proj.WorkDirs,
 			ClaudeConfigDir: proj.ClaudeConfigDir,
+			Effort:          body.Effort,
+			Thinking:        body.Thinking,
 		}
 		if err := h.manager.StartTurn(opts); err != nil {
 			log.Printf("api: start turn: %v", err)
@@ -215,8 +219,10 @@ func (h *Handler) updateSessionName(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct {
-		Message string `json:"message"`
-		Model   string `json:"model"`
+		Message  string `json:"message"`
+		Model    string `json:"model"`
+		Effort   string `json:"effort"`
+		Thinking string `json:"thinking"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -245,6 +251,8 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		Message:         body.Message,
 		Model:           model,
 		WorkDirs:        proj.WorkDirs,
+		Effort:          body.Effort,
+		Thinking:        body.Thinking,
 		ClaudeConfigDir: proj.ClaudeConfigDir,
 		Resume:          sess.MessageCount > 0, // first turn uses --session-id, subsequent use --resume
 	}

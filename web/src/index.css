@@ -377,7 +377,6 @@ html, body, #root {
 
 .msg {
   display: flex;
-  max-width: 760px;
   width: 100%;
 }
 
@@ -705,7 +704,7 @@ html, body, #root {
   border: 1px solid var(--border);
   border-radius: 12px;
   transition: border-color 0.15s;
-  overflow: hidden;
+  overflow: visible;
 }
 .chat__input-wrap:focus-within { border-color: var(--accent); }
 
@@ -1226,4 +1225,171 @@ html, body, #root {
 .msg__hook-input {
   padding: 12px;
   font-size: 12px;
+}
+
+/* ---- Input Controls ---- */
+.input-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+}
+
+.input-controls__group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.input-controls__group--left {
+  flex: 0 0 auto;
+}
+
+.input-controls__group--right {
+  flex: 1 0 auto;
+  justify-content: flex-end;
+  overflow: visible;
+}
+
+/* Thinking toggle */
+.tooltip-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.thinking-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s;
+  border-radius: 4px;
+}
+
+.thinking-toggle:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.thinking-toggle:hover:not(:disabled) ~ .tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.thinking-toggle--active {
+  color: var(--accent);
+}
+
+.thinking-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.thinking-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  z-index: 100;
+}
+
+/* Headless UI Listbox */
+.listbox-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.listbox-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.listbox-button:hover:not(:disabled) {
+  background: var(--bg-active);
+  border-color: var(--accent);
+}
+
+.listbox-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.listbox-caret {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.listbox-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.listbox-options {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 6px;
+  min-width: 130px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  z-index: 50;
+  padding: 4px 0;
+  list-style: none;
+  overflow: visible;
+}
+
+.listbox-option {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.listbox-option--active {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+.listbox-option--selected {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
 }

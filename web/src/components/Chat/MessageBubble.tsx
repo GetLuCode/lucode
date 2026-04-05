@@ -12,7 +12,7 @@ interface Props {
 
 export function MessageBubble({ message }: Props) {
   return (
-    <>
+    <div>
       <motion.div
         className={`msg msg--${message.role}`}
         initial={{ opacity: 0 }}
@@ -22,12 +22,12 @@ export function MessageBubble({ message }: Props) {
         <div className="msg__bubble">
           <BubbleContent message={message} />
           {message.usage && <TokenBadge usage={message.usage} />}
+          <time className={`msg__time msg__time--${message.role}`}>
+            {fmtTime(message.created_at)}
+          </time>
         </div>
       </motion.div>
-      <time className={`msg__time msg__time--${message.role}`}>
-        {fmtTime(message.created_at)}
-      </time>
-    </>
+    </div>
   )
 }
 

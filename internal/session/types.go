@@ -31,4 +31,6 @@ type TurnOptions struct {
 	ClaudeConfigDir string
 	Resume          bool   // true → --resume=SessionID
 	ForkFrom        string // non-empty → --fork-session --resume=ForkFrom --session-id=SessionID
+	Effort          string // low|medium|high|max|auto
+	Thinking        string // enabled|disabled|adaptive
 }

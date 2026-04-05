@@ -4,17 +4,12 @@ import { useStore } from '../../store'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
+import { InputControls } from './InputControls'
 import type { Message } from '../../types'
 
 // Stable references — never inline [] or {} in Zustand selectors,
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
-
-const MODELS = [
-  { label: 'Haiku 4.5', value: 'haiku' },
-  { label: 'Sonnet 4.6', value: 'sonnet' },
-  { label: 'Opus 4.6', value: 'opus' },
-]
 
 export function ChatView() {
   const activeSessionId = useStore(s => s.activeSessionId)
@@ -37,6 +32,8 @@ export function ChatView() {
 
   const [input, setInput] = useState('')
   const [model, setModel] = useState('haiku')
+  const [effort, setEffort] = useState('auto')
+  const [thinking, setThinking] = useState('adaptive')
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -111,7 +108,7 @@ export function ChatView() {
     if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning) return
     // For pending sessions, we pass a placeholder ID; sendMessage handles the actual creation
     const targetId = activeSessionId || 'pending'
-    sendMessage(targetId, input.trim(), model)
+    sendMessage(targetId, input.trim(), model, effort, thinking)
     setInput('')
   }
 
@@ -167,7 +164,7 @@ export function ChatView() {
         )}
 
         {/* Virtual list */}
-        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%', maxWidth: '900px', margin: '0 auto' }}>
           {virtualItems.map(virtualItem => (
             <div
               key={virtualItem.key}
@@ -223,25 +220,17 @@ export function ChatView() {
             disabled={isRunning}
             rows={1}
           />
-          <div className="chat__input-controls">
-            <select
-              className="model-select"
-              value={model}
-              onChange={e => setModel(e.target.value)}
-              disabled={isRunning}
-            >
-              {MODELS.map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-            <button
-              className="btn btn--send"
-              onClick={handleSend}
-              disabled={!input.trim() || isRunning}
-            >
-              ↑
-            </button>
-          </div>
+          <InputControls
+            model={model}
+            onModelChange={setModel}
+            effort={effort}
+            onEffortChange={setEffort}
+            thinking={thinking}
+            onThinkingChange={setThinking}
+            onSend={handleSend}
+            isRunning={isRunning}
+            canSend={input.trim().length > 0}
+          />
         </div>
       </div>
     </div>
