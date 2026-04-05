@@ -6,11 +6,12 @@ Claude Code Session Orchestrator — a web UI that wraps the `claude` CLI as an 
 
 | File | Covers | Key source files |
 |------|--------|-----------------|
-| [backend.md](backend.md) | Go server architecture, HTTP API, session manager, CLI process lifecycle | `cmd/orchestrator/main.go`, `internal/api/`, `internal/session/` |
+| [backend.md](backend.md) | Go server architecture, HTTP API, session manager, CLI process lifecycle, image stdin format | `cmd/orchestrator/main.go`, `internal/api/`, `internal/session/` |
 | [websocket.md](websocket.md) | WS hub, message routing, role system (client/hook), all event types | `internal/ws/hub.go`, `internal/api/handler.go` |
 | [hook.md](hook.md) | Hook binary, PreToolUse approval flow, concurrent tool routing by tool_use_id, timeout handling | `cmd/hook/main.go`, `internal/session/manager.go` |
-| [frontend.md](frontend.md) | React app, Zustand store, streaming text/thinking, hook approval modal, WS reconnect | `web/src/` |
-| [database.md](database.md) | SQLite schema, all tables, migration strategy | `internal/db/` |
+| [frontend.md](frontend.md) | React app, Zustand store, streaming text/thinking, hook toast notifications, lazy sessions, image upload/display, effort/thinking controls | `web/src/` |
+| [database.md](database.md) | SQLite schema (including JSON content blocks for images), all tables, migration strategy | `internal/db/` |
+| [issues.md](issues.md) | **Recurring issues, gotchas, patterns, and implementation checklists** — read before refactoring | Various |
 
 ## System Overview
 

@@ -20,11 +20,12 @@ POST   /api/projects                    create project
 GET    /api/projects                    list projects
 DELETE /api/projects/{id}               delete project (cascades to sessions/messages)
 
-POST   /api/projects/{pid}/sessions     create session + optional first turn
+POST   /api/projects/{pid}/sessions     create session + optional first turn (⭐ now with image)
 GET    /api/projects/{pid}/sessions     list sessions for project
 DELETE /api/sessions/{id}               delete session
+PATCH  /api/sessions/{id}               ⭐ rename session
 
-POST   /api/sessions/{id}/turn          send next message (resumes existing session)
+POST   /api/sessions/{id}/turn          send next message (⭐ with image, effort, thinking)
 POST   /api/sessions/{id}/fork          fork session to new branch
 
 GET    /api/sessions/{id}/messages      paginated messages (50 default, cursor-based)
@@ -33,6 +34,29 @@ GET    /ws?role=client&session_id=<id>  browser UI WebSocket
 GET    /ws?role=hook&session_id=<id>    hook binary WebSocket
 
 GET    /api/health                      200 OK
+```
+
+**createSession body** ⭐:
+```json
+{
+  "message": "initial message text",
+  "name": "auto-generated or custom",
+  "model": "haiku|sonnet|opus",
+  "effort": "auto|low|medium|high|max",
+  "thinking": "adaptive|enabled|disabled",
+  "image": { "base64": "...", "mediaType": "image/png" }
+}
+```
+
+**sendTurn body** ⭐:
+```json
+{
+  "message": "message text",
+  "model": "haiku|sonnet|opus",
+  "effort": "auto|low|medium|high|max",
+  "thinking": "adaptive|enabled|disabled",
+  "image": { "base64": "...", "mediaType": "image/png" }
+}
 ```
 
 ### Resume logic (`sendTurn`)
@@ -66,11 +90,29 @@ for _, ph := range hooks {
 Non-blocking. Returns `ErrSessionBusy` if `procs[sessID]` already active.
 
 1. Updates session status → `running` in DB
-2. Persists user message to DB
+2. **Persists user message to DB** ⭐
+   - If image attached: serialize as JSON content blocks
+   - If no image: plain text
 3. Broadcasts `session_status: running`
 4. Calls `spawnClaude(ctx, opts, backendWSURL)` — creates process, writes stdin, returns pipes
 5. Stores `ProcessState` in `procs` map
 6. Launches `go streamOutput(sr)` — returns immediately
+
+**User message storage** ⭐:
+- Plain text: `content = "message text"`
+- With image:
+  ```json
+  content = JSON.stringify([
+    { "type": "text", "text": "message text" },
+    { "type": "image", "source": {
+        "type": "base64",
+        "media_type": "image/png",
+        "data": "base64string..."
+    }}
+  ])
+  ```
+  
+Same format persisted regardless of whether turn is new vs resume.
 
 ### `streamOutput` goroutine
 
@@ -139,7 +181,20 @@ ORCHESTRATOR_WS_URL=ws://localhost:8090
 CLAUDE_CONFIG_DIR=<proj.ClaudeConfigDir>  (if set)
 ```
 
-**Stdin**: writes `{"type":"user","message":{"role":"user","content":"<text>"}}\n` then closes.
+**Stdin** ⭐: writes user message in stream-json format:
+- **Plain text**:
+  ```json
+  {"type":"user","message":{"role":"user","content":"text"}}\n
+  ```
+- **With image**:
+  ```json
+  {"type":"user","message":{"role":"user","content":[
+    {"type":"text","text":"message text"},
+    {"type":"image","source":{"type":"base64","media_type":"image/png","data":"..."}}
+  ]}}\n
+  ```
+
+Then closes stdin.
 
 **Stderr**: piped to `log.Printf` in a background goroutine.
 

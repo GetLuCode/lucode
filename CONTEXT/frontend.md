@@ -14,24 +14,31 @@
 ┌──────────────┬───────────────┬──────────────────────────────┐
 │  Projects    │  Sessions     │  Chat                        │
 │  (180px)     │  (240px)      │  (flex-1)                    │
-│  [+ New]     │  [+ New]      │  messages list               │
-│              │               │  streaming thinking bubble   │
-│  project 1 ● │  session 1    │  streaming text bubble       │
-│  project 2   │  session 2 ●  │  ToolApprovalModal (overlay) │
+│  [+ New]     │  [+]  ▲       │  messages list (virtual)     │
+│              │  (edit mode)  │  user image bubbles + zoom   │
+│  project 1 ● │  session 1    │  streaming thinking/text     │
+│  project 2   │  session 2 ●  │  input: +img brain effort    │
 └──────────────┴───────────────┴──────────────────────────────┘
+  HookToastContainer floats top-right with countdown
 ```
 
 ## Component Tree
 
 ```
 App.tsx
-├── Sidebar/ProjectList.tsx    — list + create/delete projects
-├── Sidebar/SessionList.tsx    — list + create/delete/fork sessions
-└── Chat/ChatView.tsx          — main chat panel
-    ├── Chat/MessageBubble.tsx — renders one message (user/assistant/thinking/raw/system)
+├── Sidebar/ProjectList.tsx      — list + create/delete projects
+├── Sidebar/SessionList.tsx      — list + create/delete/fork + inline rename sessions
+├── Toast/HookToastContainer.tsx — renders all pending hook toasts (top-right) ⭐
+└── Chat/ChatView.tsx            — main chat panel
+    ├── Chat/MessageBubble.tsx   — renders message: user (text+images) / assistant / 
+    │                              thinking / hook (decision badge) / raw
+    ├── Chat/InputControls.tsx   — effort + thinking toggle + model selector ⭐
+    │   └── Chat/AttachmentButton.tsx — file picker for images ⭐
     ├── Chat/ThinkingIndicator.tsx — animated dots while Claude is working
-    └── Chat/ToolApprovalModal.tsx — frosted-glass modal for hook approval
+    └── Image preview + send button
 ```
+
+⭐ = Recent additions
 
 ## REST API — `web/src/api.ts`
 
@@ -43,16 +50,24 @@ createProject(data)
 deleteProject(id)
 
 listSessions(pid)
-createSession(pid, { message?, name?, model? })
+createSession(pid, { message?, name?, model?, effort?, thinking?, image? })  ⭐
 deleteSession(id)
-sendTurn(id, message, model?)
+renameSession(id, name)  ⭐
+sendTurn(id, message, model?, effort?, thinking?, image?)  ⭐
 forkSession(id, name, message?)
 
 listMessages(id, opts?: { limit?: number; beforeSeq?: number })
   → { messages: Message[], has_more: boolean, oldest_seq: number }
 ```
 
+**Image format** (optional in createSession + sendTurn):
+```typescript
+image?: { base64: string; mediaType: string }
+```
+
 Supports cursor-based pagination: `beforeSeq` parameter for lazy-loading older messages.
+Supports effort levels: `auto|low|medium|high|max`
+Supports thinking modes: `enabled|disabled|adaptive`
 
 ## Zustand Store — `web/src/store/index.ts`
 
@@ -64,15 +79,20 @@ Supports cursor-based pagination: `beforeSeq` parameter for lazy-loading older m
   sessions: Session[]
   activeProjectId: string | null
   activeSessionId: string | null
+  pendingSession: { projectId, model } | null  ⭐  // lazy session creation
   messages: Record<string, Message[]>
   messagePagination: Record<string, { hasMore, oldestSeq, isLoadingMore }>  // per session
-  pendingHooks: Record<string, PendingHook[]>   // queue per session
+  pendingHooks: Record<string, PendingHook[]>   // queue per session + created_at ⭐
   sessionStatus: Record<string, string>
   streamingText: Record<string, string>          // flat strings, reliable equality
   streamingThinking: Record<string, string>      // thinking block in progress
   sessionUsage: Record<string, TokenUsage>       // accumulated per session
 }
 ```
+
+**pendingSession** ⭐: When user clicks "+" in sessions, state goes to pending until first message. Allows picking model before naming session. On first sendMessage, creates session + inserts message in single request.
+
+**pendingHooks** ⭐: Now includes `created_at` for countdown timer in toast (4-minute timeout).
 
 ### Mutable state outside Zustand (no re-render needed)
 
@@ -122,13 +142,20 @@ message_stop
   → delete pendingUsageMap[sessId], blockTypeMap[sessId]
 ```
 
-### Hook queue management
+### Hook queue management ⭐
 
 ```typescript
-// hook_pending event → push to pendingHooks[session_id] queue (deduplicate by tool_use_id)
-// hook_resolved event → filter out matching tool_use_id from queue
-// ChatView shows pendingHooks[0] (first in queue) in the modal
+// hook_pending event → push to pendingHooks[session_id] + create virtual "hook" message in chat
+// hook_resolved event → filter from queue + update virtual message with decision
+// HookToastContainer renders all pending hooks as toasts (top-right, one per hook)
+// Each toast shows 4-minute countdown based on created_at
 ```
+
+**Message flow for hooks**:
+1. `hook_pending` arrives → virtual message added with `role: "hook"`, `decision: "pending"` (JSON)
+2. User clicks Approve/Deny in toast → `sendHookRespond(toolUseId, decision)`
+3. `hook_resolved` broadcast → virtual message updated with `decision: "approve|deny|timeout"`
+4. On page reload, hook messages load from DB (persisted with their decisions)
 
 ## WebSocket Hook — `web/src/hooks/useSessionWS.ts`
 
@@ -140,9 +167,36 @@ Opens `ws://localhost:8090/ws?role=client&session_id=<id>` when a session is act
 
 ## ChatView — `web/src/components/Chat/ChatView.tsx`
 
+### Pending session flow ⭐
+
+1. SessionList "+ " button calls `setPendingSession(projectId, model)`
+2. ChatView shows empty state with placeholder message input  
+3. User types message + optionally attaches image
+4. On Send: `sendMessage` calls `api.createSession(projectId, { message, image, name: auto-from-message })`
+5. Response creates session, inserts message, broadcasts status
+6. ChatView auto-switches to new session
+
+### Image upload ⭐
+
+1. **File picker**: `AttachmentButton` (paperclip icon, left of thinking toggle)
+   - Accepts JPEG, PNG, GIF, WebP
+   - Shows preview (max 120px) with remove button
+   
+2. **Paste**: Direct paste into textarea
+   - Detects image in clipboard, extracts file, converts to base64
+   - Shows preview above input area
+
+3. **Message storage**: If image attached, user message stored as JSON content blocks:
+   ```json
+   [
+     { "type": "text", "text": "message text" },
+     { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "..." } }
+   ]
+   ```
+
 ### Virtual scrolling
 
-Uses `@tanstack/react-virtual` to render only visible messages + 8-item overscan. Measures dynamic heights (thinking blocks, code blocks, etc.) with `measureElement`. On page load, fetches latest 50 messages; scrolling up to 200px from top triggers `loadMoreMessages()` for pagination.
+Uses `@tanstack/react-virtual` to render only visible messages + 8-item overscan. Measures dynamic heights (thinking blocks, code blocks, images, etc.) with `measureElement`. On page load, fetches latest 50 messages; scrolling up to 200px from top triggers `loadMoreMessages()` for pagination.
 
 Scroll position is preserved via `useLayoutEffect` when prepending older messages — saves previous `scrollHeight`, then restores `scrollTop` after state update.
 
@@ -183,30 +237,78 @@ const MODELS = [
 
 Model value is sent as-is to `POST /api/sessions/{id}/turn`. The backend maps it to the CLI `--model=` arg.
 
-## ToolApprovalModal — `web/src/components/Chat/ToolApprovalModal.tsx`
+## InputControls ⭐ — `web/src/components/Chat/InputControls.tsx`
 
-Receives `hook` (first in queue) and `queueLength`. Shows "N pending" when multiple hooks are queued. Approve/Deny calls `sendHookRespond(hook.tool_use_id, decision)`.
+Row of controls below textarea:
 
-Tool-specific renderers:
+**Left side** (image + thinking):
+- **AttachmentButton** (paperclip +): file picker for images
+- **Thinking toggle** (brain icon): `enabled | disabled` (adaptive is server-side default)
+  - Toggles `thinking: "enabled" | "disabled"`
+  - Icon changes color when active (accent green)
+  - Tooltip on hover
+
+**Center/Right** (effort + model + send):
+- **Effort selector** (Headless UI Listbox)
+  - Options: `auto | low | medium | high | max`
+  - Sent to CLI as `--effort=<value>` (if not "auto")
+- **Model selector** (Headless UI Listbox)
+  - Options: Haiku 4.5, Sonnet 4.6, Opus 4.6
+  - Overrides project default per-message
+- **Send button**: `↑` (up arrow), disabled when input empty or session running
+
+All controls disabled when `isRunning=true`.
+
+## HookToastContainer + HookToast ⭐ — `web/src/components/Toast/`
+
+**HookToastContainer**: Fixed top-right overlay, renders one toast per pending hook (all sessions).
+
+**HookToast** (per hook):
+- Shows tool name (e.g. "⚙ Tool Use — Bash")
+- Tool input preview (via shared `ToolInputRenderer`)
+- **Countdown progress bar**: 4-minute timeout, updates every second
+  - Formula: `remaining = (endTime - now) / (4*60*1000) * 100`
+  - On timeout expire, toast auto-dismisses (hook binary already disconnected)
+- **Approve / Deny buttons**: Send decision to backend via `sendHookRespond`
+- **Elegant styling**: Semi-transparent backdrop, dark theme consistent
+
+Replaced `ToolApprovalModal` (which was modal overlay, now non-disruptive toasts).
+
+**Shared tool renderers** ⭐ — `web/src/components/Hook/HookToolInput.tsx`:
 - **Bash** — displays `$ command` in code block + `description` as caption
 - **Write** — shows filepath (dir/filename) + file content in code block
 - **Edit** — shows filepath + diff view (old_string with `−` red, new_string with `+` teal)
 - **Read/Glob/Grep/LS** — clean filepath or pattern display
 - **Fallback** — raw JSON for unknown tools
 
+Used by both HookToast and hook Message role in chat.
+
 ## MessageBubble — `web/src/components/Chat/MessageBubble.tsx`
 
 Each message shows a timestamp (HH:mm today, MMM D · HH:mm this year, MMM D YYYY · HH:mm other years).
 
-Markdown rendering via `marked` library for assistant messages (headings, lists, code blocks, blockquotes, tables, links). User and system messages are plain text. Includes CSS styling for all markdown elements with the dark theme.
+Markdown rendering via `marked` library for assistant messages (headings, lists, code blocks, blockquotes, tables, links).
 
 | `message.role` | Rendered as |
 |---|---|
-| `user` | Plain text bubble + timestamp |
+| `user` | Text + inline images (JSON content blocks) ⭐ |
 | `assistant` | Markdown-rendered bubble + token badge + timestamp |
 | `thinking` | Collapsible `<details>` with "◈ Thinking" summary + timestamp |
-| `system` | Preformatted (used for error/info messages) + timestamp |
+| `hook` | Tool use with decision badge (pending/✓ approved/✗ denied/⏱ timeout) ⭐ |
+| `system` | Preformatted (error/info messages) + timestamp |
 | `raw` | Collapsible `<details>` with raw JSON + timestamp |
+
+**User messages with images** ⭐:
+- Parsed from JSON content blocks when stored as such
+- Text and images render inline in bubble
+- Images wrapped in `<Zoom>` from `react-medium-image-zoom`
+- Click image → full-screen zoom with elegant backdrop blur (10px) + pan/zoom controls
+
+**Hook messages** ⭐:
+- Shows tool name (e.g. "⚙ Tool Use — Bash")
+- Displays tool input (command, file path, etc.) via `ToolInputRenderer`
+- Decision badge with color: pending ⏳, approved ✓ (green), denied ✕ (red), timeout ⏱ (orange)
+- When displayed, also shows in HookToastContainer (top-right floating toast)
 
 Token badge shows: `↑input ↓output cache↩read` (tokens used, cache hit stats).
 
@@ -218,13 +320,24 @@ interface PendingHook {
   tool_use_id: string   // required for routing
   tool_name: string
   tool_input: unknown
+  created_at: string    // ⭐ ISO 8601, for countdown timer
+}
+
+interface Message {
+  id: string
+  session_id: string
+  role: 'user' | 'assistant' | 'thinking' | 'hook' | 'system' | 'raw'  // ⭐ added 'hook'
+  content: string  // plain text OR JSON (user with images, hook with decision)
+  seq: number
+  created_at: string
+  usage?: TokenUsage
 }
 
 type WSEvent =
   | { type: 'session_status'; session_id: string; status: string }
   | { type: 'stream_event'; session_id: string; event: unknown; partial?: boolean }
-  | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown }
-  | { type: 'hook_resolved'; session_id: string; tool_use_id: string; decision: string }
+  | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown; created_at: string }  // ⭐
+  | { type: 'hook_resolved'; session_id: string; tool_use_id: string; decision: 'approve' | 'deny' | 'timeout' }  // ⭐
   | { type: 'turn_complete'; session_id: string; result_subtype: string; result_text: string }
   | { type: 'error'; session_id: string; message: string }
   | { type: 'info'; session_id: string; message: string }
