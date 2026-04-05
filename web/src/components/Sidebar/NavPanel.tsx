@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
 
 export function NavPanel() {
+  const navigate = useNavigate()
   const projects = useStore(s => s.projects)
   const sessions = useStore(s => s.sessions)
   const activeProjectId = useStore(s => s.activeProjectId)
@@ -36,6 +38,7 @@ export function NavPanel() {
   const handleSelectProject = async (id: string) => {
     await setActiveProject(id)
     setExpandedProjects(prev => new Set([...prev, id]))
+    navigate(`/projects/${id}`)
   }
 
   const handleCreateProject = async () => {
@@ -44,6 +47,7 @@ export function NavPanel() {
     const p = await createProject({ name: newName.trim(), work_dirs: dirs })
     await setActiveProject(p.id)
     setExpandedProjects(prev => new Set([...prev, p.id]))
+    navigate(`/projects/${p.id}`)
     setShowNewProject(false)
     setNewName('')
     setNewDirs('')
@@ -182,7 +186,10 @@ export function NavPanel() {
                         <li
                           key={s.id}
                           className={`nav-tree__session${activeSessionId === s.id ? ' nav-tree__session--active' : ''}`}
-                          onClick={() => setActiveSession(s.id)}
+                          onClick={() => {
+                            setActiveSession(s.id)
+                            navigate(`/projects/${activeProjectId}/sessions/${s.id}`)
+                          }}
                         >
                           <span className="nav-tree__connector" />
                           <span className={statusClass(s)}>{statusDot(s)}</span>
