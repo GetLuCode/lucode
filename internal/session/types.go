@@ -29,6 +29,7 @@ type TurnOptions struct {
 	Name            string
 	WorkDirs        []string
 	ClaudeConfigDir string
+	ClaudeSettings  string // path to --settings file passed to claude CLI
 	Resume          bool   // true → --resume=SessionID
 	ForkFrom        string // non-empty → --fork-session --resume=ForkFrom --session-id=SessionID
 	Effort          string // low|medium|high|max|auto

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -18,22 +19,20 @@ import (
 )
 
 func main() {
+	// Handle subcommands before flag parsing.
+	if len(os.Args) > 1 && os.Args[1] == "install" {
+		runInstall()
+		return
+	}
+
 	port := flag.Int("port", 8090, "HTTP listen port")
-	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database and runtime files")
+	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
-	claudeConfig := flag.String("claude-config", defaultClaudeConfig(), "Claude config directory (for hook auto-install)")
+	claudeSettings := flag.String("claude-settings", defaultClaudeSettings(), "Path to Claude settings.json passed to each Claude process")
 	flag.Parse()
 
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
 		log.Fatalf("mkdir data: %v", err)
-	}
-
-	// Auto-install lucodehook into Claude's settings.json if not already present.
-	hookPath := hookBinaryPath()
-	if err := hookcfg.Ensure(*claudeConfig, hookPath); err != nil {
-		log.Printf("warn: could not auto-install hook: %v", err)
-	} else {
-		log.Printf("hook: registered %s in %s/settings.json", hookPath, *claudeConfig)
 	}
 
 	dbPath := filepath.Join(*dataDir, "lucode.db")
@@ -46,11 +45,10 @@ func main() {
 	hub := wspkg.NewHub()
 
 	backendWSURL := fmt.Sprintf("ws://localhost:%d", *port)
-	manager := sessionpkg.NewManager(db, hub, backendWSURL)
+	manager := sessionpkg.NewManager(db, hub, backendWSURL, *claudeSettings)
 
 	handler := apipkg.New(db, hub, manager, *workingDir)
 
-	// Strip the "dist/" prefix so the SPA FS is rooted at dist/index.html.
 	distFS, err := fs.Sub(webui.Dist, "dist")
 	if err != nil {
 		log.Fatalf("embed sub: %v", err)
@@ -60,20 +58,89 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("lucode listening on http://localhost%s", addr)
+	if *claudeSettings != "" {
+		log.Printf("claude settings: %s", *claudeSettings)
+	}
 	if err := http.ListenAndServe(addr, httpHandler); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// hookBinaryPath returns the expected path to lucodehook, co-located with
-// the lucode binary itself (e.g. /usr/local/bin/lucodehook).
-func hookBinaryPath() string {
-	exec, err := os.Executable()
+// runInstall copies lucode + lucodehook to ~/.lucode/ and writes
+// ~/.lucode/settings.json with the hook registered.
+// It does NOT touch ~/.claude/settings.json.
+func runInstall() {
+	installDir := defaultDataDir() // ~/.lucode
+
+	self, err := os.Executable()
 	if err != nil {
-		// Fallback: assume it's on PATH / same working dir.
-		return "lucodehook"
+		log.Fatalf("install: cannot determine executable path: %v", err)
 	}
-	return filepath.Join(filepath.Dir(exec), "lucodehook")
+	self, _ = filepath.EvalSymlinks(self)
+	selfDir := filepath.Dir(self)
+
+	hookSrc := filepath.Join(selfDir, "lucodehook")
+	if _, err := os.Stat(hookSrc); err != nil {
+		log.Fatalf("install: lucodehook not found at %s\n"+
+			"  Make sure both binaries are in the same directory.", hookSrc)
+	}
+
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		log.Fatalf("install: mkdir %s: %v", installDir, err)
+	}
+
+	lucodeDst := filepath.Join(installDir, "lucode")
+	hookDst := filepath.Join(installDir, "lucodehook")
+
+	// Copy lucode binary (skip if already running from install dir).
+	if self != lucodeDst {
+		if err := copyFile(self, lucodeDst, 0755); err != nil {
+			log.Fatalf("install: copy lucode: %v", err)
+		}
+		fmt.Printf("  copied lucode      → %s\n", lucodeDst)
+	} else {
+		fmt.Printf("  lucode already at   %s\n", lucodeDst)
+	}
+
+	// Copy lucodehook binary.
+	if hookSrc != hookDst {
+		if err := copyFile(hookSrc, hookDst, 0755); err != nil {
+			log.Fatalf("install: copy lucodehook: %v", err)
+		}
+		fmt.Printf("  copied lucodehook  → %s\n", hookDst)
+	} else {
+		fmt.Printf("  lucodehook already at %s\n", hookDst)
+	}
+
+	// Write ~/.lucode/settings.json with the hook registered.
+	settingsPath := filepath.Join(installDir, "settings.json")
+	if err := hookcfg.WriteSettings(settingsPath, hookDst); err != nil {
+		log.Fatalf("install: write settings: %v", err)
+	}
+	fmt.Printf("  wrote settings     → %s\n", settingsPath)
+
+	fmt.Printf("\nInstall complete! To run:\n\n")
+	fmt.Printf("  %s [--port PORT] [--working-dir DIR]\n\n", lucodeDst)
+	fmt.Printf("Claude sessions will automatically use %s\n", settingsPath)
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 func defaultDataDir() string {
@@ -84,10 +151,15 @@ func defaultDataDir() string {
 	return filepath.Join(home, ".lucode")
 }
 
-func defaultClaudeConfig() string {
+func defaultClaudeSettings() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".claude"
+		return ""
 	}
-	return filepath.Join(home, ".claude")
+	p := filepath.Join(home, ".lucode", "settings.json")
+	// Only use as default if the file actually exists (i.e. after install).
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
 }

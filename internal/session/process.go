@@ -169,6 +169,11 @@ func buildArgs(opts TurnOptions) []string {
 		args = append(args, "--thinking="+opts.Thinking)
 	}
 
+	// Use a dedicated settings file (e.g. ~/.lucode/settings.json) if configured.
+	if opts.ClaudeSettings != "" {
+		args = append(args, "--settings="+opts.ClaudeSettings)
+	}
+
 	return args
 }
 

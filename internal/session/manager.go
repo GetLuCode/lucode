@@ -22,20 +22,22 @@ import (
 var ErrSessionBusy = errors.New("session already has an active turn")
 
 type Manager struct {
-	db           *sql.DB
-	hub          *wspkg.Hub
-	backendWSURL string
+	db             *sql.DB
+	hub            *wspkg.Hub
+	backendWSURL   string
+	claudeSettings string // path to --settings file for claude CLI (empty = not used)
 
 	mu    sync.Mutex
 	procs map[string]*ProcessState
 }
 
-func NewManager(db *sql.DB, hub *wspkg.Hub, backendWSURL string) *Manager {
+func NewManager(db *sql.DB, hub *wspkg.Hub, backendWSURL, claudeSettings string) *Manager {
 	m := &Manager{
-		db:           db,
-		hub:          hub,
-		backendWSURL: backendWSURL,
-		procs:        make(map[string]*ProcessState),
+		db:             db,
+		hub:            hub,
+		backendWSURL:   backendWSURL,
+		claudeSettings: claudeSettings,
+		procs:          make(map[string]*ProcessState),
 	}
 	hub.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 		m.onHookRequest(sessID, toolUseID, toolName, toolInput)
@@ -93,6 +95,7 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 
+	opts.ClaudeSettings = m.claudeSettings
 	sr, err := spawnClaude(ctx, opts, m.backendWSURL)
 	if err != nil {
 		cancel()

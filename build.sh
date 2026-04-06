@@ -3,25 +3,23 @@ set -euo pipefail
 
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
-BUILD_FLAGS="-ldflags=-s -w"
 
 echo "==> Building web (npm run build)..."
-cd web
-npm run build
-cd ..
+(cd web && npm run build)
 
 echo "==> Building lucode (CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH)..."
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-  go build $BUILD_FLAGS -o lucode ./cmd/lucode
+  go build -ldflags "-s -w" -o lucode ./cmd/lucode
 
 echo "==> Building lucodehook (CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH)..."
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-  go build $BUILD_FLAGS -o lucodehook ./cmd/lucodehook
+  go build -ldflags "-s -w" -o lucodehook ./cmd/lucodehook
 
 echo ""
-echo "Done!"
-echo "  ./lucode      — server (embeds web UI)"
-echo "  ./lucodehook  — Claude hook (place next to lucode)"
+echo "Done!  lucode $(du -sh lucode | cut -f1)   lucodehook $(du -sh lucodehook | cut -f1)"
 echo ""
-echo "Usage: ./lucode [--port PORT] [--data DIR] [--working-dir DIR] [--claude-config DIR]"
-echo "  lucode auto-registers lucodehook in --claude-config/settings.json on first run."
+echo "First-time setup (installs to ~/.lucode/):"
+echo "  ./lucode install"
+echo ""
+echo "Run:"
+echo "  ~/.lucode/lucode [--port PORT] [--data DIR] [--working-dir DIR]"
