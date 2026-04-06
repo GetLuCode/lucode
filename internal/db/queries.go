@@ -475,3 +475,137 @@ func nullStr(s string) interface{} {
 	return s
 }
 
+// ---- Search ----
+
+type SearchResult struct {
+	Type      string `json:"type"`       // "project" | "session" | "message"
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	SessionID string `json:"session_id"`
+	Title     string `json:"title"`      // project name, session name, or message snippet
+	Snippet   string `json:"snippet"`    // matched text excerpt (messages only)
+	Seq       int    `json:"seq"`        // message sequence number (messages only)
+}
+
+// Search searches for projects, sessions, and messages by query string.
+// Returns results grouped by type.
+func Search(db *sql.DB, query string) ([]SearchResult, error) {
+	var results []SearchResult
+
+	// Query 1: Search projects by name (case-insensitive LIKE)
+	projectRows, err := db.Query(
+		`SELECT id, name FROM projects
+		 WHERE LOWER(name) LIKE '%' || lower(?) || '%'
+		 ORDER BY name ASC LIMIT 10`,
+		query,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer projectRows.Close()
+
+	for projectRows.Next() {
+		var id, name string
+		if err := projectRows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		results = append(results, SearchResult{
+			Type:      "project",
+			ID:        id,
+			ProjectID: id,
+			SessionID: "",
+			Title:     name,
+			Snippet:   "",
+			Seq:       0,
+		})
+	}
+	if err := projectRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Query 2: Search sessions by name (case-insensitive LIKE)
+	sessionRows, err := db.Query(
+		`SELECT id, project_id, name FROM sessions
+		 WHERE LOWER(name) LIKE '%' || lower(?) || '%'
+		 ORDER BY name ASC LIMIT 10`,
+		query,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer sessionRows.Close()
+
+	for sessionRows.Next() {
+		var id, projectID, name string
+		if err := sessionRows.Scan(&id, &projectID, &name); err != nil {
+			return nil, err
+		}
+		results = append(results, SearchResult{
+			Type:      "session",
+			ID:        id,
+			ProjectID: projectID,
+			SessionID: id,
+			Title:     name,
+			Snippet:   "",
+			Seq:       0,
+		})
+	}
+	if err := sessionRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Query 3: Search messages using FTS5 with trigram tokenizer.
+	// Trigram enables substring matching: "priv" finds "privacy", "river", etc.
+	// Minimum effective query length is 3 characters (trigram requirement).
+	messageRows, err := db.Query(
+		`SELECT DISTINCT m.id, m.session_id, s.project_id, s.name, m.content, m.seq, m.role
+		 FROM messages_fts fts
+		 JOIN messages m ON fts.message_id = m.id
+		 JOIN sessions s ON m.session_id = s.id
+		 WHERE fts.content MATCH ?
+		 ORDER BY rank ASC LIMIT 30`,
+		query,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer messageRows.Close()
+
+	seenMessageIds := make(map[string]bool)
+	for messageRows.Next() {
+		var id, sessionID, projectID, sessionName, content string
+		var seq int
+		var role string
+		if err := messageRows.Scan(&id, &sessionID, &projectID, &sessionName, &content, &seq, &role); err != nil {
+			return nil, err
+		}
+
+		// Skip duplicate message IDs (in case of FTS quirks)
+		if seenMessageIds[id] {
+			continue
+		}
+		seenMessageIds[id] = true
+
+		// Truncate content snippet to 120 chars
+		snippet := content
+		if len(snippet) > 120 {
+			snippet = snippet[:120] + "…"
+		}
+
+		results = append(results, SearchResult{
+			Type:      "message",
+			ID:        id,
+			ProjectID: projectID,
+			SessionID: sessionID,
+			Title:     sessionName,
+			Snippet:   snippet,
+			Seq:       seq,
+		})
+	}
+	if err := messageRows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+

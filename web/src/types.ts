@@ -51,6 +51,16 @@ export interface PendingHook {
   created_at: string
 }
 
+export interface SearchResult {
+  type: 'project' | 'session' | 'message'
+  id: string
+  project_id: string
+  session_id: string
+  title: string
+  snippet: string
+  seq: number
+}
+
 // WebSocket events from backend
 export type WSEvent =
   | { type: 'session_status'; session_id: string; status: string }

@@ -1,11 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useStore } from './store'
 import { NavPanel } from './components/Sidebar/NavPanel'
 import { ChatView } from './components/Chat/ChatView'
 import { HookToastContainer } from './components/Toast/HookToastContainer'
+import { SpotlightSearch } from './components/Search/SpotlightSearch'
 
 export default function App() {
+  const [searchOpen, setSearchOpen] = useState(false)
   const loadProjects = useStore(s => s.loadProjects)
   const setActiveProject = useStore(s => s.setActiveProject)
   const setActiveSession = useStore(s => s.setActiveSession)
@@ -14,6 +16,18 @@ export default function App() {
 
   const { projectId, sessionId } = useParams<{ projectId?: string; sessionId?: string }>()
   const navigate = useNavigate()
+
+  // Global keyboard shortcut for search (Ctrl+K / Cmd+K)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault()
+        setSearchOpen(v => !v)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   // Load projects on mount
   useEffect(() => {
@@ -45,7 +59,8 @@ export default function App() {
   return (
     <div className="app">
       <HookToastContainer />
-      <NavPanel />
+      <SpotlightSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
+      <NavPanel onOpenSearch={() => setSearchOpen(true)} />
       <main className="main">
         <ChatView />
       </main>
