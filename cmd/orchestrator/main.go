@@ -34,7 +34,7 @@ func main() {
 	hub := wspkg.NewHub()
 
 	backendWSURL := fmt.Sprintf("ws://localhost:%d", *port)
-	manager := sessionpkg.NewManager(db, hub, backendWSURL)
+	manager := sessionpkg.NewManager(db, hub, backendWSURL, "")
 
 	handler := apipkg.New(db, hub, manager, *workingDir)
 	httpHandler := apipkg.Wrap(handler)
