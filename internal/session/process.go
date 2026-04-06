@@ -174,8 +174,8 @@ func buildArgs(opts TurnOptions) []string {
 
 func buildEnv(opts TurnOptions, backendWSURL string) []string {
 	env := append(os.Environ(),
-		"ORCHESTRATOR_SESSION_ID="+opts.SessionID,
-		"ORCHESTRATOR_WS_URL="+backendWSURL,
+		"LUCODE_SESSION_ID="+opts.SessionID,
+		"LUCODE_WS_URL="+backendWSURL,
 	)
 	if opts.ClaudeConfigDir != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+opts.ClaudeConfigDir)
