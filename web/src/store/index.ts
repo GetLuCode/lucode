@@ -45,6 +45,8 @@ interface AppState {
   streamingText: Record<string, string>
   streamingThinking: Record<string, string>
   sessionUsage: Record<string, TokenUsage>
+  // ID of the last assistant message that arrived live via WebSocket (not loaded from REST)
+  liveMessageId: Record<string, string>
   filePreview: FilePreview | null
   starredMessages: Record<string, Message[]>
   starredPanelOpen: boolean
@@ -225,6 +227,7 @@ export const useStore = create<AppState>((set, get) => ({
   streamingText: {},
   streamingThinking: {},
   sessionUsage: {},
+  liveMessageId: {},
   filePreview: null,
   starredMessages: {},
   starredPanelOpen: false,
@@ -595,6 +598,7 @@ export const useStore = create<AppState>((set, get) => ({
                 messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), finalMsg] },
                 streamingText: { ...s.streamingText, [sessId]: '' },
                 streamingThinking: { ...s.streamingThinking, [sessId]: '' },
+                liveMessageId: { ...s.liveMessageId, [sessId]: finalMsg.id },
               }))
 
               if (usage) {
