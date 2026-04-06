@@ -2,10 +2,14 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
-import { IconDots, IconEdit, IconTrash } from '@tabler/icons-react'
+import { IconDots, IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 
-export function NavPanel() {
+interface NavPanelProps {
+  onOpenSearch?: () => void
+}
+
+export function NavPanel({ onOpenSearch }: NavPanelProps) {
   const navigate = useNavigate()
   const projects = useStore(s => s.projects)
   const sessions = useStore(s => s.sessions)
@@ -107,14 +111,37 @@ export function NavPanel() {
 
   return (
     <aside className={`nav-panel${collapsed ? ' nav-panel--collapsed' : ''}`}>
-      {/* collapse toggle rail */}
-      <button
-        className="nav-panel__rail"
-        onClick={() => setCollapsed(v => !v)}
-        title={collapsed ? 'Expand panel' : 'Collapse panel'}
-      >
-        <span className="nav-panel__rail-icon">{collapsed ? '›' : '‹'}</span>
-      </button>
+      {/* mobile backdrop — closes panel on outside click */}
+      {!collapsed && (
+        <div className="nav-panel__backdrop" onClick={() => setCollapsed(true)} />
+      )}
+      {/* icon rail */}
+      <div className="nav-panel__rail">
+        <button
+          className="nav-panel__rail-btn"
+          onClick={() => setCollapsed(v => !v)}
+          title={collapsed ? 'Expand panel' : 'Collapse panel'}
+        >
+          {collapsed
+            ? <IconLayoutSidebarLeftExpand size={17} />
+            : <IconLayoutSidebarLeftCollapse size={17} />
+          }
+        </button>
+        <button
+          className="nav-panel__rail-btn"
+          onClick={onOpenSearch}
+          title="Search (Ctrl+K)"
+        >
+          <IconSearch size={16} />
+        </button>
+        <div className="nav-panel__rail-spacer" />
+        <button
+          className="nav-panel__rail-btn"
+          title="Settings"
+        >
+          <IconAdjustments size={16} />
+        </button>
+      </div>
 
       <div className="nav-panel__body">
         {/* header */}

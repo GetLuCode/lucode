@@ -48,6 +48,7 @@ interface AppState {
   filePreview: FilePreview | null
   starredMessages: Record<string, Message[]>
   starredPanelOpen: boolean
+  jumpToMessageId: string | null
 
   openFilePreview: (preview: FilePreview) => void
   closeFilePreview: () => void
@@ -55,6 +56,7 @@ interface AppState {
   loadStarredMessages: (sessionId: string) => Promise<void>
   openStarredPanel: () => void
   closeStarredPanel: () => void
+  setJumpToMessage: (id: string | null) => void
   loadMessageContext: (messageId: string, sessionId: string) => Promise<void>
   loadProjects: () => Promise<void>
   createProject: (data: Partial<Project>) => Promise<Project>
@@ -226,11 +228,13 @@ export const useStore = create<AppState>((set, get) => ({
   filePreview: null,
   starredMessages: {},
   starredPanelOpen: false,
+  jumpToMessageId: null,
 
   openFilePreview: (preview) => set({ filePreview: preview }),
   closeFilePreview: () => set({ filePreview: null }),
   openStarredPanel: () => set({ starredPanelOpen: true }),
   closeStarredPanel: () => set({ starredPanelOpen: false }),
+  setJumpToMessage: (id) => set({ jumpToMessageId: id }),
 
   loadProjects: async () => {
     const projects = await api.listProjects()

@@ -49,6 +49,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/messages/{id}/star", h.toggleStarMessage)
 	mux.HandleFunc("GET /api/sessions/{id}/starred", h.listStarredMessages)
 
+	mux.HandleFunc("GET /api/search", h.search)
+
 	mux.HandleFunc("GET /api/ideas", h.listIdeas)
 	mux.HandleFunc("POST /api/ideas", h.createIdea)
 	mux.HandleFunc("PATCH /api/ideas/{id}", h.updateIdea)
@@ -442,6 +444,25 @@ func (h *Handler) listStarredMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResp(w, http.StatusOK, messages)
+}
+
+func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) < 3 {
+		jsonResp(w, http.StatusOK, map[string]any{"results": []any{}})
+		return
+	}
+
+	results, err := dbpkg.Search(h.db, q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if results == nil {
+		results = []dbpkg.SearchResult{}
+	}
+
+	jsonResp(w, http.StatusOK, map[string]any{"results": results})
 }
 
 func (h *Handler) listIdeas(w http.ResponseWriter, r *http.Request) {

@@ -15,7 +15,6 @@ import { IdeasModal } from './IdeasModal'
 import { FilePreviewPanel } from './FilePreviewPanel'
 import { StarredPanel } from './StarredPanel'
 import { fetchIdeas } from '../../lib/ideasStorage'
-import * as api from '../../api'
 import type { Message } from '../../types'
 
 // Stable references — never inline [] or {} in Zustand selectors,
@@ -411,6 +410,22 @@ function ChatViewFull() {
     virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' })
   }, [messages, virtualizer, activeSessionId, loadMessageContext])
 
+  // Handle jump-to-message from search or other sources
+  const jumpToMessageId = useStore(s => s.jumpToMessageId)
+  const setJumpToMessage = useStore(s => s.setJumpToMessage)
+  useEffect(() => {
+    if (!jumpToMessageId || !activeSessionId) return
+    handleScrollToMessage(jumpToMessageId)
+    setJumpToMessage(null)
+  }, [jumpToMessageId, activeSessionId, handleScrollToMessage, setJumpToMessage])
+
+  // Wrapper for toggleStar to provide sessionId
+  const handleToggleStar = (messageId: string) => {
+    if (activeSessionId) {
+      toggleStar(messageId, activeSessionId)
+    }
+  }
+
   const virtualItems = virtualizer.getVirtualItems()
 
   const headerName = isPending ? 'New session' : (session?.name || 'Session')
@@ -513,7 +528,7 @@ function ChatViewFull() {
                 onSpeak={handleSpeakMessage}
                 onStopSpeaking={handleStopSpeaking}
                 isStarred={messages[virtualItem.index]?.starred}
-                onStar={toggleStar}
+                onStar={handleToggleStar}
               />
             </div>
           ))}

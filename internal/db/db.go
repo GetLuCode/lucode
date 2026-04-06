@@ -107,5 +107,44 @@ CREATE TABLE IF NOT EXISTS ideas (
 	// Add starred column to messages (idempotent — ignore error if already exists)
 	db.Exec(`ALTER TABLE messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`)
 
+	// FTS5 virtual table with trigram tokenizer for substring search.
+	// Drop and recreate to ensure the tokenizer is correct (safe — just a search index).
+	if _, err := db.Exec(`DROP TABLE IF EXISTS messages_fts`); err != nil {
+		return fmt.Errorf("drop messages_fts: %w", err)
+	}
+	if _, err := db.Exec(`DROP TRIGGER IF EXISTS messages_fts_ai`); err != nil {
+		return fmt.Errorf("drop messages_fts_ai trigger: %w", err)
+	}
+	if _, err := db.Exec(`
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+	message_id UNINDEXED,
+	session_id UNINDEXED,
+	role       UNINDEXED,
+	content,
+	tokenize = 'trigram'
+)`); err != nil {
+		return fmt.Errorf("create messages_fts table: %w", err)
+	}
+
+	// Insert trigger: only index messages with searchable roles
+	if _, err := db.Exec(`
+CREATE TRIGGER messages_fts_ai
+AFTER INSERT ON messages
+WHEN new.role IN ('user', 'assistant', 'thinking')
+BEGIN
+	INSERT INTO messages_fts(message_id, session_id, role, content)
+	VALUES (new.id, new.session_id, new.role, new.content);
+END`); err != nil {
+		return fmt.Errorf("create messages_fts_ai trigger: %w", err)
+	}
+
+	// Populate FTS table from all existing messages
+	if _, err := db.Exec(`
+INSERT INTO messages_fts(message_id, session_id, role, content)
+SELECT id, session_id, role, content FROM messages
+WHERE role IN ('user', 'assistant', 'thinking')`); err != nil {
+		return fmt.Errorf("populate messages_fts table: %w", err)
+	}
+
 	return nil
 }
