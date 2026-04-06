@@ -2,6 +2,7 @@
 /orchestrator
 /hook
 /lucode
+/lucodehook
 tmp/
 
 # Go
