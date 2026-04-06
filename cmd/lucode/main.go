@@ -156,15 +156,27 @@ func runInstall() {
 	fmt.Println(hr)
 	fmt.Println()
 	fmt.Printf("  You can now run:\n\n")
-	fmt.Printf("    lucode --port 8090 --working-dir ~/\n")
+	if runtime.GOOS == "windows" {
+		fmt.Printf("    lucode.exe --port 8090 --working-dir %%USERPROFILE%%\n")
+	} else {
+		fmt.Printf("    lucode --port 8090 --working-dir ~/\n")
+	}
 	fmt.Println()
 	fmt.Printf("  On first run lucode will use:\n")
 	fmt.Printf("    %s\n", settingsPath)
 	fmt.Println()
 }
 
-// setupPath detects shell rc files and offers to add installDir to PATH.
+// setupPath offers to add installDir to the system PATH.
+// On Windows it shows the setx command; on Unix it edits a shell rc file.
 func setupPath(installDir string) {
+	fmt.Println()
+
+	if runtime.GOOS == "windows" {
+		setupPathWindows(installDir)
+		return
+	}
+
 	home, _ := os.UserHomeDir()
 
 	candidates := []string{
@@ -183,8 +195,7 @@ func setupPath(installDir string) {
 
 	exportLine := fmt.Sprintf(`export PATH="%s:$PATH"`, installDir)
 
-	fmt.Println()
-	fmt.Println("  Add ~/.lucode to your PATH?")
+	fmt.Println("  Add to your PATH?")
 	fmt.Println()
 
 	if len(found) == 0 {
@@ -258,6 +269,25 @@ func setupPath(installDir string) {
 
 	fmt.Printf("\n  ✓  Added to %s\n", short)
 	fmt.Printf("\n  Reload with:  source %s\n", short)
+}
+
+// setupPathWindows shows Windows-specific PATH instructions.
+// It prints the setx command and asks the user if they want to run it.
+func setupPathWindows(installDir string) {
+	setxCmd := fmt.Sprintf(`setx PATH "%s;%%PATH%%"`, installDir)
+
+	fmt.Println("  Add to your PATH?")
+	fmt.Println()
+	fmt.Printf("  Install directory: %s\n", installDir)
+	fmt.Println()
+	fmt.Println("  Run this in an Administrator Command Prompt:")
+	fmt.Println()
+	fmt.Printf("    %s\n", setxCmd)
+	fmt.Println()
+	fmt.Println("  Or: Settings → System → Advanced system settings")
+	fmt.Println("      → Environment Variables → Path → New")
+	fmt.Printf("      → paste: %s\n", installDir)
+	fmt.Println()
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
