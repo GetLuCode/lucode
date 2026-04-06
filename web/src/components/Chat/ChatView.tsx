@@ -6,7 +6,6 @@ import { useSessionWS } from '../../hooks/useSessionWS'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
 import { tts } from '../../hooks/useTTS'
 import { getVoicePrefs, saveVoicePrefs } from '../../lib/voicePrefs'
-import { useTTSReadCache } from '../../hooks/useTTSReadCache'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { InputControls } from './InputControls'
@@ -53,6 +52,7 @@ function ChatViewFull() {
     activeSessionId ? (s.sessionStatus[activeSessionId] ?? 'idle') : 'idle'
   )
   const sessionUsage = useStore(s => activeSessionId ? s.sessionUsage[activeSessionId] : undefined)
+  const liveMessageId = useStore(s => activeSessionId ? s.liveMessageId[activeSessionId] : undefined)
   const activeProjectId = useStore(s => s.activeProjectId)
   const sessions = useStore(s => s.sessions)
   const sendMessage = useStore(s => s.sendMessage)
@@ -80,7 +80,6 @@ function ChatViewFull() {
   const [autoRead, setAutoRead] = useState(() => getVoicePrefs().autoRead)
   const [noEcho, setNoEcho] = useState(() => getVoicePrefs().noEcho)
   const [voiceURI, setVoiceURI] = useState(() => getVoicePrefs().voiceURI)
-  const { isRead, markRead, loaded: ttsDbLoaded } = useTTSReadCache()
   const [interimText, setInterimText] = useState('')
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
   const [ideasOpen, setIdeasOpen] = useState(false)
@@ -228,37 +227,30 @@ function ChatViewFull() {
     }
   }, [interimText])
 
-  // Auto-read new assistant messages — skips messages already read (persisted in IndexedDB).
-  // Manual "Read aloud" always works regardless of read status.
+  // Auto-read: fires only when a new message arrives live via WebSocket (liveMessageId changes).
+  // Manual "Read aloud" always works regardless.
   useEffect(() => {
-    if (!autoRead || !ttsDbLoaded || messages.length === 0) return
-    // Don't interrupt ongoing TTS or auto-read the new session's last message while something is playing
+    if (!autoRead || !liveMessageId) return
     if (speakingMessageIdRef.current) return
 
-    const lastMessage = messages[messages.length - 1]
-    if (
-      lastMessage?.role === 'assistant' &&
-      !isRead(lastMessage.id) &&
-      !streamingText
-    ) {
-      markRead(lastMessage.id)
+    const msg = messages.find(m => m.id === liveMessageId)
+    if (!msg || msg.role !== 'assistant') return
 
-      // No-echo (speakers): pause mic while TTS plays, restore after
-      const wasListening = isListening
-      if (wasListening && !noEchoRef.current) stopListening()
+    // No-echo (speakers): pause mic while TTS plays, restore after
+    const wasListening = isListening
+    if (wasListening && !noEchoRef.current) stopListening()
 
-      speakingMessageIdRef.current = lastMessage.id
-      setSpeakingMessageId(lastMessage.id)
+    speakingMessageIdRef.current = liveMessageId
+    setSpeakingMessageId(liveMessageId)
 
-      tts.speak(lastMessage.content, voiceLang, voiceURI, {
-        onEnd: () => {
-          speakingMessageIdRef.current = null
-          setSpeakingMessageId(null)
-          if (wasListening && !noEchoRef.current) startListening()
-        },
-      })
-    }
-  }, [messages, autoRead, streamingText, voiceLang, ttsDbLoaded]) // eslint-disable-line react-hooks/exhaustive-deps
+    tts.speak(msg.content, voiceLang, voiceURI, {
+      onEnd: () => {
+        speakingMessageIdRef.current = null
+        setSpeakingMessageId(null)
+        if (wasListening && !noEchoRef.current) startListening()
+      },
+    })
+  }, [liveMessageId, autoRead]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const triggerLoadMore = useCallback(async () => {
     if (!activeSessionId || isLoadingMoreRef.current) return
