@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	_ "embed"
 	"flag"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	apipkg "claude-orchestrator/internal/api"
 	dbpkg "claude-orchestrator/internal/db"
@@ -26,7 +29,6 @@ import (
 var embeddedHook []byte
 
 func main() {
-	// Handle subcommands before flag parsing.
 	if len(os.Args) > 1 && os.Args[1] == "install" {
 		runInstall()
 		return
@@ -73,51 +75,187 @@ func main() {
 	}
 }
 
-// runInstall extracts the embedded lucodehook binary and copies lucode itself
-// into ~/.lucode/, then writes ~/.lucode/settings.json with the hook registered.
-// Does NOT touch ~/.claude/settings.json.
-func runInstall() {
-	installDir := defaultDataDir() // ~/.lucode
+// ── install ──────────────────────────────────────────────────────────────────
 
+func runInstall() {
+	hr := strings.Repeat("─", 54)
+	installDir := defaultDataDir()
+
+	fmt.Println()
+	fmt.Println(hr)
+	fmt.Println("  LuCode installer")
+	fmt.Println(hr)
+	fmt.Println()
+
+	// 1. Verify claude CLI is available.
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		fmt.Println("  ✗  claude CLI not found in PATH.")
+		fmt.Println()
+		fmt.Println("  LuCode requires the Claude Code CLI to function.")
+		fmt.Println("  Install it from:")
+		fmt.Println()
+		fmt.Println("    https://claude.ai/code")
+		fmt.Println()
+		fmt.Println("  Then re-run:  lucode install")
+		fmt.Println()
+		os.Exit(1)
+	}
+	fmt.Printf("  ✓  claude CLI found at %s\n", claudePath)
+	fmt.Println()
+
+	// 2. Create install directory.
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		log.Fatalf("install: mkdir %s: %v", installDir, err)
 	}
 
-	// Extract embedded lucodehook.
+	// 3. Extract embedded lucodehook.
 	hookDst := filepath.Join(installDir, "lucodehook")
 	if err := os.WriteFile(hookDst, embeddedHook, 0755); err != nil {
 		log.Fatalf("install: write lucodehook: %v", err)
 	}
-	fmt.Printf("  extracted lucodehook → %s\n", hookDst)
+	fmt.Printf("  ✓  extracted lucodehook  →  %s\n", hookDst)
 
-	// Copy lucode binary itself.
+	// 4. Copy lucode binary itself.
 	self, err := os.Executable()
 	if err != nil {
 		log.Fatalf("install: cannot determine executable path: %v", err)
 	}
 	self, _ = filepath.EvalSymlinks(self)
-
 	lucodeDst := filepath.Join(installDir, "lucode")
 	if self == lucodeDst {
-		fmt.Printf("  lucode already at    %s\n", lucodeDst)
+		fmt.Printf("  ✓  lucode already at      %s\n", lucodeDst)
 	} else {
 		if err := copyFile(self, lucodeDst, 0755); err != nil {
 			log.Fatalf("install: copy lucode: %v", err)
 		}
-		fmt.Printf("  copied lucode      → %s\n", lucodeDst)
+		fmt.Printf("  ✓  copied lucode         →  %s\n", lucodeDst)
 	}
 
-	// Write ~/.lucode/settings.json.
+	// 5. Write ~/.lucode/settings.json.
 	settingsPath := filepath.Join(installDir, "settings.json")
 	if err := hookcfg.WriteSettings(settingsPath, hookDst); err != nil {
 		log.Fatalf("install: write settings: %v", err)
 	}
-	fmt.Printf("  wrote settings     → %s\n", settingsPath)
+	fmt.Printf("  ✓  wrote settings        →  %s\n", settingsPath)
 
-	fmt.Printf("\nInstall complete! To run:\n\n")
-	fmt.Printf("  %s [--port PORT] [--working-dir DIR]\n\n", lucodeDst)
-	fmt.Printf("Claude sessions will automatically use %s\n", settingsPath)
+	// 6. Interactive PATH setup.
+	fmt.Println()
+	fmt.Println(hr)
+	setupPath(installDir)
+
+	// 7. Done.
+	fmt.Println()
+	fmt.Println(hr)
+	fmt.Println("  Install complete!")
+	fmt.Println(hr)
+	fmt.Println()
+	fmt.Printf("  You can now run:\n\n")
+	fmt.Printf("    lucode --port 8090 --working-dir ~/\n")
+	fmt.Println()
+	fmt.Printf("  On first run lucode will use:\n")
+	fmt.Printf("    %s\n", settingsPath)
+	fmt.Println()
 }
+
+// setupPath detects shell rc files and offers to add installDir to PATH.
+func setupPath(installDir string) {
+	home, _ := os.UserHomeDir()
+
+	candidates := []string{
+		filepath.Join(home, ".bashrc"),
+		filepath.Join(home, ".zshrc"),
+		filepath.Join(home, ".bash_profile"),
+		filepath.Join(home, ".profile"),
+	}
+
+	var found []string
+	for _, f := range candidates {
+		if _, err := os.Stat(f); err == nil {
+			found = append(found, f)
+		}
+	}
+
+	exportLine := fmt.Sprintf(`export PATH="%s:$PATH"`, installDir)
+
+	fmt.Println()
+	fmt.Println("  Add ~/.lucode to your PATH?")
+	fmt.Println()
+
+	if len(found) == 0 {
+		fmt.Println("  No shell config files found. Add manually:")
+		fmt.Printf("    %s\n", exportLine)
+		fmt.Println()
+		return
+	}
+
+	fmt.Println("  Shell configs found:")
+	fmt.Println()
+	for i, f := range found {
+		short := strings.Replace(f, home, "~", 1)
+		fmt.Printf("    [%d] %s\n", i+1, short)
+	}
+	fmt.Println("    [0] Skip")
+	fmt.Println()
+
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Printf("  Choice [1]: ")
+	raw, _ := reader.ReadString('\n')
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = "1"
+	}
+
+	if raw == "0" {
+		fmt.Println()
+		fmt.Println("  Skipped. Add manually:")
+		fmt.Printf("    %s\n", exportLine)
+		fmt.Println()
+		return
+	}
+
+	idx := 0
+	fmt.Sscanf(raw, "%d", &idx)
+	if idx < 1 || idx > len(found) {
+		fmt.Println()
+		fmt.Println("  Invalid choice. Add manually:")
+		fmt.Printf("    %s\n", exportLine)
+		fmt.Println()
+		return
+	}
+
+	target := found[idx-1]
+	short := strings.Replace(target, home, "~", 1)
+
+	// Check if already present.
+	existing, _ := os.ReadFile(target)
+	if strings.Contains(string(existing), installDir) {
+		fmt.Printf("\n  ✓  %s already contains %s\n", short, installDir)
+		fmt.Printf("     (no changes made)\n")
+		return
+	}
+
+	f, err := os.OpenFile(target, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Printf("\n  ✗  Could not write to %s: %v\n", short, err)
+		fmt.Printf("     Add manually: %s\n", exportLine)
+		return
+	}
+	defer f.Close()
+
+	block := fmt.Sprintf("\n# lucode\n%s\n", exportLine)
+	if _, err := f.WriteString(block); err != nil {
+		fmt.Printf("\n  ✗  Write error: %v\n", err)
+		fmt.Printf("     Add manually: %s\n", exportLine)
+		return
+	}
+
+	fmt.Printf("\n  ✓  Added to %s\n", short)
+	fmt.Printf("\n  Reload with:  source %s\n", short)
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 func copyFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src)
