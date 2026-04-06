@@ -1,25 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GOOS="${GOOS:-linux}"
-GOARCH="${GOARCH:-amd64}"
+mkdir -p dist
 
 echo "==> Building web (npm run build)..."
 (cd web && npm run build)
 
-echo "==> Building lucodehook (CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH)..."
-CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-  go build -ldflags "-s -w" -o cmd/lucode/embedded/lucodehook ./cmd/lucodehook
+# ── Helper: build lucodehook for a target, embed it, then build lucode ────────
+# Usage: build_platform <GOOS> <GOARCH> <output-name>
+build_platform() {
+  local goos=$1
+  local goarch=$2
+  local out=$3
 
-echo "==> Building lucode with embedded hook and web UI..."
-CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-  go build -ldflags "-s -w" -o lucode ./cmd/lucode
+  echo ""
+  echo "==> [$goos/$goarch] Building lucodehook..."
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+    go build -ldflags "-s -w" -o cmd/lucode/embedded/lucodehook ./cmd/lucodehook
+
+  echo "==> [$goos/$goarch] Building lucode → dist/$out"
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+    go build -ldflags "-s -w" -o "dist/$out" ./cmd/lucode
+}
+
+build_platform linux  amd64 lucode-linux
+build_platform darwin amd64 lucode-mac
+build_platform windows amd64 lucode.exe
+
+# Clean up the embedded artifact (it's build-time only, not for commits).
+rm -f cmd/lucode/embedded/lucodehook
 
 echo ""
-echo "Done!  lucode $(du -sh lucode | cut -f1)  (includes web UI + lucodehook)"
+echo "────────────────────────────────────────"
+echo "  Build complete"
+echo "────────────────────────────────────────"
+ls -lh dist/
 echo ""
-echo "First-time setup:"
-echo "  ./lucode install"
+echo "  Each binary is self-contained (web UI + hook included)."
 echo ""
-echo "Run:"
-echo "  ~/.lucode/lucode [--port PORT] [--working-dir DIR]"
+echo "  First-time setup:"
+echo "    ./dist/lucode-linux install"
+echo ""
