@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
-import { IconDots, IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments } from '@tabler/icons-react'
+import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 
 interface NavPanelProps {
@@ -117,6 +117,9 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
       )}
       {/* icon rail */}
       <div className="nav-panel__rail">
+        <div className="nav-panel__rail-logo">
+          <img src="/logo-icon.svg" alt="LuCode" width="20" height="20" />
+        </div>
         <button
           className="nav-panel__rail-btn"
           onClick={() => setCollapsed(v => !v)}
@@ -144,6 +147,11 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
       </div>
 
       <div className="nav-panel__body">
+        {/* logo */}
+        <div className="nav-panel__logo">
+          <img src="/logo-text.svg" alt="LuCode" className="nav-panel__logo-img" />
+        </div>
+
         {/* header */}
         <div className="nav-panel__header">
           <span className="nav-panel__label">Workspace</span>

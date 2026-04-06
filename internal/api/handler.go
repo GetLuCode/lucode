@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -82,6 +83,39 @@ func Wrap(h *Handler) http.Handler {
 	mux := http.NewServeMux()
 	h.Register(mux)
 	return cors(mux)
+}
+
+// WrapWithSPA is like Wrap but also serves a Single-Page Application from
+// spaFS for all routes that are not API or WebSocket routes.
+// spaFS should be rooted at the directory containing index.html (i.e. dist/).
+func WrapWithSPA(h *Handler, spaFS fs.FS) http.Handler {
+	mux := http.NewServeMux()
+	h.Register(mux)
+	mux.Handle("/", spaHandler(spaFS))
+	return cors(mux)
+}
+
+// spaHandler serves static files from spaFS and falls back to index.html for
+// any path that does not match a real file (client-side routing support).
+func spaHandler(spaFS fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(spaFS))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strip leading slash to get the fs-relative path.
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
+			path = "."
+		}
+		f, err := spaFS.Open(path)
+		if err != nil {
+			// File not found → serve index.html so the SPA router handles it.
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/"
+			fileServer.ServeHTTP(w, r2)
+			return
+		}
+		f.Close()
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 // ---- handlers ----

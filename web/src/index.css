@@ -117,6 +117,31 @@ html, body, #root {
   display: none;
 }
 
+.nav-panel__logo {
+  display: flex;
+  align-items: center;
+  padding: 11px 12px 9px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.nav-panel__logo-img {
+  height: 20px;
+  width: auto;
+  display: block;
+}
+
+.nav-panel__rail-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  margin-bottom: 2px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
 .nav-panel__header {
   display: flex;
   align-items: center;
