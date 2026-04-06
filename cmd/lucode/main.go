@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	apipkg "claude-orchestrator/internal/api"
@@ -110,7 +111,11 @@ func runInstall() {
 	}
 
 	// 3. Extract embedded lucodehook.
-	hookDst := filepath.Join(installDir, "lucodehook")
+	hookName := "lucodehook"
+	if runtime.GOOS == "windows" {
+		hookName = "lucodehook.exe"
+	}
+	hookDst := filepath.Join(installDir, hookName)
 	if err := os.WriteFile(hookDst, embeddedHook, 0755); err != nil {
 		log.Fatalf("install: write lucodehook: %v", err)
 	}

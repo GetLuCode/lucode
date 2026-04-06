@@ -4,6 +4,7 @@
 /lucode
 /lucodehook
 cmd/lucode/embedded/lucodehook
+dist/
 tmp/
 
 # Go
