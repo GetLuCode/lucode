@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +18,12 @@ import (
 	wspkg "claude-orchestrator/internal/ws"
 	webui "claude-orchestrator/web"
 )
+
+// embeddedHook is the lucodehook binary baked into this executable at build time.
+// It is written to ~/.lucode/lucodehook during `lucode install`.
+//
+//go:embed embedded/lucodehook
+var embeddedHook []byte
 
 func main() {
 	// Handle subcommands before flag parsing.
@@ -66,53 +73,41 @@ func main() {
 	}
 }
 
-// runInstall copies lucode + lucodehook to ~/.lucode/ and writes
-// ~/.lucode/settings.json with the hook registered.
-// It does NOT touch ~/.claude/settings.json.
+// runInstall extracts the embedded lucodehook binary and copies lucode itself
+// into ~/.lucode/, then writes ~/.lucode/settings.json with the hook registered.
+// Does NOT touch ~/.claude/settings.json.
 func runInstall() {
 	installDir := defaultDataDir() // ~/.lucode
-
-	self, err := os.Executable()
-	if err != nil {
-		log.Fatalf("install: cannot determine executable path: %v", err)
-	}
-	self, _ = filepath.EvalSymlinks(self)
-	selfDir := filepath.Dir(self)
-
-	hookSrc := filepath.Join(selfDir, "lucodehook")
-	if _, err := os.Stat(hookSrc); err != nil {
-		log.Fatalf("install: lucodehook not found at %s\n"+
-			"  Make sure both binaries are in the same directory.", hookSrc)
-	}
 
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		log.Fatalf("install: mkdir %s: %v", installDir, err)
 	}
 
-	lucodeDst := filepath.Join(installDir, "lucode")
+	// Extract embedded lucodehook.
 	hookDst := filepath.Join(installDir, "lucodehook")
+	if err := os.WriteFile(hookDst, embeddedHook, 0755); err != nil {
+		log.Fatalf("install: write lucodehook: %v", err)
+	}
+	fmt.Printf("  extracted lucodehook → %s\n", hookDst)
 
-	// Copy lucode binary (skip if already running from install dir).
-	if self != lucodeDst {
+	// Copy lucode binary itself.
+	self, err := os.Executable()
+	if err != nil {
+		log.Fatalf("install: cannot determine executable path: %v", err)
+	}
+	self, _ = filepath.EvalSymlinks(self)
+
+	lucodeDst := filepath.Join(installDir, "lucode")
+	if self == lucodeDst {
+		fmt.Printf("  lucode already at    %s\n", lucodeDst)
+	} else {
 		if err := copyFile(self, lucodeDst, 0755); err != nil {
 			log.Fatalf("install: copy lucode: %v", err)
 		}
 		fmt.Printf("  copied lucode      → %s\n", lucodeDst)
-	} else {
-		fmt.Printf("  lucode already at   %s\n", lucodeDst)
 	}
 
-	// Copy lucodehook binary.
-	if hookSrc != hookDst {
-		if err := copyFile(hookSrc, hookDst, 0755); err != nil {
-			log.Fatalf("install: copy lucodehook: %v", err)
-		}
-		fmt.Printf("  copied lucodehook  → %s\n", hookDst)
-	} else {
-		fmt.Printf("  lucodehook already at %s\n", hookDst)
-	}
-
-	// Write ~/.lucode/settings.json with the hook registered.
+	// Write ~/.lucode/settings.json.
 	settingsPath := filepath.Join(installDir, "settings.json")
 	if err := hookcfg.WriteSettings(settingsPath, hookDst); err != nil {
 		log.Fatalf("install: write settings: %v", err)
@@ -157,7 +152,6 @@ func defaultClaudeSettings() string {
 		return ""
 	}
 	p := filepath.Join(home, ".lucode", "settings.json")
-	// Only use as default if the file actually exists (i.e. after install).
 	if _, err := os.Stat(p); err != nil {
 		return ""
 	}

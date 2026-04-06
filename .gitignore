@@ -3,6 +3,7 @@
 /hook
 /lucode
 /lucodehook
+cmd/lucode/embedded/lucodehook
 tmp/
 
 # Go
