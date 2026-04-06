@@ -34,7 +34,6 @@ function SafeDiffEditor({ lang, original, modified }: { lang: string; original: 
       original={original}
       modified={modified}
       theme={MONACO_THEME}
-      keepCurrentModels
       onMount={(editor) => { editorRef.current = editor }}
       options={{
         ...BASE_OPTIONS,

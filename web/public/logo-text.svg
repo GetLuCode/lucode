@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 118 26" width="118" height="26" fill="none">
+  <text
+    x="0" y="21"
+    font-family="'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
+    font-size="22"
+    font-weight="700"
+    letter-spacing="-0.5">
+    <tspan fill="#00d4aa">Lu</tspan><tspan fill="#e8e4dd">Code</tspan>
+  </text>
+</svg>

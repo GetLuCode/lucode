@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:8090'
+const BASE = ''
 
 export interface Idea {
   id: string

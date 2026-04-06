@@ -1,4 +1,4 @@
-import { IconChevronLeft, IconChevronRight, IconFolder, IconX } from '@tabler/icons-react'
+import { IconChevronRight, IconFolder, IconX } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import * as api from '../../api'
@@ -29,7 +29,7 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
       .then(config => {
         const initialRoot = config.working_dir || ''
         setCurrentPath(initialRoot)
-        return api.listDirs(initialRoot).then(result => ({ result, root: result.root }))
+        return api.listDirs(initialRoot).then(result => ({ result, root: initialRoot }))
       })
       .then(({ result, root }) => {
         setRoot(root || '')
@@ -70,9 +70,6 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
     try {
       const result = await api.listDirs(path)
       setCurrentPath(result.path)
-      if (result.root) {
-        setRoot(result.root)
-      }
       setDirs(result.dirs || [])
     } catch (err) {
       console.error('Failed to load directory:', err)
@@ -85,17 +82,6 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
   async function handleNavigate(dirName: string) {
     const newPath = currentPath.endsWith('/') ? `${currentPath}${dirName}` : `${currentPath}/${dirName}`
     await loadDir(newPath)
-  }
-
-  async function handleGoBack() {
-    try {
-      const result = await api.listDirs(currentPath)
-      if (result.parent) {
-        loadDir(result.parent)
-      }
-    } catch (err) {
-      console.error('Failed to go back:', err)
-    }
   }
 
   async function handleCreate() {

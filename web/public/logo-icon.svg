@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44" width="44" height="44" fill="none">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="box-glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="teal-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4aa"/>
+      <stop offset="100%" stop-color="#00b89a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Glow halo -->
+  <rect x="2" y="2" width="40" height="40" rx="9" fill="#00d4aa" opacity="0.1" filter="url(#box-glow)"/>
+  <!-- Box background -->
+  <rect x="2" y="2" width="40" height="40" rx="9" fill="#0f0f12"/>
+  <!-- Box border -->
+  <rect x="2" y="2" width="40" height="40" rx="9" stroke="#00d4aa" stroke-width="1.5" stroke-opacity="0.7"/>
+  <!-- Inner border shine -->
+  <rect x="3.5" y="3.5" width="37" height="37" rx="8" stroke="#ffffff" stroke-width="0.5" stroke-opacity="0.05"/>
+
+  <!-- Top bar dots -->
+  <circle cx="10" cy="11" r="2" fill="#2e2e35"/>
+  <circle cx="16.5" cy="11" r="2" fill="#2e2e35"/>
+  <circle cx="23" cy="11" r="2" fill="#2e2e35"/>
+  <!-- Separator -->
+  <line x1="2" y1="17" x2="42" y2="17" stroke="#1e1e24" stroke-width="1"/>
+
+  <!-- Prompt > -->
+  <path d="M11 24 L20 30 L11 36"
+        stroke="url(#teal-grad)" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round"
+        filter="url(#glow)"/>
+
+  <!-- Cursor _ -->
+  <rect x="22" y="34.5" width="11" height="2" rx="1" fill="#00d4aa" filter="url(#glow)"/>
+</svg>

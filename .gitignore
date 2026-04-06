@@ -1,6 +1,7 @@
 # Binaries
-orchestrator
-hook
+/orchestrator
+/hook
+/lucode
 tmp/
 
 # Go

@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../store'
 import type { WSEvent } from '../types'
 
-const WS_BASE = 'ws://localhost:8090'
+const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
 
 export function useSessionWS(sessionId: string | null) {
   const wsRef = useRef<WebSocket | null>(null)
