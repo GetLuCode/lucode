@@ -347,7 +347,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     // Normal sendTurn for existing sessions
-    api.sendTurn(id, msg, model, effort, thinking, image).catch(console.error)
+    api.sendTurn(id, msg, model, undefined, effort, thinking, image).catch(console.error)
     const seq = (get().messages[id]?.length ?? 0)
     const userMsg: Message = {
       id: `opt-${Date.now()}`,
@@ -489,12 +489,12 @@ export const useStore = create<AppState>((set, get) => ({
         const raw = event.event as Record<string, unknown>
         if (!raw) break
 
-        const outerType = raw.type as string
+        // event.event is the inner Claude/Ollama API event object directly.
+        // Both Claude and Ollama emit the same shape: { type, index, delta, ... }
+        const inner = raw
+        const innerType = inner.type as string
 
-        if (outerType === 'stream_event') {
-          const inner = (raw.event ?? raw) as Record<string, unknown>
-          const innerType = inner?.type as string
-
+        {
           if (innerType === 'message_start') {
             const msg = inner.message as Record<string, unknown> | undefined
             pendingUsageMap[sessId] = { inputUsage: msg?.usage as TokenUsage | undefined }
@@ -513,6 +513,9 @@ export const useStore = create<AppState>((set, get) => ({
           } else if (innerType === 'content_block_delta') {
             const delta = inner.delta as Record<string, unknown> | undefined
             const index = inner.index as number
+
+            // Ensure blockTypeMap is initialised (Ollama skips message_start)
+            if (!blockTypeMap[sessId]) blockTypeMap[sessId] = {}
 
             if (delta?.type === 'text_delta') {
               const chunk = (delta.text as string) ?? ''

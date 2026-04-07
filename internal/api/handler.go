@@ -24,10 +24,11 @@ type Handler struct {
 	hub        *wspkg.Hub
 	manager    *sessionpkg.Manager
 	workingDir string
+	ollamaHost string // base URL for Ollama API (default: http://localhost:11434)
 }
 
 func New(db *sql.DB, hub *wspkg.Hub, manager *sessionpkg.Manager, workingDir string) *Handler {
-	return &Handler{db: db, hub: hub, manager: manager, workingDir: workingDir}
+	return &Handler{db: db, hub: hub, manager: manager, workingDir: workingDir, ollamaHost: "http://localhost:11434"}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -60,6 +61,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config", h.getConfig)
 	mux.HandleFunc("GET /api/fs/dirs", h.listDirs)
 	mux.HandleFunc("PATCH /api/projects/{id}", h.updateProject)
+
+	mux.HandleFunc("GET /api/ollama/models", h.listOllamaModels)
 
 	mux.HandleFunc("GET /ws", h.wsUpgrade)
 }
@@ -179,6 +182,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		Message  string `json:"message"`
 		Name     string `json:"name"`
 		Model    string `json:"model"`
+		Provider string `json:"provider"`
 		Effort   string `json:"effort"`
 		Thinking string `json:"thinking"`
 		Image    struct {
@@ -200,6 +204,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = proj.DefaultModel
 	}
+	provider, model := resolveProvider(body.Provider, model)
 
 	sess := dbpkg.Session{
 		ID:        uuid.New().String(),
@@ -220,6 +225,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 			ProjectID:       pid,
 			Message:         body.Message,
 			Model:           model,
+			Provider:        provider,
 			Name:            body.Name,
 			WorkDirs:        proj.WorkDirs,
 			ClaudeConfigDir: proj.ClaudeConfigDir,
@@ -279,6 +285,7 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Message  string `json:"message"`
 		Model    string `json:"model"`
+		Provider string `json:"provider"`
 		Effort   string `json:"effort"`
 		Thinking string `json:"thinking"`
 		Image    struct {
@@ -306,17 +313,19 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = sess.Model
 	}
+	provider, model := resolveProvider(body.Provider, model)
 
 	opts := sessionpkg.TurnOptions{
 		SessionID:       id,
 		ProjectID:       sess.ProjectID,
 		Message:         body.Message,
 		Model:           model,
+		Provider:        provider,
 		WorkDirs:        proj.WorkDirs,
 		Effort:          body.Effort,
 		Thinking:        body.Thinking,
 		ClaudeConfigDir: proj.ClaudeConfigDir,
-		Resume:          sess.MessageCount > 0, // first turn uses --session-id, subsequent use --resume
+		Resume:          sess.MessageCount > 0,
 		ImageBase64:     body.Image.Base64,
 		ImageMediaType:  body.Image.MediaType,
 	}
@@ -695,7 +704,68 @@ func (h *Handler) wsUpgrade(w http.ResponseWriter, r *http.Request) {
 	_ = client
 }
 
+// listOllamaModels proxies GET /api/ollama/models to the Ollama API and
+// returns the list of locally installed models.
+func (h *Handler) listOllamaModels(w http.ResponseWriter, r *http.Request) {
+	url := strings.TrimRight(h.ollamaHost, "/") + "/api/tags"
+	ctx := r.Context()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		http.Error(w, "ollama: build request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		// Ollama not running — return empty list so the frontend degrades gracefully.
+		jsonResp(w, http.StatusOK, map[string]any{"models": []any{}})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Ollama returns: {"models":[{"name":"gemma4:e2b","size":...,...},...]}
+	var payload struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		http.Error(w, "ollama: decode: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	type modelEntry struct {
+		Name  string `json:"name"`
+		Label string `json:"label"`
+	}
+	out := make([]modelEntry, 0, len(payload.Models))
+	for _, m := range payload.Models {
+		out = append(out, modelEntry{Name: m.Name, Label: m.Name})
+	}
+	jsonResp(w, http.StatusOK, map[string]any{"models": out})
+}
+
 // ---- helpers ----
+
+// resolveProvider determines the AI backend and model name from the request.
+//
+// The frontend can select Ollama in two ways:
+//   - Explicit field:  provider="ollama", model="gemma4:e2b"
+//   - Prefixed model:  model="ollama:gemma4:e2b"  (provider field optional)
+//
+// Everything else defaults to the Claude CLI backend.
+func resolveProvider(providerField, model string) (sessionpkg.Provider, string) {
+	// Explicit provider field takes precedence.
+	if providerField == string(sessionpkg.ProviderOllama) {
+		return sessionpkg.ProviderOllama, model
+	}
+	// Allow "ollama:modelname" shorthand in the model field.
+	if after, ok := strings.CutPrefix(model, "ollama:"); ok {
+		return sessionpkg.ProviderOllama, after
+	}
+	return sessionpkg.ProviderClaude, model
+}
 
 func jsonResp(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

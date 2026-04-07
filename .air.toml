@@ -1,6 +1,6 @@
 [build]
-  cmd = "go build -o ./tmp/orchestrator ./cmd/orchestrator"
-  bin = "./tmp/orchestrator"
+  cmd = "go build -o ./tmp/lucode ./cmd/lucode"
+  bin = "./tmp/lucode"
   include_ext = ["go"]
   exclude_dir = ["tmp", "web", "vendor"]
   delay = 300

@@ -14,13 +14,14 @@ import { IdeasModal } from './IdeasModal'
 import { FilePreviewPanel } from './FilePreviewPanel'
 import { StarredPanel } from './StarredPanel'
 import { fetchIdeas } from '../../lib/ideasStorage'
+import { listOllamaModels } from '../../api'
 import type { Message } from '../../types'
 
 // Stable references — never inline [] or {} in Zustand selectors,
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
 
-const MODELS = [
+const CLAUDE_MODELS = [
   { label: 'Haiku 4.5',  value: 'haiku' },
   { label: 'Sonnet 4.6', value: 'sonnet' },
   { label: 'Opus 4.6',   value: 'opus' },
@@ -73,6 +74,14 @@ function ChatViewFull() {
   const [effort, setEffort] = useState('auto')
   const [thinking, setThinking] = useState('adaptive')
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mediaType: string } | null>(null)
+  const [ollamaModels, setOllamaModels] = useState<{ name: string; label: string }[]>([])
+
+  // Load Ollama models once on mount (silently ignored if Ollama is not running)
+  useEffect(() => {
+    listOllamaModels()
+      .then(data => setOllamaModels(data.models ?? []))
+      .catch(() => setOllamaModels([]))
+  }, [])
 
   // Voice input and TTS
   const [voiceLang, setVoiceLang] = useState(() => getVoicePrefs().lang)
@@ -431,7 +440,11 @@ function ChatViewFull() {
             onClick={() => setHeaderMenuOpen(v => !v)}
           >
             <span className="chat__session-name">{headerName}</span>
-            <span className="chat__header-model-badge">{MODELS.find(m => m.value === model)?.label}</span>
+            <span className="chat__header-model-badge">
+              {CLAUDE_MODELS.find(m => m.value === model)?.label
+                ?? ollamaModels.find(m => `ollama:${m.name}` === model)?.label
+                ?? model.replace(/^ollama:/, '')}
+            </span>
             <IconChevronDown size={13} className="chat__header-chevron" />
           </button>
 
@@ -457,9 +470,9 @@ function ChatViewFull() {
 
               <div className="chat__header-dropdown-divider" />
 
-              {/* Model switcher */}
-              <div className="chat__header-dropdown-label">Model</div>
-              {MODELS.map(m => (
+              {/* Claude models */}
+              <div className="chat__header-dropdown-label">Claude</div>
+              {CLAUDE_MODELS.map(m => (
                 <button
                   key={m.value}
                   className={`chat__header-dropdown-item${model === m.value ? ' chat__header-dropdown-item--active' : ''}`}
@@ -469,6 +482,27 @@ function ChatViewFull() {
                   {model === m.value && <IconCheck size={12} className="chat__header-dropdown-check" />}
                 </button>
               ))}
+
+              {/* Ollama models — only shown when Ollama is running */}
+              {ollamaModels.length > 0 && (
+                <>
+                  <div className="chat__header-dropdown-divider" />
+                  <div className="chat__header-dropdown-label">Ollama</div>
+                  {ollamaModels.map(m => {
+                    const val = `ollama:${m.name}`
+                    return (
+                      <button
+                        key={m.name}
+                        className={`chat__header-dropdown-item${model === val ? ' chat__header-dropdown-item--active' : ''}`}
+                        onClick={() => { setModel(val); setHeaderMenuOpen(false) }}
+                      >
+                        <span>{m.label}</span>
+                        {model === val && <IconCheck size={12} className="chat__header-dropdown-check" />}
+                      </button>
+                    )
+                  })}
+                </>
+              )}
             </div>
           )}
         </div>
@@ -552,19 +586,20 @@ function ChatViewFull() {
       </div>
 
       <div className="chat__input-area">
-        {attachedImage && (
-          <div className="chat__image-preview">
-            <img src={`data:${attachedImage.mediaType};base64,${attachedImage.base64}`} alt="attached" />
-            <button
-              className="chat__image-remove"
-              onClick={() => setAttachedImage(null)}
-              title="Remove image"
-            >
-              ✕
-            </button>
-          </div>
-        )}
-        <div className="chat__input-wrap">
+        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+          {attachedImage && (
+            <div className="chat__image-preview">
+              <img src={`data:${attachedImage.mediaType};base64,${attachedImage.base64}`} alt="attached" />
+              <button
+                className="chat__image-remove"
+                onClick={() => setAttachedImage(null)}
+                title="Remove image"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+          <div className="chat__input-wrap">
           <textarea
             className="chat__input"
             placeholder={
@@ -599,6 +634,7 @@ function ChatViewFull() {
             isSpeaking={!!speakingMessageId}
             onStopReading={handleStopSpeaking}
           />
+          </div>
         </div>
       </div>
 

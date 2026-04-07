@@ -26,13 +26,9 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
     setLoading(true)
     api
       .getConfig()
-      .then(config => {
-        const initialRoot = config.working_dir || ''
-        setCurrentPath(initialRoot)
-        return api.listDirs(initialRoot).then(result => ({ result, root: initialRoot }))
-      })
-      .then(({ result, root }) => {
-        setRoot(root || '')
+      .then(config => api.listDirs(config.working_dir || ''))
+      .then(result => {
+        setRoot(result.path)
         setCurrentPath(result.path)
         setDirs(result.dirs || [])
       })

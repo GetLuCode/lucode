@@ -26,13 +26,13 @@ export const renameProject = (id: string, name: string) => req<void>('PATCH', `/
 
 // Sessions
 export const listSessions = (pid: string) => req<Session[]>('GET', `/api/projects/${pid}/sessions`)
-export const createSession = (pid: string, data: { message?: string; name?: string; model?: string; effort?: string; thinking?: string; image?: { base64: string; mediaType: string } | null }) =>
+export const createSession = (pid: string, data: { message?: string; name?: string; model?: string; provider?: string; effort?: string; thinking?: string; image?: { base64: string; mediaType: string } | null }) =>
   req<Session>('POST', `/api/projects/${pid}/sessions`, data)
 export const deleteSession = (id: string) => req<void>('DELETE', `/api/sessions/${id}`)
 export const renameSession = (id: string, name: string) =>
   req<void>('PATCH', `/api/sessions/${id}`, { name })
-export const sendTurn = (id: string, message: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) =>
-  req<void>('POST', `/api/sessions/${id}/turn`, { message, model, effort, thinking, image })
+export const sendTurn = (id: string, message: string, model?: string, provider?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) =>
+  req<void>('POST', `/api/sessions/${id}/turn`, { message, model, provider, effort, thinking, image })
 export const forkSession = (id: string, name: string, message?: string) =>
   req<Session>('POST', `/api/sessions/${id}/fork`, { name, message })
 
@@ -52,6 +52,10 @@ export const listStarredMessages = (sessionId: string) => req<Message[]>('GET', 
 // Search
 export const search = (q: string) =>
   req<{ results: SearchResult[] }>('GET', `/api/search?q=${encodeURIComponent(q)}`)
+
+// Ollama
+export const listOllamaModels = () =>
+  req<{ models: { name: string; label: string }[] }>('GET', '/api/ollama/models')
 
 // Config & filesystem
 export const getConfig = () => req<{ working_dir: string }>('GET', '/api/config')

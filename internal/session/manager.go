@@ -51,8 +51,9 @@ func NewManager(db *sql.DB, hub *wspkg.Hub, backendWSURL, claudeSettings string)
 	return m
 }
 
-// StartTurn launches a claude CLI process for the given turn options.
-// Returns immediately; process runs in a goroutine.
+// StartTurn launches an AI turn for the given options.
+// The backend (claude CLI or Ollama) is selected via opts.Provider.
+// Returns immediately; the turn runs in a goroutine.
 func (m *Manager) StartTurn(opts TurnOptions) error {
 	m.mu.Lock()
 	if _, active := m.procs[opts.SessionID]; active {
@@ -67,7 +68,6 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	seq, _ := dbpkg.NextMessageSeq(m.db, opts.SessionID)
 	content := opts.Message
 	if opts.ImageBase64 != "" {
-		// Store as JSON content blocks
 		contentBlocks := []map[string]interface{}{
 			{"type": "text", "text": opts.Message},
 			{"type": "image", "source": map[string]interface{}{
@@ -95,6 +95,32 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 
+	// Dispatch to the appropriate backend.
+	if opts.Provider == ProviderOllama {
+		// Load conversation history so Ollama can maintain context across turns.
+		history, _ := dbpkg.ListMessages(m.db, opts.SessionID)
+		handle, err := startOllamaRun(ctx, opts, history)
+		if err != nil {
+			cancel()
+			dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusError))
+			m.hub.Broadcast(opts.SessionID, map[string]any{
+				"type":       "error",
+				"session_id": opts.SessionID,
+				"message":    err.Error(),
+			})
+			return err
+		}
+		handle.ps.Cancel = cancel
+
+		m.mu.Lock()
+		m.procs[opts.SessionID] = handle.ps
+		m.mu.Unlock()
+
+		go m.streamOllamaOutput(handle)
+		return nil
+	}
+
+	// Default: claude CLI
 	opts.ClaudeSettings = m.claudeSettings
 	sr, err := spawnClaude(ctx, opts, m.backendWSURL)
 	if err != nil {
@@ -115,6 +141,43 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 
 	go m.streamOutput(sr)
 	return nil
+}
+
+// streamOllamaOutput drives an Ollama streaming turn to completion.
+func (m *Manager) streamOllamaOutput(handle *ollamaRunHandle) {
+	ps := handle.ps
+	defer func() {
+		ps.Cancel()
+		m.mu.Lock()
+		delete(m.procs, ps.SessionID)
+		m.mu.Unlock()
+	}()
+
+	seq, _ := dbpkg.NextMessageSeq(m.db, ps.SessionID)
+
+	emit := func(event any) {
+		m.hub.Broadcast(ps.SessionID, event)
+	}
+
+	persistText := func(text string) {
+		_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
+			ID:        uuid.New().String(),
+			SessionID: ps.SessionID,
+			Role:      "assistant",
+			Content:   text,
+			Seq:       seq,
+		})
+	}
+
+	streamOllama(handle, ps.SessionID, emit, persistText,
+		handle.workDir, handle.host, handle.model, handle.options, handle.messages)
+
+	dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
+	m.hub.Broadcast(ps.SessionID, map[string]any{
+		"type":       "session_status",
+		"session_id": ps.SessionID,
+		"status":     string(StatusIdle),
+	})
 }
 
 func (m *Manager) streamOutput(sr *spawnResult) {

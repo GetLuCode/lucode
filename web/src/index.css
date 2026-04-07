@@ -1095,19 +1095,20 @@ html, body, #root {
   background: var(--bg-panel);
   flex-shrink: 0;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 .chat__input-wrap {
-  flex: 1;
+  width: 100%;
+  max-width: 900px;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 12px;
   transition: border-color 0.15s;
   overflow: visible;
   position: relative;
-  max-width: 900px;
-  margin: auto 0;
 }
 .chat__input-wrap:focus-within { border-color: var(--accent); }
 
@@ -2321,8 +2322,9 @@ html, body, #root {
 /* ---- Image Preview ---- */
 .chat__image-preview {
   position: relative;
-  margin: 0 0 8px 0;
   max-width: 120px;
+  align-self: flex-start;
+  margin-left: 0;
 }
 
 .chat__image-preview img {
@@ -2335,8 +2337,8 @@ html, body, #root {
 
 .chat__image-remove {
   position: absolute;
-  top: -8px;
-  right: -8px;
+  top: -6px;
+  right: -6px;
   width: 24px;
   height: 24px;
   padding: 0;
@@ -2344,13 +2346,14 @@ html, body, #root {
   color: white;
   border: none;
   border-radius: 50%;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .chat__image-remove:hover {

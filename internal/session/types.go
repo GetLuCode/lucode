@@ -21,6 +21,14 @@ type ProcessState struct {
 	Cancel    context.CancelFunc
 }
 
+// Provider selects the AI backend for a turn.
+type Provider string
+
+const (
+	ProviderClaude Provider = "claude" // claude CLI (default)
+	ProviderOllama Provider = "ollama" // local Ollama API
+)
+
 type TurnOptions struct {
 	SessionID       string
 	ProjectID       string
@@ -36,4 +44,9 @@ type TurnOptions struct {
 	Thinking        string // enabled|disabled|adaptive
 	ImageBase64     string // base64-encoded image
 	ImageMediaType  string // image/jpeg, image/png, etc.
+
+	// Provider selects the AI backend. Defaults to ProviderClaude when empty.
+	Provider Provider
+	// OllamaHost is the base URL of the Ollama API (default: http://localhost:11434).
+	OllamaHost string
 }
