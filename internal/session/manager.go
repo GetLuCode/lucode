@@ -27,8 +27,9 @@ type Manager struct {
 	backendWSURL   string
 	claudeSettings string // path to --settings file for claude CLI (empty = not used)
 
-	mu    sync.Mutex
-	procs map[string]*ProcessState
+	mu             sync.Mutex
+	procs          map[string]*ProcessState
+	ollamaPending  map[string]chan string // tool_use_id → decision channel (for Ollama tool permission)
 }
 
 func NewManager(db *sql.DB, hub *wspkg.Hub, backendWSURL, claudeSettings string) *Manager {
@@ -38,6 +39,7 @@ func NewManager(db *sql.DB, hub *wspkg.Hub, backendWSURL, claudeSettings string)
 		backendWSURL:   backendWSURL,
 		claudeSettings: claudeSettings,
 		procs:          make(map[string]*ProcessState),
+		ollamaPending:  make(map[string]chan string),
 	}
 	hub.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 		m.onHookRequest(sessID, toolUseID, toolName, toolInput)
@@ -169,7 +171,11 @@ func (m *Manager) streamOllamaOutput(handle *ollamaRunHandle) {
 		})
 	}
 
-	streamOllama(handle, ps.SessionID, emit, persistText,
+	askPermission := func(toolUseID, toolName string, toolInput json.RawMessage) string {
+		return m.ollamaToolPermissionRequest(ps.SessionID, toolUseID, toolName, toolInput)
+	}
+
+	streamOllama(handle, ps.SessionID, emit, persistText, askPermission,
 		handle.workDir, handle.host, handle.model, handle.options, handle.messages)
 
 	dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
@@ -291,8 +297,52 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 	})
 }
 
+// ollamaToolPermissionRequest blocks the calling goroutine until the user
+// approves or denies the tool from the browser. Returns the decision ("allow"/"deny").
+func (m *Manager) ollamaToolPermissionRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) string {
+	ch := make(chan string, 1)
+	m.mu.Lock()
+	m.ollamaPending[toolUseID] = ch
+	m.mu.Unlock()
+
+	createdAt := time.Now().UTC()
+	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusWaitingHook))
+	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+		"type":        "hook_pending",
+		"session_id":  sessID,
+		"tool_use_id": toolUseID,
+		"tool_name":   toolName,
+		"tool_input":  toolInput,
+		"created_at":  createdAt.Format(time.RFC3339Nano),
+	})
+
+	decision := <-ch
+
+	m.mu.Lock()
+	delete(m.ollamaPending, toolUseID)
+	m.mu.Unlock()
+
+	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
+	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+		"type":        "hook_resolved",
+		"session_id":  sessID,
+		"tool_use_id": toolUseID,
+		"decision":    decision,
+	})
+
+	return decision
+}
+
 // onHookRespond is called by the hub when the browser sends hook_respond.
 func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
+	// Check if this is an Ollama tool permission request first.
+	m.mu.Lock()
+	ch, isOllama := m.ollamaPending[toolUseID]
+	m.mu.Unlock()
+	if isOllama {
+		ch <- decision
+		return
+	}
 	// Retrieve hook info before deleting
 	hook, err := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
 	if err == nil {

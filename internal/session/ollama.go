@@ -13,6 +13,8 @@ import (
 	"time"
 
 	dbpkg "claude-orchestrator/internal/db"
+
+	"github.com/google/uuid"
 )
 
 const defaultOllamaHost = "http://localhost:11434"
@@ -246,6 +248,7 @@ func streamOllama(
 	sessID string,
 	emit func(any),
 	persistText func(string),
+	askPermission func(toolUseID, toolName string, toolInput json.RawMessage) string,
 	workDir, host, model string,
 	options *ollamaOptions,
 	initialMessages []ollamaMessage,
@@ -313,23 +316,23 @@ func streamOllama(
 			name := tc.Function.Name
 			log.Printf("[ollama] session=%s tool=%s args=%s", sid8, name, string(tc.Function.Arguments))
 
-			// Emit a visible tool-use event to the frontend.
-			toolStartJSON, _ := json.Marshal(map[string]any{
-				"type": "content_block_start",
-				"content_block": map[string]any{
-					"type": "tool_use",
-					"name": name,
-				},
-			})
-			emit(map[string]any{
-				"type":       "stream_event",
-				"session_id": sessID,
-				"event":      json.RawMessage(toolStartJSON),
-			})
+			// Generate a stable tool_use_id for permission tracking.
+			toolUseID := tc.ID
+			if toolUseID == "" {
+				toolUseID = uuid.New().String()
+			}
 
-			result := executeTool(name, tc.Function.Arguments, workDir)
+			// Ask the user for permission before executing.
+			decision := askPermission(toolUseID, name, tc.Function.Arguments)
+			log.Printf("[ollama] session=%s tool=%s decision=%s", sid8, name, decision)
 
-			log.Printf("[ollama] session=%s tool=%s result_len=%d", sid8, name, len(result))
+			var result string
+			if decision == "allow" {
+				result = executeTool(name, tc.Function.Arguments, workDir)
+				log.Printf("[ollama] session=%s tool=%s result_len=%d", sid8, name, len(result))
+			} else {
+				result = "Tool execution was denied by the user."
+			}
 
 			// Tool result message — role "tool" with tool_call_id for correlation.
 			messages = append(messages, ollamaMessage{
