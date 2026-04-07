@@ -211,6 +211,11 @@ func doOllamaChat(ctx context.Context, host, model string, messages []ollamaMess
 	if err != nil {
 		return nil, fmt.Errorf("ollama: marshal: %w", err)
 	}
+
+	// Log full request to Ollama
+	pretty, _ := json.MarshalIndent(payload, "", "  ")
+	log.Printf("[ollama→api] POST /api/chat withTools=%v\n%s", withTools, string(pretty))
+
 	url := strings.TrimRight(host, "/") + "/api/chat"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
@@ -327,7 +332,7 @@ func streamOllama(
 			log.Printf("[ollama] session=%s tool=%s decision=%s", sid8, name, decision)
 
 			var result string
-			if decision == "allow" {
+			if decision == "allow" || decision == "approve" {
 				result = executeTool(name, tc.Function.Arguments, workDir)
 				log.Printf("[ollama] session=%s tool=%s result_len=%d", sid8, name, len(result))
 			} else {

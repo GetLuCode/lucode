@@ -99,8 +99,13 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 
 	// Dispatch to the appropriate backend.
 	if opts.Provider == ProviderOllama {
-		// Load conversation history so Ollama can maintain context across turns.
+		// Load conversation history BEFORE the user message was inserted above,
+		// so startOllamaRun can append the current user message itself without duplication.
 		history, _ := dbpkg.ListMessages(m.db, opts.SessionID)
+		// Remove the last message (the one we just inserted) so startOllamaRun adds it.
+		if len(history) > 0 {
+			history = history[:len(history)-1]
+		}
 		handle, err := startOllamaRun(ctx, opts, history)
 		if err != nil {
 			cancel()
@@ -158,6 +163,9 @@ func (m *Manager) streamOllamaOutput(handle *ollamaRunHandle) {
 	seq, _ := dbpkg.NextMessageSeq(m.db, ps.SessionID)
 
 	emit := func(event any) {
+		if data, err := json.Marshal(event); err == nil {
+			log.Printf("[ollama→ws] session=%s %s", ps.SessionID[:8], string(data))
+		}
 		m.hub.Broadcast(ps.SessionID, event)
 	}
 
