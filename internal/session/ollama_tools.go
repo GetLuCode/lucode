@@ -25,6 +25,7 @@ type ollamaToolFunc struct {
 
 // ollamaToolCall is a tool call requested by the model in a response chunk.
 type ollamaToolCall struct {
+	ID       string `json:"id,omitempty"` // tool_call_id returned by the model
 	Function struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`

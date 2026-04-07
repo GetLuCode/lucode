@@ -77,10 +77,11 @@ messages = append(messages, ollamaMessage{
 })
 
 // 2. Por cada tool ejecutada, se agrega un mensaje con el resultado.
-//    Role "tool" es el único campo que identifica al mensaje — no hay tool_use_id.
+//    tool_call_id correlaciona el resultado con el tool_call del assistant.
 messages = append(messages, ollamaMessage{
-    Role:    "tool",
-    Content: result,   // string plano: output de os.ReadFile, exec.Command, etc.
+    Role:       "tool",
+    Content:    result,   // string plano: output de os.ReadFile, exec.Command, etc.
+    ToolCallID: tc.ID,    // id del tool_call que devolvió el modelo (puede ser "" si el modelo no lo emite)
 })
 ```
 
@@ -113,6 +114,7 @@ messages = append(messages, ollamaMessage{
     },
     {
       "role": "tool",
+      "tool_call_id": "call_abc123",
       "content": "file1.txt (1024 bytes)\nfile2.txt (2048 bytes)\ntmpdir/\n..."
     }
   ]
@@ -124,11 +126,11 @@ messages = append(messages, ollamaMessage{
 | Campo | Anthropic (`tool_result`) | Ollama (`tool`) |
 |---|---|---|
 | `role` | `"user"` con content block `type: "tool_result"` | `"tool"` directamente |
-| Correlación | `tool_use_id` obligatorio | No existe — el modelo correlaciona por posición en el historial |
+| Correlación | `tool_use_id` obligatorio | `tool_call_id` opcional (si el modelo lo emite) |
 | Content | array de content blocks | string plano |
-| Identificador de tool | `tool_use_id` + `name` | Solo por posición después del mensaje `assistant` con `tool_calls` |
+| Identificador de tool | `tool_use_id` en el content block | `tool_call_id` en el mensaje, correlaciona con `tool_calls[].id` |
 
-La ausencia de `tool_use_id` significa que si el modelo pide dos tools en paralelo, los resultados se añaden en orden y el modelo los correlaciona por posición, no por id. Actualmente el orchestrator los ejecuta en secuencia en el mismo orden que llegan.
+`tool_call_id` se incluye siempre que el modelo lo emita en el `tool_calls[].id`. Si el modelo no lo emite (campo vacío), el campo se omite del JSON (`omitempty`) y el modelo correlaciona por posición. Actualmente el orchestrator ejecuta tools en secuencia en el mismo orden que llegan.
 
 > **Nota:** No se incluye `"tools": [...]` en este request — esto es intencional y crítico (ver sección siguiente).
 

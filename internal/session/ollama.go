@@ -28,10 +28,11 @@ type ollamaRequest struct {
 
 // Images contains raw base64 strings (no data-URI prefix), per Ollama spec.
 type ollamaMessage struct {
-	Role      string           `json:"role"`
-	Content   string           `json:"content"`
-	Images    []string         `json:"images,omitempty"`
-	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"` // only set on assistant messages
+	Role       string           `json:"role"`
+	Content    string           `json:"content"`
+	Images     []string         `json:"images,omitempty"`
+	ToolCalls  []ollamaToolCall `json:"tool_calls,omitempty"`  // only set on assistant messages
+	ToolCallID string           `json:"tool_call_id,omitempty"` // only set on tool result messages
 }
 
 type ollamaOptions struct {
@@ -330,10 +331,11 @@ func streamOllama(
 
 			log.Printf("[ollama] session=%s tool=%s result_len=%d", sid8, name, len(result))
 
-			// Tool result message — role must be "tool" per Ollama spec.
+			// Tool result message — role "tool" with tool_call_id for correlation.
 			messages = append(messages, ollamaMessage{
-				Role:    "tool",
-				Content: result,
+				Role:       "tool",
+				Content:    result,
+				ToolCallID: tc.ID,
 			})
 		}
 
