@@ -73,11 +73,8 @@ WHERE content LIKE '{"type":"stream_event"%'
 		return err
 	}
 
-	// Recreate pending_hooks with composite (session_id, tool_use_id) primary key
-	// to support concurrent parallel tool calls. Drop old single-PK table if present.
-	if _, err := db.Exec(`DROP TABLE IF EXISTS pending_hooks`); err != nil {
-		return err
-	}
+	// Create pending_hooks with composite (session_id, tool_use_id) primary key
+	// to support concurrent parallel tool calls. Persists across restarts.
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS pending_hooks (
     session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

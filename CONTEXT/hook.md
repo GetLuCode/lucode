@@ -1,47 +1,90 @@
-# Hook Binary
+# Hook Binary: lucodehook
 
-## Purpose
+## Overview
 
-The hook binary is a compiled Go program that Claude Code invokes synchronously on every `PreToolUse` event. It acts as a bridge between the claude CLI and the orchestrator backend: it connects over WebSocket, sends the tool info, waits for the user's approval/denial decision, then exits with 0 (allow) or 2 (deny). Claude blocks until the hook exits.
+**lucodehook** es un binario Go compilado que Claude Code invoca sincronizamente en cada evento `PreToolUse`. Actúa como puente entre el CLI de claude y el backend del orchestrator: se conecta via NATS pub/sub, envía la información de la herramienta, espera la decisión de aprobación/denegación del usuario, y sale con 0 (permitir) o 2 (denegar). Claude bloquea hasta que el hook sale.
 
-## Installation
+## Architecture
 
-```bash
-go build -o hook ./cmd/hook
-cp hook ~/.claude/hooks/orchestrator-hook
+```
+┌─ lucode (CLI principal) ─────────────────────────┐
+│  • Inicia servidor NATS (TCP :5222 + WS :5224) │
+│  • Arranca manager de sesiones                  │
+│  • Expone API HTTP (:8090) + Web UI             │
+└──────────────────────────────────────────────────┘
+                           ▲
+                           │ WS (browsers)
+                           │
+┌─ Claude Code CLI ────────┼───────────────────────┐
+│  • Inyecta env: LUCODE_SESSION_ID, LUCODE_NATS_URL
+│  • En PreToolUse → ejecuta lucodehook           │
+└──────────────────────────┼───────────────────────┘
+                           │
+                    ┌──────▼────────┐
+                    │  lucodehook   │
+                    │ (proc. hook)  │
+                    │ • Lee stdin   │
+                    │ • Conecta NATS│
+                    │ • Espera aprob│
+                    │ • Exit 0 o 2  │
+                    └───────────────┘
 ```
 
-Registered in `~/.claude/settings.json`:
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "/home/homebox/.claude/hooks/orchestrator-hook" }]
-      }
-    ]
-  }
-}
-```
+## Generation / Embedding
 
-## Execution Context
+El binario `lucodehook` se genera y **embebe** en el ejecutable `lucode` en tiempo de compilación:
 
-- Claude passes tool info as JSON on the hook's **stdin**
-- Hook reads stdin, connects WS, waits for decision, exits
-- Exit code 0 = allow, exit code 2 = deny
-- All other codes default to allow in claude's behavior
-- Claude sets `ORCHESTRATOR_SESSION_ID` and `ORCHESTRATOR_WS_URL` in env (injected by the orchestrator when spawning claude — see `process.go`)
+1. **Compilar lucodehook** → `cmd/lucodehook/main.go` → `cmd/lucode/embedded/lucodehook`
+   ```bash
+   GOOS=linux GOARCH=amd64 go build -o cmd/lucode/embedded/lucodehook ./cmd/lucodehook
+   ```
+
+2. **Embeber en lucode** → `cmd/lucode/main.go`
+   ```go
+   //go:embed embedded/lucodehook
+   var embeddedHook []byte
+   ```
+
+3. **Instalar** (comando `lucode install`) → extrae `embeddedHook` a `~/.lucode/lucodehook`
+   ```bash
+   lucode install  # → writes lucodehook a ~/.lucode/lucodehook
+   ```
+
+4. **Registrar en settings.json** → se escribe automáticamente durante install
+   ```json
+   {
+     "hooks": {
+       "PreToolUse": [
+         {
+           "matcher": "",
+           "hooks": [{
+             "type": "command",
+             "command": "/home/homebox/.lucode/lucodehook"
+           }]
+         }
+       ]
+     }
+   }
+   ```
+
+## Environment Variables
+
+Inyectadas por `session.Manager` (ver `process.go`) cuando crea el proceso Claude:
+
+- **LUCODE_SESSION_ID** (o fallback ORCHESTRATOR_SESSION_ID): ID único de la sesión
+- **LUCODE_NATS_URL**: URL del servidor NATS para comunicación pub/sub
+  - Formato: `nats://host:port` (TCP) o `ws://host:port` (WebSocket)
+  - Default: `nats://127.0.0.1:4222`
 
 ## Stdin Format
 
-Claude writes this JSON on stdin:
+Claude pasa esta información JSON en el stdin del hook:
 ```json
 {
   "session_id": "...",
   "transcript_path": "/path/to/transcript.jsonl",
   "cwd": "/path/to/working/dir",
-  "permission_mode": "bypassPermissions",
+  "permission_mode": "default",
   "hook_event_name": "PreToolUse",
   "tool_name": "Bash",
   "tool_input": { "command": "ls -la", "description": "List files" },
@@ -49,32 +92,33 @@ Claude writes this JSON on stdin:
 }
 ```
 
-Key fields extracted: `tool_name`, `tool_use_id`, `tool_input`.
+Campos extraídos: `tool_name`, `tool_use_id`, `tool_input`.
 
-## Approval Flow
+## Approval Flow (NATS-based)
 
 ```
 Claude PreToolUse
   │
-  └─ runs hook binary
+  └─ runs lucodehook
        │
-       ├─ reads stdin (tool info)
-       ├─ connects ws://localhost:8090/ws?role=hook&session_id=<id>
-       ├─ sends hook_request { type, tool_use_id, tool_name, tool_input }
+       ├─ read stdin (tool info)
+       ├─ connect NATS (TCP o WS)
+       ├─ subscribe to: hooks.{sessionID}.response.{toolUseID}
+       ├─ publish hook_request to: hooks.{sessionID}.request
        │
        │  Backend receives hook_request:
        │    - stores in pending_hooks DB
        │    - updates session status → waiting_hook
-       │    - broadcasts hook_pending to RoleClient (browser)
+       │    - broadcasts hook_pending to browser (WS)
        │
-       ├─ hook enters read loop, ignoring non-hook_response messages
-       │  (stream_events arrive while waiting — all ignored)
+       ├─ hook waits for hook_response (4 min timeout)
+       │  (otros mensajes ignorados durante espera)
        │
-       │  User clicks Approve/Deny in browser:
-       │    - browser sends hook_respond { tool_use_id, decision }
-       │    - backend calls SendToHookClient(sessID, toolUseID, hook_response)
+       │  User clicks Approve/Deny en browser:
+       │    - browser envía hook_respond { tool_use_id, decision }
+       │    - backend publishes hook_response a hooks.{sessionID}.response.{toolUseID}
        │
-       ├─ hook receives hook_response { type: "hook_response", decision }
+       ├─ hook recibe hook_response { decision }
        │
        ├─ decision == "deny" → exit 2
        └─ decision == "approve" → exit 0
@@ -82,57 +126,47 @@ Claude PreToolUse
 
 ## Concurrent Tool Calls
 
-Claude may call multiple tools in parallel (e.g. two Bash commands simultaneously). Each tool call spawns a separate hook binary process, each connecting to the WS as `role=hook` for the same session.
+Claude puede ejecutar múltiples herramientas en paralelo. Cada call spawns un hook process separado conectado a NATS:
 
-**Routing**: Each hook binary sends its `tool_use_id` in `hook_request`. The hub stores this on the client struct (`c.ToolUseID`). When the browser responds with `hook_respond { tool_use_id }`, `SendToHookClient` finds the exact WS connection by matching `tool_use_id`.
+**Routing**: Cada hook envía su `tool_use_id` en `hook_request`. El backend lo usa para:
+- Crear subscription específica: `hooks.{sessionID}.response.{toolUseID}`
+- Publicar respuesta al canal exacto cuando el usuario aprueba/deniega
 
-The frontend shows a queue of pending hooks (one modal at a time, cycling through). Each hook_resolved event removes one entry from the queue.
+Frontend muestra una cola de hooks pendientes (un modal a la vez). Cada `hook_resolved` elimina una entrada.
 
 ## Timeout Handling
 
-Hook binary timeout: **4 minutes** (`conn.SetReadDeadline(time.Now().Add(4 * time.Minute))`). Reset on each ignored non-hook_response message.
+- **Hook timeout**: 4 minutos (`sub.NextMsg(4 * time.Minute)`)
+- Si timeout → `deny("approval timed out — tool blocked")` → exit 2 (herramienta denegada automáticamente)
 
-If timeout fires → `deny("approval timed out — tool blocked")` → exits 2 (tool automatically denied).
-
-On hook binary exit:
-1. WS connection closes
-2. `readPump` defer runs → calls `hub.OnHookDisconnect(sessID, toolUseID)`
-3. `onHookDisconnect` checks if hook was still pending (using `DeletePendingHook` rows affected):
-   - Already resolved (user responded before timeout) → no-op
-   - Still pending (timed out before user responded) → broadcasts `hook_resolved` (modal closes) + `info` message
-
-If user approves after timeout (hook already gone):
-- `SendToHookClient` returns false
-- Backend broadcasts `info` message: "Hook approval timed out — tool was automatically denied."
-- Backend still broadcasts `hook_resolved` to close the modal
+Backend maneja:
+1. Hook se desconecta (timeout o usuario respondió)
+2. Si aún pendiente → publica `hook_resolved` + `info`
+3. Si ya resolvido → no-op
 
 ## Logging
 
-Hook binary writes logs to `~/.claude/hooks/log-<timestamp>.txt`:
+Hook escribe logs a `~/.lucode/lucodehook-log-<timestamp>.txt`:
 ```
-17:16:38 === hook invoked ===
-17:16:38 args: [/home/homebox/.claude/hooks/orchestrator-hook]
-17:16:38 ORCHESTRATOR_SESSION_ID="..."
-17:16:38 ORCHESTRATOR_WS_URL="ws://localhost:8090"
-17:16:38 stdin: { full JSON }
-17:16:38 tool_name="Bash" tool_use_id="toolu_..."
-17:16:38 connecting to ws://localhost:8090/ws?role=hook&session_id=...
-17:16:38 ws connected
-17:16:38 hook_request sent, waiting for response (120s timeout)...
-17:16:38 waiting for hook_response (4min timeout)...
-17:16:38 received: type="stream_event" decision="" reason=""
-17:16:38 ignoring non-hook_response message (type="stream_event")
-...
-17:16:38 received: type="hook_response" decision="approve" reason=""
-17:16:38 EXIT allow — user approved
+15:36:28.123456 === lucodehook invoked ===
+15:36:28.234567 args: [/home/homebox/.lucode/lucodehook]
+15:36:28.345678 LUCODE_SESSION_ID="sess_abc123..."
+15:36:28.456789 LUCODE_NATS_URL="nats://127.0.0.1:4222"
+15:36:28.567890 stdin: { full JSON }
+15:36:28.678901 tool_name="Bash" tool_use_id="toolu_..."
+15:36:28.789012 connecting to NATS nats://127.0.0.1:4222
+15:36:28.890123 nats connected
+15:36:28.901234 hook_request published to hooks.sess_abc123.request, waiting on hooks.sess_abc123.response.toolu_...
+15:36:40.012345 received: type="hook_response" decision="approve" reason=""
+15:36:40.123456 EXIT allow — user approved
 ```
 
 ## Safety: No Hook When Not Under Orchestrator
 
 ```go
 if sessionID == "" {
-    allow("no ORCHESTRATOR_SESSION_ID — not under orchestrator")
+    allow("no LUCODE_SESSION_ID — not running under lucode")
 }
 ```
 
-When Claude Code runs directly (not via orchestrator), `ORCHESTRATOR_SESSION_ID` is not set → hook exits 0 immediately → all tools allowed without prompting.
+Si Claude Code se ejecuta directamente (no via orchestrator), `LUCODE_SESSION_ID` no se configura → hook exit 0 inmediatamente → todas las herramientas permitidas sin prompting.

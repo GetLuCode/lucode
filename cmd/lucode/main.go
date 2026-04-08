@@ -40,7 +40,7 @@ func main() {
 	natsWSPort := flag.Int("nats-ws-port", 5224, "NATS WebSocket port for browsers and hooks")
 	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
-	claudeSettings := flag.String("claude-settings", defaultClaudeSettings(), "Path to Claude settings.json passed to each Claude process")
+	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
 	flag.Parse()
 
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
@@ -65,9 +65,16 @@ func main() {
 	defer natsServer.Shutdown()
 
 	bus := natspkg.NewBus(natsServer.Conn)
+	bus.OnBroadcast = apipkg.BroadcastToWS
+
+	claudeSettingsJSON, err := hookcfg.BuildJSON(*hookBinary)
+	if err != nil {
+		log.Fatalf("build claude settings: %v", err)
+	}
+	log.Printf("claude settings: hook=%s settings=%s", *hookBinary, claudeSettingsJSON)
 
 	backendNATSURL := fmt.Sprintf("nats://127.0.0.1:%d", *natsPort)
-	manager := sessionpkg.NewManager(db, bus, backendNATSURL, *claudeSettings)
+	manager := sessionpkg.NewManager(db, bus, backendNATSURL, claudeSettingsJSON)
 
 	if err := bus.Start(); err != nil {
 		log.Fatalf("nats bus: %v", err)
@@ -84,9 +91,6 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("lucode listening on http://localhost%s", addr)
-	if *claudeSettings != "" {
-		log.Printf("claude settings: %s", *claudeSettings)
-	}
 	if err := http.ListenAndServe(addr, httpHandler); err != nil {
 		log.Fatal(err)
 	}
@@ -335,14 +339,13 @@ func defaultDataDir() string {
 	return filepath.Join(home, ".lucode")
 }
 
-func defaultClaudeSettings() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+func defaultHookBinary() string {
+	// In dev (air), the hook is built to ./tmp/lucodehook
+	if _, err := os.Stat("./tmp/lucodehook"); err == nil {
+		abs, _ := filepath.Abs("./tmp/lucodehook")
+		return abs
 	}
-	p := filepath.Join(home, ".lucode", "settings.json")
-	if _, err := os.Stat(p); err != nil {
-		return ""
-	}
-	return p
+	// In production, use ~/.lucode/lucodehook
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".lucode", "lucodehook")
 }

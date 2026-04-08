@@ -5,6 +5,8 @@ package natsbus
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
@@ -23,6 +25,8 @@ type Options struct {
 	NATSPort int
 	// WSPort is the WebSocket port exposed to browsers and lucodehook (default 5224).
 	WSPort int
+	// StoreDir is the directory for JetStream persistence (default os.TempDir()+"/nats-lucode").
+	StoreDir string
 }
 
 // Start launches an embedded NATS server and returns a connected Server.
@@ -33,6 +37,14 @@ func Start(opts Options) (*Server, error) {
 	if opts.WSPort == 0 {
 		opts.WSPort = 5224
 	}
+	if opts.StoreDir == "" {
+		opts.StoreDir = filepath.Join(os.TempDir(), "nats-lucode")
+	}
+
+	// Create StoreDir if it doesn't exist
+	if err := os.MkdirAll(opts.StoreDir, 0700); err != nil {
+		return nil, fmt.Errorf("create store dir: %w", err)
+	}
 
 	so := &server.Options{
 		Host:       "127.0.0.1",
@@ -40,6 +52,8 @@ func Start(opts Options) (*Server, error) {
 		NoLog:      true,
 		NoSigs:     true,
 		MaxPayload: 8 * 1024 * 1024,
+		JetStream:  true,
+		StoreDir:   opts.StoreDir,
 		Websocket: server.WebsocketOpts{
 			Host:        "0.0.0.0",
 			Port:        opts.WSPort,

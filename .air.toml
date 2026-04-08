@@ -3,7 +3,7 @@ testdata_dir = "testdata"
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/lucode ./cmd/lucode"
+  cmd = "go build -o ./tmp/lucode ./cmd/lucode && go build -o ./tmp/lucodehook ./cmd/lucodehook"
   bin = "./tmp/lucode"
   full_bin = ""
   include_ext = ["go", "tpl", "tmpl", "html"]

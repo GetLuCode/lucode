@@ -5,6 +5,7 @@ import { NavPanel } from './components/Sidebar/NavPanel'
 import { ChatView } from './components/Chat/ChatView'
 import { HookToastContainer } from './components/Toast/HookToastContainer'
 import { SpotlightSearch } from './components/Search/SpotlightSearch'
+import { getWSConnection } from './hooks/useWSConnection'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
@@ -27,6 +28,11 @@ export default function App() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // Connect to WS on app mount for persistent global connection
+  useEffect(() => {
+    getWSConnection()
   }, [])
 
   // Load projects on mount

@@ -48,7 +48,7 @@ func main() {
 	// LUCODE_NATS_URL can be a nats:// (TCP) or ws:// URL
 	natsURL := firstEnv("LUCODE_NATS_URL")
 	if natsURL == "" {
-		natsURL = "nats://127.0.0.1:4222"
+		natsURL = "nats://127.0.0.1:5222"
 	}
 
 	logger.Printf("LUCODE_SESSION_ID=%q", sessionID)
@@ -145,9 +145,11 @@ func main() {
 			reason = "Blocked by user"
 		}
 		deny(reason)
+	} else if resp.Decision == "approve" || resp.Decision == "allow" {
+		allow("user approved")
+	} else {
+		deny("invalid decision response")
 	}
-
-	allow("user approved")
 }
 
 func firstEnv(keys ...string) string {

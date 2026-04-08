@@ -285,6 +285,16 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 	})
 	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusWaitingHook))
 
+	// Persist to NATS KV for hook state
+	_ = m.bus.SetHookState(sessID, toolUseID, natspkg.HookState{
+		SessionID: sessID,
+		ToolUseID: toolUseID,
+		ToolName:  toolName,
+		ToolInput: toolInput,
+		Status:    "pending",
+		CreatedAt: createdAt,
+	})
+
 	m.bus.BroadcastToRole(sessID, natspkg.RoleClient, map[string]any{
 		"type":        "hook_pending",
 		"session_id":  sessID,
@@ -359,6 +369,9 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 	}
 
 	dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
+
+	// Delete from NATS KV
+	_ = m.bus.DeleteHookState(sessID, toolUseID)
 
 	remaining, _ := dbpkg.CountPendingHooks(m.db, sessID)
 	if remaining == 0 {

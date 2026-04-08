@@ -360,7 +360,7 @@ func InsertPendingHook(db *sql.DB, h PendingHook) error {
 }
 
 func ListPendingHooks(db *sql.DB, sessionID string) ([]PendingHook, error) {
-	rows, err := db.Query(`SELECT session_id, tool_use_id, tool_name, tool_input FROM pending_hooks WHERE session_id=? ORDER BY created_at ASC`, sessionID)
+	rows, err := db.Query(`SELECT session_id, tool_use_id, tool_name, tool_input, created_at FROM pending_hooks WHERE session_id=? ORDER BY created_at ASC`, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -368,9 +368,11 @@ func ListPendingHooks(db *sql.DB, sessionID string) ([]PendingHook, error) {
 	var out []PendingHook
 	for rows.Next() {
 		var h PendingHook
-		if err := rows.Scan(&h.SessionID, &h.ToolUseID, &h.ToolName, &h.ToolInput); err != nil {
+		var createdAt string
+		if err := rows.Scan(&h.SessionID, &h.ToolUseID, &h.ToolName, &h.ToolInput, &createdAt); err != nil {
 			return nil, err
 		}
+		h.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		out = append(out, h)
 	}
 	return out, rows.Err()

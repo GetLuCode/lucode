@@ -6,14 +6,27 @@ package natsbus
 //   hooks.{sessId}.response.{toolUseId} server      → lucodehook (decision)
 //   sess.{sessId}.events                server      → browser  (all session events)
 //   sess.{sessId}.cmd                   browser     → server  (hook_respond, etc.)
+//   hook.events.{sessId}                server      → browser  (hook_pending, hook_resolved via JetStream)
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
+
+// HookState represents the state of a pending hook in the KV store.
+type HookState struct {
+	SessionID string          `json:"session_id"`
+	ToolUseID string          `json:"tool_use_id"`
+	ToolName  string          `json:"tool_name"`
+	ToolInput json.RawMessage `json:"tool_input"`
+	Status    string          `json:"status"` // "pending" | "approved" | "denied"
+	CreatedAt time.Time       `json:"created_at"`
+}
 
 func HookRequestSubject(sessID string) string {
 	return fmt.Sprintf("hooks.%s.request", sessID)
@@ -36,6 +49,10 @@ func SessionCmdSubject(sessID string) string {
 type Bus struct {
 	nc *nats.Conn
 
+	mu           sync.RWMutex
+	pendingHooks map[string]map[string]*HookState // sessID -> toolUseID -> HookState
+
+	OnBroadcast      func(data []byte) // sends event to all browser WS clients
 	OnHookRequest    func(sessID, toolUseID, toolName string, toolInput json.RawMessage)
 	OnHookRespond    func(sessID, toolUseID, decision, reason string)
 	OnHookDisconnect func(sessID, toolUseID string) // kept for interface parity; unused with NATS
@@ -43,7 +60,10 @@ type Bus struct {
 
 // NewBus wraps an existing nats.Conn (the embedded server's internal connection).
 func NewBus(nc *nats.Conn) *Bus {
-	return &Bus{nc: nc}
+	return &Bus{
+		nc:           nc,
+		pendingHooks: make(map[string]map[string]*HookState),
+	}
 }
 
 // Start subscribes to inbound subjects. Call after setting On* callbacks.
@@ -57,13 +77,18 @@ func (b *Bus) Start() error {
 	return nil
 }
 
-// Broadcast publishes a session event to all browser subscribers.
+// Broadcast sends a session event to all browser WS clients.
 func (b *Bus) Broadcast(sessID string, event any) {
-	b.publish(SessionEventsSubject(sessID), event)
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	if b.OnBroadcast != nil {
+		b.OnBroadcast(data)
+	}
 }
 
 // BroadcastToRole is kept for interface parity with ws.Hub.
-// With NATS, both roles share the same subject; the browser filters by type.
 func (b *Bus) BroadcastToRole(sessID string, _ Role, event any) {
 	b.Broadcast(sessID, event)
 }
@@ -72,6 +97,54 @@ func (b *Bus) BroadcastToRole(sessID string, _ Role, event any) {
 func (b *Bus) SendHookResponse(sessID, toolUseID string, event any) bool {
 	b.publish(HookResponseSubject(sessID, toolUseID), event)
 	return true // NATS fire-and-forget; assume delivered
+}
+
+// SetHookState persists hook state to the KV store.
+// SetHookState stores a hook state in memory.
+func (b *Bus) SetHookState(sessID, toolUseID string, state HookState) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pendingHooks[sessID] == nil {
+		b.pendingHooks[sessID] = make(map[string]*HookState)
+	}
+	b.pendingHooks[sessID][toolUseID] = &state
+	return nil
+}
+
+// DeleteHookState removes a hook state from memory.
+func (b *Bus) DeleteHookState(sessID, toolUseID string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pendingHooks[sessID] != nil {
+		delete(b.pendingHooks[sessID], toolUseID)
+	}
+	return nil
+}
+
+// GetSessionHooks returns all pending hooks for a session.
+func (b *Bus) GetSessionHooks(sessID string) map[string]*HookState {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	hooks := make(map[string]*HookState)
+	if b.pendingHooks[sessID] != nil {
+		for k, v := range b.pendingHooks[sessID] {
+			hooks[k] = v
+		}
+	}
+	return hooks
+}
+
+// GetAllPendingHooks returns all pending hooks across all sessions.
+func (b *Bus) GetAllPendingHooks() []*HookState {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var all []*HookState
+	for _, hooks := range b.pendingHooks {
+		for _, h := range hooks {
+			all = append(all, h)
+		}
+	}
+	return all
 }
 
 func (b *Bus) publish(subj string, event any) {

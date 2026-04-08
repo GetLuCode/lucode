@@ -64,6 +64,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/projects/{id}", h.updateProject)
 
 	mux.HandleFunc("GET /api/ollama/models", h.listOllamaModels)
+
+	mux.HandleFunc("GET /", h.globalWS)
 }
 
 // ---- middleware ----
