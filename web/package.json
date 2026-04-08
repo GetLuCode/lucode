@@ -18,6 +18,7 @@
     "framer-motion": "^12.38.0",
     "marked": "^17.0.5",
     "monaco-editor": "^0.55.1",
+    "nats.ws": "^1.30.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-medium-image-zoom": "^5.4.2",

@@ -1,73 +1,94 @@
 import { useEffect, useRef, useCallback } from 'react'
+import { StringCodec } from 'nats.ws'
+import type { Subscription } from 'nats.ws'
 import { useStore } from '../store'
+import { getNatsConnection } from './useNatsConnection'
+import { logNatsMessage } from '../lib/natsDebug'
 import type { WSEvent } from '../types'
 
-const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+const sc = StringCodec()
 
 export function useSessionWS(sessionId: string | null) {
-  const wsRef = useRef<WebSocket | null>(null)
+  const subRef = useRef<Subscription | null>(null)
   const handleWSEvent = useStore(s => s.handleWSEvent)
   const handleWSEventRef = useRef(handleWSEvent)
   handleWSEventRef.current = handleWSEvent
 
   useEffect(() => {
-    if (!sessionId) return
-
-    let destroyed = false
-    let retryDelay = 1000
-    let retryTimeout: ReturnType<typeof setTimeout> | null = null
-
-    function connect() {
-      if (destroyed) return
-
-      const ws = new WebSocket(`${WS_BASE}/ws?role=client&session_id=${sessionId}`)
-      wsRef.current = ws
-
-      ws.onopen = () => { retryDelay = 1000 }
-
-      ws.onmessage = (e) => {
-        try {
-          const event: WSEvent = JSON.parse(e.data)
-          handleWSEventRef.current(event)
-        } catch {}
+    if (!sessionId) {
+      // Unsubscribe if session ID is cleared
+      if (subRef.current) {
+        subRef.current.unsubscribe()
+        subRef.current = null
       }
-
-      ws.onclose = () => {
-        wsRef.current = null
-        if (!destroyed) {
-          retryTimeout = setTimeout(() => {
-            retryDelay = Math.min(retryDelay * 2, 30000)
-            connect()
-          }, retryDelay)
-        }
-      }
-
-      ws.onerror = () => { ws.close() }
+      return
     }
 
-    connect()
+    let destroyed = false
+
+    ;(async () => {
+      try {
+        const nc = await getNatsConnection()
+        if (destroyed) return
+
+        const subj = `sess.${sessionId}.events`
+        console.log(`[nats] subscribing to ${subj}`)
+
+        // Unsubscribe from previous session if any
+        if (subRef.current) {
+          subRef.current.unsubscribe()
+        }
+
+        const sub = nc.subscribe(subj)
+        subRef.current = sub
+
+        // Drain subscription messages
+        ;(async () => {
+          for await (const msg of sub) {
+            if (destroyed) break
+            try {
+              const text = sc.decode(msg.data)
+              logNatsMessage('recv', msg.subject, msg.data)
+              const event: WSEvent = JSON.parse(text)
+              console.log(`[nats] parsed event type=${event.type} for sess=${sessionId}`)
+              handleWSEventRef.current(event)
+            } catch (err) {
+              console.error(`[nats] decode error for subject=${msg.subject}:`, err, 'data:', msg.data)
+            }
+          }
+        })()
+      } catch (err) {
+        console.error('[nats] subscription failed:', err)
+      }
+    })()
 
     return () => {
       destroyed = true
-      if (retryTimeout) clearTimeout(retryTimeout)
-      wsRef.current?.close()
-      wsRef.current = null
+      if (subRef.current) {
+        subRef.current.unsubscribe()
+        subRef.current = null
+      }
     }
   }, [sessionId])
 
   const sendHookRespond = useCallback(
     (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => {
       if (!sessionId) return
-      const ws = wsRef.current
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'hook_respond',
-          session_id: sessionId,
-          tool_use_id: toolUseId,
-          decision,
-          reason: reason ?? '',
-        }))
-      }
+      ;(async () => {
+        try {
+          const nc = await getNatsConnection()
+          const payload = sc.encode(JSON.stringify({
+            type: 'hook_respond',
+            session_id: sessionId,
+            tool_use_id: toolUseId,
+            decision,
+            reason: reason ?? '',
+          }))
+          nc.publish(`sess.${sessionId}.cmd`, payload)
+        } catch (err) {
+          console.error('[nats] publish failed:', err)
+        }
+      })()
     },
     [sessionId]
   )

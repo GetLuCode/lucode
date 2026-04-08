@@ -14,7 +14,7 @@ import (
 	"time"
 
 	dbpkg "claude-orchestrator/internal/db"
-	wspkg "claude-orchestrator/internal/ws"
+	natspkg "claude-orchestrator/internal/natsbus"
 
 	"github.com/google/uuid"
 )
@@ -23,39 +23,37 @@ var ErrSessionBusy = errors.New("session already has an active turn")
 
 type Manager struct {
 	db             *sql.DB
-	hub            *wspkg.Hub
-	backendWSURL   string
-	claudeSettings string // path to --settings file for claude CLI (empty = not used)
+	bus            *natspkg.Bus
+	backendNATSURL string
+	claudeSettings string
 
-	mu             sync.Mutex
-	procs          map[string]*ProcessState
-	ollamaPending  map[string]chan string // tool_use_id → decision channel (for Ollama tool permission)
+	mu            sync.Mutex
+	procs         map[string]*ProcessState
+	ollamaPending map[string]chan string // tool_use_id → decision channel
 }
 
-func NewManager(db *sql.DB, hub *wspkg.Hub, backendWSURL, claudeSettings string) *Manager {
+func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings string) *Manager {
 	m := &Manager{
 		db:             db,
-		hub:            hub,
-		backendWSURL:   backendWSURL,
+		bus:            bus,
+		backendNATSURL: backendNATSURL,
 		claudeSettings: claudeSettings,
 		procs:          make(map[string]*ProcessState),
 		ollamaPending:  make(map[string]chan string),
 	}
-	hub.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
+	bus.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 		m.onHookRequest(sessID, toolUseID, toolName, toolInput)
 	}
-	hub.OnHookRespond = func(sessID, toolUseID, decision, reason string) {
+	bus.OnHookRespond = func(sessID, toolUseID, decision, reason string) {
 		m.onHookRespond(sessID, toolUseID, decision, reason)
 	}
-	hub.OnHookDisconnect = func(sessID, toolUseID string) {
-		m.onHookDisconnect(sessID, toolUseID)
+	bus.OnHookDisconnect = func(sessID, toolUseID string) {
+		// Not triggered via NATS (stateless hook binary), kept for parity.
 	}
 	return m
 }
 
-// StartTurn launches an AI turn for the given options.
-// The backend (claude CLI or Ollama) is selected via opts.Provider.
-// Returns immediately; the turn runs in a goroutine.
+// StartTurn launches an AI turn. Returns immediately; turn runs in a goroutine.
 func (m *Manager) StartTurn(opts TurnOptions) error {
 	m.mu.Lock()
 	if _, active := m.procs[opts.SessionID]; active {
@@ -66,7 +64,7 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 
 	dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusRunning))
 
-	// Persist user message (with image if present)
+	// Persist user message
 	seq, _ := dbpkg.NextMessageSeq(m.db, opts.SessionID)
 	content := opts.Message
 	if opts.ImageBase64 != "" {
@@ -89,7 +87,7 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 		Seq:       seq,
 	})
 
-	m.hub.Broadcast(opts.SessionID, map[string]any{
+	m.bus.Broadcast(opts.SessionID, map[string]any{
 		"type":       "session_status",
 		"session_id": opts.SessionID,
 		"status":     string(StatusRunning),
@@ -97,12 +95,8 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 
-	// Dispatch to the appropriate backend.
 	if opts.Provider == ProviderOllama {
-		// Load conversation history BEFORE the user message was inserted above,
-		// so startOllamaRun can append the current user message itself without duplication.
 		history, _ := dbpkg.ListMessages(m.db, opts.SessionID)
-		// Remove the last message (the one we just inserted) so startOllamaRun adds it.
 		if len(history) > 0 {
 			history = history[:len(history)-1]
 		}
@@ -110,7 +104,7 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 		if err != nil {
 			cancel()
 			dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusError))
-			m.hub.Broadcast(opts.SessionID, map[string]any{
+			m.bus.Broadcast(opts.SessionID, map[string]any{
 				"type":       "error",
 				"session_id": opts.SessionID,
 				"message":    err.Error(),
@@ -129,11 +123,11 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 
 	// Default: claude CLI
 	opts.ClaudeSettings = m.claudeSettings
-	sr, err := spawnClaude(ctx, opts, m.backendWSURL)
+	sr, err := spawnClaude(ctx, opts, m.backendNATSURL)
 	if err != nil {
 		cancel()
 		dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusError))
-		m.hub.Broadcast(opts.SessionID, map[string]any{
+		m.bus.Broadcast(opts.SessionID, map[string]any{
 			"type":       "error",
 			"session_id": opts.SessionID,
 			"message":    err.Error(),
@@ -150,7 +144,6 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	return nil
 }
 
-// streamOllamaOutput drives an Ollama streaming turn to completion.
 func (m *Manager) streamOllamaOutput(handle *ollamaRunHandle) {
 	ps := handle.ps
 	defer func() {
@@ -164,9 +157,9 @@ func (m *Manager) streamOllamaOutput(handle *ollamaRunHandle) {
 
 	emit := func(event any) {
 		if data, err := json.Marshal(event); err == nil {
-			log.Printf("[ollama→ws] session=%s %s", ps.SessionID[:8], string(data))
+			log.Printf("[ollama→nats] session=%s %s", ps.SessionID[:8], string(data))
 		}
-		m.hub.Broadcast(ps.SessionID, event)
+		m.bus.Broadcast(ps.SessionID, event)
 	}
 
 	persistText := func(text string) {
@@ -187,7 +180,7 @@ func (m *Manager) streamOllamaOutput(handle *ollamaRunHandle) {
 		handle.workDir, handle.host, handle.model, handle.options, handle.messages)
 
 	dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
-	m.hub.Broadcast(ps.SessionID, map[string]any{
+	m.bus.Broadcast(ps.SessionID, map[string]any{
 		"type":       "session_status",
 		"session_id": ps.SessionID,
 		"status":     string(StatusIdle),
@@ -233,8 +226,9 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 
 		log.Printf("[event] session=%s type=%s partial=%v isResult=%v", sid8, event.EventType, event.Partial, isResult)
 
-		// Accumulate streaming content and persist only finalized messages
-		// (thinking on content_block_stop, assistant text on message_stop).
+		// Broadcast immediately (before processing) so frontend sees updates live
+		m.bus.Broadcast(ps.SessionID, event)
+
 		if event.EventType == "stream_event" && event.Event != nil {
 			for _, msg := range accum.process(event.Event, ps.SessionID) {
 				msg.Seq = seq
@@ -243,12 +237,10 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 			}
 		}
 
-		m.hub.Broadcast(ps.SessionID, event)
-
 		if isResult {
 			log.Printf("[stream] session=%s turn complete: subtype=%s", sid8, event.ResultSubtype)
 			dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
-			m.hub.Broadcast(ps.SessionID, map[string]any{
+			m.bus.Broadcast(ps.SessionID, map[string]any{
 				"type":       "session_status",
 				"session_id": ps.SessionID,
 				"status":     string(StatusIdle),
@@ -261,7 +253,6 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 		log.Printf("[stream] session=%s scanner error: %v", sid8, err)
 	}
 
-	// Process ended without a result event
 	exitCode := 0
 	if ps.Cmd.ProcessState != nil {
 		exitCode = ps.Cmd.ProcessState.ExitCode()
@@ -270,7 +261,7 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 
 	if exitCode != 0 {
 		msg := fmt.Sprintf("claude exited with code %s", strconv.Itoa(exitCode))
-		m.hub.Broadcast(ps.SessionID, map[string]any{
+		m.bus.Broadcast(ps.SessionID, map[string]any{
 			"type":       "error",
 			"session_id": ps.SessionID,
 			"message":    msg,
@@ -281,7 +272,6 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 	}
 }
 
-// onHookRequest is called by the hub when a hook binary sends hook_request.
 func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 	inputStr := string(toolInput)
 	createdAt := time.Now().UTC()
@@ -295,7 +285,7 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 	})
 	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusWaitingHook))
 
-	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+	m.bus.BroadcastToRole(sessID, natspkg.RoleClient, map[string]any{
 		"type":        "hook_pending",
 		"session_id":  sessID,
 		"tool_use_id": toolUseID,
@@ -305,8 +295,6 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 	})
 }
 
-// ollamaToolPermissionRequest blocks the calling goroutine until the user
-// approves or denies the tool from the browser. Returns the decision ("allow"/"deny").
 func (m *Manager) ollamaToolPermissionRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) string {
 	ch := make(chan string, 1)
 	m.mu.Lock()
@@ -315,7 +303,7 @@ func (m *Manager) ollamaToolPermissionRequest(sessID, toolUseID, toolName string
 
 	createdAt := time.Now().UTC()
 	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusWaitingHook))
-	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+	m.bus.BroadcastToRole(sessID, natspkg.RoleClient, map[string]any{
 		"type":        "hook_pending",
 		"session_id":  sessID,
 		"tool_use_id": toolUseID,
@@ -331,7 +319,7 @@ func (m *Manager) ollamaToolPermissionRequest(sessID, toolUseID, toolName string
 	m.mu.Unlock()
 
 	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
-	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+	m.bus.BroadcastToRole(sessID, natspkg.RoleClient, map[string]any{
 		"type":        "hook_resolved",
 		"session_id":  sessID,
 		"tool_use_id": toolUseID,
@@ -341,9 +329,8 @@ func (m *Manager) ollamaToolPermissionRequest(sessID, toolUseID, toolName string
 	return decision
 }
 
-// onHookRespond is called by the hub when the browser sends hook_respond.
 func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
-	// Check if this is an Ollama tool permission request first.
+	// Check if this is an Ollama tool permission request.
 	m.mu.Lock()
 	ch, isOllama := m.ollamaPending[toolUseID]
 	m.mu.Unlock()
@@ -351,10 +338,9 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 		ch <- decision
 		return
 	}
-	// Retrieve hook info before deleting
+
 	hook, err := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
 	if err == nil {
-		// Insert hook decision message in DB
 		content, _ := json.Marshal(map[string]any{
 			"tool_use_id": toolUseID,
 			"tool_name":   hook.ToolName,
@@ -374,86 +360,24 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 
 	dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
 
-	// If no more pending hooks, mark session as running; otherwise stay waiting_hook
 	remaining, _ := dbpkg.CountPendingHooks(m.db, sessID)
 	if remaining == 0 {
 		dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
 	}
 
-	// Forward hook_response to the specific hook binary WS client by tool_use_id
-	sent := m.hub.SendToHookClient(sessID, toolUseID, map[string]any{
+	// Forward decision to the waiting lucodehook via NATS
+	m.bus.SendHookResponse(sessID, toolUseID, map[string]any{
 		"type":        "hook_response",
 		"tool_use_id": toolUseID,
 		"decision":    decision,
 		"reason":      reason,
 	})
 
-	if !sent {
-		// Hook binary already disconnected (timed out and auto-denied before user responded).
-		// Inform the user so they know their response arrived too late.
-		m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
-			"type":       "info",
-			"session_id": sessID,
-			"message":    "Hook approval timed out — tool was automatically denied.",
-		})
-	}
-
-	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
+	m.bus.BroadcastToRole(sessID, natspkg.RoleClient, map[string]any{
 		"type":        "hook_resolved",
 		"session_id":  sessID,
 		"tool_use_id": toolUseID,
 		"decision":    decision,
-	})
-}
-
-// onHookDisconnect is called when a hook binary WS client disconnects unexpectedly.
-// If the hook was still pending (user hadn't responded), we auto-resolve it so the
-// frontend modal closes. The hook binary already exited (allow or timeout).
-func (m *Manager) onHookDisconnect(sessID, toolUseID string) {
-	// Retrieve hook info before deleting
-	hook, _ := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
-
-	deleted, _ := dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
-	if deleted == 0 {
-		// Already resolved by user — nothing to clean up
-		return
-	}
-	log.Printf("[hook] session=%s tool_use_id=%s disconnected while pending — auto-resolving", sessID[:8], toolUseID)
-
-	// Insert hook timeout message in DB
-	if hook.SessionID != "" { // Ensure we got a valid hook record
-		content, _ := json.Marshal(map[string]any{
-			"tool_name":  hook.ToolName,
-			"tool_input": json.RawMessage(hook.ToolInput),
-			"decision":   "timeout",
-			"reason":     "",
-		})
-		seq, _ := dbpkg.NextMessageSeq(m.db, sessID)
-		dbpkg.InsertMessage(m.db, dbpkg.Message{
-			ID:        uuid.New().String(),
-			SessionID: sessID,
-			Role:      "hook",
-			Content:   string(content),
-			Seq:       seq,
-		})
-	}
-
-	remaining, _ := dbpkg.CountPendingHooks(m.db, sessID)
-	if remaining == 0 {
-		dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
-	}
-
-	// Close the modal and show an informational message
-	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
-		"type":        "hook_resolved",
-		"session_id":  sessID,
-		"tool_use_id": toolUseID,
-		"decision":    "timeout",
-	})
-	m.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
-		"type":       "info",
-		"session_id": sessID,
-		"message":    "Hook approval timed out — tool was automatically denied.",
 	})
 }
 
@@ -471,22 +395,18 @@ func (m *Manager) GetStatus(sessID string) Status {
 	return Status(sess.Status)
 }
 
-// turnAccum accumulates Claude streaming events during a turn and emits
-// finalized DB messages only at natural boundaries (message_stop, thinking block stop).
-// This mirrors the frontend's handleWSEvent logic so stored messages render correctly.
+// turnAccum accumulates Claude streaming events and emits finalized DB messages.
 type turnAccum struct {
 	text       strings.Builder
 	thinking   strings.Builder
-	blockTypes map[int]string // block index → "text" | "thinking"
+	blockTypes map[int]string
 }
 
 func newTurnAccum() *turnAccum {
 	return &turnAccum{blockTypes: make(map[int]string)}
 }
 
-// process handles one raw stream_event line and returns any messages ready to persist.
 func (a *turnAccum) process(raw json.RawMessage, sessionID string) []dbpkg.Message {
-	// The raw line has shape: {"type":"stream_event","session_id":"...","event":{...}}
 	var outer struct {
 		Event json.RawMessage `json:"event"`
 	}

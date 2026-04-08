@@ -47,8 +47,14 @@ function ChatViewFull() {
   const pagination = useStore(s =>
     activeSessionId ? s.messagePagination[activeSessionId] : undefined
   )
-  const streamingText = useStore(s => activeSessionId ? (s.streamingText[activeSessionId] ?? '') : '')
-  const streamingThinking = useStore(s => activeSessionId ? (s.streamingThinking[activeSessionId] ?? '') : '')
+  const streamingText = useStore(s => {
+    if (!activeSessionId) return ''
+    return s.streamingText[activeSessionId] ?? ''
+  })
+  const streamingThinking = useStore(s => {
+    if (!activeSessionId) return ''
+    return s.streamingThinking[activeSessionId] ?? ''
+  })
   const sessionStatus = useStore(s =>
     activeSessionId ? (s.sessionStatus[activeSessionId] ?? 'idle') : 'idle'
   )

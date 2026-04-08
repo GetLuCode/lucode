@@ -13,22 +13,23 @@ import (
 	"strings"
 
 	dbpkg "claude-orchestrator/internal/db"
+	natspkg "claude-orchestrator/internal/natsbus"
 	sessionpkg "claude-orchestrator/internal/session"
-	wspkg "claude-orchestrator/internal/ws"
 
 	"github.com/google/uuid"
 )
 
 type Handler struct {
 	db         *sql.DB
-	hub        *wspkg.Hub
+	bus        *natspkg.Bus
 	manager    *sessionpkg.Manager
 	workingDir string
-	ollamaHost string // base URL for Ollama API (default: http://localhost:11434)
+	ollamaHost string
+	natsWSPort int
 }
 
-func New(db *sql.DB, hub *wspkg.Hub, manager *sessionpkg.Manager, workingDir string) *Handler {
-	return &Handler{db: db, hub: hub, manager: manager, workingDir: workingDir, ollamaHost: "http://localhost:11434"}
+func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string, natsWSPort int) *Handler {
+	return &Handler{db: db, bus: bus, manager: manager, workingDir: workingDir, ollamaHost: "http://localhost:11434", natsWSPort: natsWSPort}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -63,8 +64,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/projects/{id}", h.updateProject)
 
 	mux.HandleFunc("GET /api/ollama/models", h.listOllamaModels)
-
-	mux.HandleFunc("GET /ws", h.wsUpgrade)
 }
 
 // ---- middleware ----
@@ -576,7 +575,10 @@ func (h *Handler) deleteIdea(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getConfig(w http.ResponseWriter, r *http.Request) {
-	jsonResp(w, http.StatusOK, map[string]string{"working_dir": h.workingDir})
+	jsonResp(w, http.StatusOK, map[string]any{
+		"working_dir":    h.workingDir,
+		"nats_ws_port":   h.natsWSPort,
+	})
 }
 
 func (h *Handler) listDirs(w http.ResponseWriter, r *http.Request) {
@@ -664,44 +666,6 @@ func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) wsUpgrade(w http.ResponseWriter, r *http.Request) {
-	sessID := r.URL.Query().Get("session_id")
-	roleStr := r.URL.Query().Get("role")
-
-	if sessID == "" {
-		http.Error(w, "session_id required", http.StatusBadRequest)
-		return
-	}
-
-	role := wspkg.RoleClient
-	if roleStr == "hook" {
-		role = wspkg.RoleHook
-	}
-
-	client, err := h.hub.Upgrade(w, r, sessID, role)
-	if err != nil {
-		log.Printf("ws upgrade: %v", err)
-		return
-	}
-
-	// On client connect, re-send any pending hooks so modals show up after reconnect
-	if role == wspkg.RoleClient {
-		if hooks, _ := dbpkg.ListPendingHooks(h.db, sessID); len(hooks) > 0 {
-			for _, ph := range hooks {
-				h.hub.BroadcastToRole(sessID, wspkg.RoleClient, map[string]any{
-					"type":        "hook_pending",
-					"session_id":  sessID,
-					"tool_use_id": ph.ToolUseID,
-					"tool_name":   ph.ToolName,
-					"tool_input":  json.RawMessage(ph.ToolInput),
-				})
-			}
-		}
-	}
-
-	_ = client
 }
 
 // listOllamaModels proxies GET /api/ollama/models to the Ollama API and

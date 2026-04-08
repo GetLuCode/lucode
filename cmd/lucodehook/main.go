@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/nats-io/nats.go"
 )
 
 var logger *log.Logger
@@ -44,19 +44,18 @@ func main() {
 	logger.Printf("=== lucodehook invoked ===")
 	logger.Printf("args: %v", os.Args)
 
-	// Support both LUCODE_* (current) and ORCHESTRATOR_* (legacy) env vars.
 	sessionID := firstEnv("LUCODE_SESSION_ID", "ORCHESTRATOR_SESSION_ID")
-	wsURL := firstEnv("LUCODE_WS_URL", "ORCHESTRATOR_WS_URL")
+	// LUCODE_NATS_URL can be a nats:// (TCP) or ws:// URL
+	natsURL := firstEnv("LUCODE_NATS_URL")
+	if natsURL == "" {
+		natsURL = "nats://127.0.0.1:4222"
+	}
 
 	logger.Printf("LUCODE_SESSION_ID=%q", sessionID)
-	logger.Printf("LUCODE_WS_URL=%q", wsURL)
+	logger.Printf("LUCODE_NATS_URL=%q", natsURL)
 
 	if sessionID == "" {
 		allow("no LUCODE_SESSION_ID — not running under lucode")
-	}
-	if wsURL == "" {
-		wsURL = "ws://localhost:8090"
-		logger.Printf("using default wsURL=%s", wsURL)
 	}
 
 	input, err := io.ReadAll(os.Stdin)
@@ -80,59 +79,72 @@ func main() {
 		allow("no tool_name in event")
 	}
 
-	connURL := fmt.Sprintf("%s/ws?role=hook&session_id=%s", wsURL, sessionID)
-	logger.Printf("connecting to %s", connURL)
-
-	conn, resp, err := websocket.DefaultDialer.Dial(connURL, nil)
+	logger.Printf("connecting to NATS %s", natsURL)
+	nc, err := nats.Connect(natsURL,
+		nats.Timeout(10*time.Second),
+		nats.RetryOnFailedConnect(false),
+	)
 	if err != nil {
-		if resp != nil {
-			logger.Printf("ws dial error (HTTP %d): %v", resp.StatusCode, err)
-		} else {
-			logger.Printf("ws dial error: %v", err)
-		}
+		logger.Printf("nats connect error: %v", err)
 		allow("backend not reachable")
 	}
-	defer conn.Close()
-	logger.Printf("ws connected")
+	defer nc.Close()
+	logger.Printf("nats connected")
 
+	// Subscribe to our specific response subject before publishing the request
+	// so we don't miss the reply if the server is very fast.
+	responseSubj := fmt.Sprintf("hooks.%s.response.%s", sessionID, toolUseID)
+	sub, err := nc.SubscribeSync(responseSubj)
+	if err != nil {
+		logger.Printf("subscribe error: %v", err)
+		allow("subscribe error")
+	}
+	defer sub.Unsubscribe()
+
+	// Publish hook_request
 	req := map[string]any{
 		"type":        "hook_request",
+		"session_id":  sessionID,
 		"tool_use_id": toolUseID,
 		"tool_name":   toolName,
 		"tool_input":  hookEvent["tool_input"],
 	}
-	if err := conn.WriteJSON(req); err != nil {
-		logger.Printf("write hook_request error: %v", err)
-		allow("write error")
+	data, _ := json.Marshal(req)
+	requestSubj := fmt.Sprintf("hooks.%s.request", sessionID)
+	if err := nc.Publish(requestSubj, data); err != nil {
+		logger.Printf("publish hook_request error: %v", err)
+		allow("publish error")
 	}
-	logger.Printf("hook_request sent, waiting for response...")
+	if err := nc.Flush(); err != nil {
+		logger.Printf("flush error: %v", err)
+		allow("flush error")
+	}
+	logger.Printf("hook_request published to %s, waiting on %s ...", requestSubj, responseSubj)
 
-	conn.SetReadDeadline(time.Now().Add(4 * time.Minute))
-	for {
-		var msg struct {
-			Type     string `json:"type"`
-			Decision string `json:"decision"`
-			Reason   string `json:"reason"`
-		}
-		if err := conn.ReadJSON(&msg); err != nil {
-			logger.Printf("read error: %v", err)
-			deny("approval timed out — tool blocked")
-		}
-		logger.Printf("received: type=%q decision=%q reason=%q", msg.Type, msg.Decision, msg.Reason)
+	// Wait for hook_response (up to 4 minutes)
+	msg, err := sub.NextMsg(4 * time.Minute)
+	if err != nil {
+		logger.Printf("wait response error: %v", err)
+		deny("approval timed out — tool blocked")
+	}
 
-		if msg.Type != "hook_response" {
-			conn.SetReadDeadline(time.Now().Add(4 * time.Minute))
-			continue
-		}
+	var resp struct {
+		Type      string `json:"type"`
+		Decision  string `json:"decision"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal(msg.Data, &resp); err != nil {
+		logger.Printf("response parse error: %v", err)
+		deny("response parse error — tool blocked")
+	}
+	logger.Printf("received: type=%q decision=%q reason=%q", resp.Type, resp.Decision, resp.Reason)
 
-		if msg.Decision == "deny" {
-			reason := msg.Reason
-			if reason == "" {
-				reason = "Blocked by user"
-			}
-			deny(reason)
+	if resp.Decision == "deny" {
+		reason := resp.Reason
+		if reason == "" {
+			reason = "Blocked by user"
 		}
-		break
+		deny(reason)
 	}
 
 	allow("user approved")

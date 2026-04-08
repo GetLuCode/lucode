@@ -287,7 +287,10 @@ export const useStore = create<AppState>((set, get) => ({
 
   createSession: async (pid, data) => {
     const session = await api.createSession(pid, data)
-    set(s => ({ sessions: [session, ...s.sessions] }))
+    set(s => ({
+      sessions: [session, ...s.sessions],
+      activeSessionId: session.id, // Auto-select the new session so UI receives WS events
+    }))
     return session
   },
 
@@ -486,12 +489,21 @@ export const useStore = create<AppState>((set, get) => ({
 
       case 'stream_event': {
         const sessId = event.session_id
-        const raw = event.event as Record<string, unknown>
-        if (!raw) break
+        let outer = event.event as Record<string, unknown>
+        if (!outer) break
 
-        // event.event is the inner Claude/Ollama API event object directly.
-        // Both Claude and Ollama emit the same shape: { type, index, delta, ... }
-        const inner = raw
+        // Claude CLI: event.event is the raw stdout line, which is itself a
+        // {type:'stream_event', event:{...inner...}} wrapper. Extract the inner event.
+        // Ollama: event.event is already the inner event directly.
+        let inner: Record<string, unknown>
+        if (outer.type === 'stream_event' && outer.event) {
+          inner = outer.event as Record<string, unknown>
+        } else {
+          inner = outer
+        }
+
+        if (!inner) break
+
         const innerType = inner.type as string
 
         {
@@ -711,7 +723,7 @@ export const useStore = create<AppState>((set, get) => ({
         set(s => ({
           sessionStatus: { ...s.sessionStatus, [event.session_id]: 'idle' },
           sessions: s.sessions.map(sess =>
-            sess.id === event.session_id ? { ...sess, status: 'idle' } : sess
+            sess.id === event.session_id ? { ...sess, status: 'idle' as const } : sess
           ),
         }))
         break

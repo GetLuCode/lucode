@@ -181,13 +181,13 @@ Called when hook binary WS disconnects. Uses `DeletePendingHook` return value (r
 // New session:
 claude -p --verbose --output-format=stream-json --include-hook-events
        --include-partial-messages --input-format=stream-json
-       --permission-mode=bypassPermissions
+       --permission-mode=default
        --model=<model> --session-id=<id> [--name=<name>]
 
 // Resume:
 claude -p --verbose --output-format=stream-json --include-hook-events
        --include-partial-messages --input-format=stream-json
-       --permission-mode=bypassPermissions
+       --permission-mode=default
        --model=<model> --resume=<id>
 
 // Fork:

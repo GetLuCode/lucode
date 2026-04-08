@@ -18,8 +18,8 @@ import (
 	apipkg "claude-orchestrator/internal/api"
 	dbpkg "claude-orchestrator/internal/db"
 	hookcfg "claude-orchestrator/internal/hookconfig"
+	natspkg "claude-orchestrator/internal/natsbus"
 	sessionpkg "claude-orchestrator/internal/session"
-	wspkg "claude-orchestrator/internal/ws"
 	webui "claude-orchestrator/web"
 )
 
@@ -36,6 +36,8 @@ func main() {
 	}
 
 	port := flag.Int("port", 8090, "HTTP listen port")
+	natsPort := flag.Int("nats-port", 5222, "NATS TCP port (internal)")
+	natsWSPort := flag.Int("nats-ws-port", 5224, "NATS WebSocket port for browsers and hooks")
 	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	claudeSettings := flag.String("claude-settings", defaultClaudeSettings(), "Path to Claude settings.json passed to each Claude process")
@@ -52,12 +54,26 @@ func main() {
 	}
 	defer db.Close()
 
-	hub := wspkg.NewHub()
+	// Start embedded NATS server (TCP for internal Go client, WS for browser + lucodehook)
+	natsServer, err := natspkg.Start(natspkg.Options{
+		NATSPort: *natsPort,
+		WSPort:   *natsWSPort,
+	})
+	if err != nil {
+		log.Fatalf("nats: %v", err)
+	}
+	defer natsServer.Shutdown()
 
-	backendWSURL := fmt.Sprintf("ws://localhost:%d", *port)
-	manager := sessionpkg.NewManager(db, hub, backendWSURL, *claudeSettings)
+	bus := natspkg.NewBus(natsServer.Conn)
 
-	handler := apipkg.New(db, hub, manager, *workingDir)
+	backendNATSURL := fmt.Sprintf("nats://127.0.0.1:%d", *natsPort)
+	manager := sessionpkg.NewManager(db, bus, backendNATSURL, *claudeSettings)
+
+	if err := bus.Start(); err != nil {
+		log.Fatalf("nats bus: %v", err)
+	}
+
+	handler := apipkg.New(db, bus, manager, *workingDir, *natsWSPort)
 
 	distFS, err := fs.Sub(webui.Dist, "dist")
 	if err != nil {

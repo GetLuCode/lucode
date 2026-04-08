@@ -26,6 +26,10 @@ func ParseLine(sessID string, line []byte) (ParsedEvent, bool, error) {
 	}
 
 	typeVal := jsonStr(raw["type"])
+	// Debug: log what we're parsing
+	if typeVal == "stream_event" {
+		// Don't log full content, just note that we got it
+	}
 
 	switch typeVal {
 	case "system":

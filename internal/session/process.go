@@ -29,7 +29,7 @@ type spawnResult struct {
 
 // spawnClaude creates and starts the claude CLI process.
 // Stdout pipe is created before Start; user message is written then stdin is closed.
-func spawnClaude(ctx context.Context, opts TurnOptions, backendWSURL string) (*spawnResult, error) {
+func spawnClaude(ctx context.Context, opts TurnOptions, backendNATSURL string) (*spawnResult, error) {
 	claudePath, err := findClaude()
 	if err != nil {
 		return nil, err
@@ -39,7 +39,7 @@ func spawnClaude(ctx context.Context, opts TurnOptions, backendWSURL string) (*s
 	log.Printf("[spawn] session=%s claude %s", opts.SessionID[:8], strings.Join(args, " "))
 
 	cmd := exec.CommandContext(ctx, claudePath, args...)
-	cmd.Env = buildEnv(opts, backendWSURL)
+	cmd.Env = buildEnv(opts, backendNATSURL)
 
 	// Set working directory to the first work_dir (primary project dir)
 	if len(opts.WorkDirs) > 0 {
@@ -137,7 +137,6 @@ func buildArgs(opts TurnOptions) []string {
 		"--include-hook-events",
 		"--include-partial-messages",
 		"--input-format=stream-json",
-		"--permission-mode=bypassPermissions",
 		"--model=" + opts.Model,
 	}
 
@@ -177,10 +176,10 @@ func buildArgs(opts TurnOptions) []string {
 	return args
 }
 
-func buildEnv(opts TurnOptions, backendWSURL string) []string {
+func buildEnv(opts TurnOptions, backendNATSURL string) []string {
 	env := append(os.Environ(),
 		"LUCODE_SESSION_ID="+opts.SessionID,
-		"LUCODE_WS_URL="+backendWSURL,
+		"LUCODE_NATS_URL="+backendNATSURL,
 	)
 	if opts.ClaudeConfigDir != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+opts.ClaudeConfigDir)
