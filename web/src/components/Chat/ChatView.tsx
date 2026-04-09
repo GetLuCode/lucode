@@ -60,6 +60,7 @@ function ChatViewFull() {
   )
   const sessionUsage = useStore(s => activeSessionId ? s.sessionUsage[activeSessionId] : undefined)
   const liveMessageId = useStore(s => activeSessionId ? s.liveMessageId[activeSessionId] : undefined)
+  const isSending = useStore(s => activeSessionId ? (s.pendingSend[activeSessionId] ?? false) : false)
   const activeProjectId = useStore(s => s.activeProjectId)
   const sessions = useStore(s => s.sessions)
   const sendMessage = useStore(s => s.sendMessage)
@@ -204,7 +205,7 @@ function ChatViewFull() {
 
 
   const session = sessions.find(s => s.id === activeSessionId)
-  const isRunning = sessionStatus === 'running' || sessionStatus === 'waiting_hook'
+  const isRunning = isSending || sessionStatus === 'running' || sessionStatus === 'waiting_hook'
   isRunningRef.current = isRunning
   const hasStreamingText = streamingText.length > 0
   const hasStreamingThinking = streamingThinking.length > 0
@@ -527,12 +528,13 @@ function ChatViewFull() {
               ↑{fmt(sessionUsage.input_tokens)} ↓{fmt(sessionUsage.output_tokens)} tokens
             </span>
           )}
-          <span className={`chat__status chat__status--${sessionStatus}`}>
-            {sessionStatus === 'running' && 'thinking…'}
-            {sessionStatus === 'waiting_hook' && 'awaiting approval'}
-            {isPending && 'ready'}
-            {!isPending && sessionStatus === 'idle' && 'ready'}
-            {!isPending && sessionStatus === 'error' && 'error'}
+          <span className={`chat__status chat__status--${isSending ? 'running' : sessionStatus}`}>
+            {isSending && 'sending…'}
+            {!isSending && sessionStatus === 'running' && 'thinking…'}
+            {!isSending && sessionStatus === 'waiting_hook' && 'awaiting approval'}
+            {!isSending && isPending && 'ready'}
+            {!isSending && !isPending && sessionStatus === 'idle' && 'ready'}
+            {!isSending && !isPending && sessionStatus === 'error' && 'error'}
           </span>
         </div>
       </div>
@@ -574,6 +576,17 @@ function ChatViewFull() {
             </div>
           ))}
         </div>
+
+        {/* Sending indicator: shown while message is in-flight to server */}
+        {isSending && (
+          <div className="msg msg--user" style={{ marginTop: '12px' }}>
+            <div className="msg__bubble msg__bubble--sending">
+              <span className="msg__sending-dots">
+                <span /><span /><span />
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Live streaming thinking */}
         {hasStreamingThinking && (

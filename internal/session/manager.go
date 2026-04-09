@@ -79,12 +79,24 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 		contentJSON, _ := json.Marshal(contentBlocks)
 		content = string(contentJSON)
 	}
+	userMsgID := uuid.New().String()
+	now := time.Now().UTC().Format(time.RFC3339)
 	_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
-		ID:        uuid.New().String(),
+		ID:        userMsgID,
 		SessionID: opts.SessionID,
 		Role:      "user",
 		Content:   content,
 		Seq:       seq,
+	})
+
+	// Broadcast user message so clients can display it without polling /messages
+	m.bus.Broadcast(opts.SessionID, map[string]any{
+		"type":       "user_message",
+		"session_id": opts.SessionID,
+		"id":         userMsgID,
+		"content":    content,
+		"seq":        seq,
+		"created_at": now,
 	})
 
 	m.bus.Broadcast(opts.SessionID, map[string]any{

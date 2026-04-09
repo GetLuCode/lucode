@@ -65,6 +65,7 @@ export interface SearchResult {
 export type WSEvent =
   | { type: 'session_status'; session_id: string; status: string }
   | { type: 'stream_event'; session_id: string; event: unknown; partial?: boolean }
+  | { type: 'user_message'; session_id: string; id: string; content: string; seq: number; created_at: string }
   | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown; created_at: string }
   | { type: 'hook_resolved'; session_id: string; tool_use_id: string; decision: string }
   | { type: 'turn_complete'; session_id: string; result_subtype: string; result_text: string }

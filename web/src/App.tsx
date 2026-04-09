@@ -48,10 +48,12 @@ export default function App() {
   }, [projectId, setActiveProject])
 
   useEffect(() => {
-    if (sessionId) {
+    // Only call setActiveSession when sessionId comes from URL navigation (reload/deep link),
+    // not when the store itself just changed activeSessionId (which triggered the URL update).
+    if (sessionId && sessionId !== activeSessionId) {
       setActiveSession(sessionId)
     }
-  }, [sessionId, setActiveSession])
+  }, [sessionId, setActiveSession]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync store changes to URL
   useEffect(() => {

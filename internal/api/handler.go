@@ -179,16 +179,9 @@ func (h *Handler) deleteProject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	var body struct {
-		Message  string `json:"message"`
 		Name     string `json:"name"`
 		Model    string `json:"model"`
 		Provider string `json:"provider"`
-		Effort   string `json:"effort"`
-		Thinking string `json:"thinking"`
-		Image    struct {
-			Base64    string `json:"base64"`
-			MediaType string `json:"mediaType"`
-		} `json:"image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -204,7 +197,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = proj.DefaultModel
 	}
-	provider, model := resolveProvider(body.Provider, model)
+	_, model = resolveProvider(body.Provider, model)
 
 	sess := dbpkg.Session{
 		ID:        uuid.New().String(),
@@ -216,27 +209,6 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if err := dbpkg.InsertSession(h.db, sess); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	// Fire first turn if message provided
-	if body.Message != "" {
-		opts := sessionpkg.TurnOptions{
-			SessionID:       sess.ID,
-			ProjectID:       pid,
-			Message:         body.Message,
-			Model:           model,
-			Provider:        provider,
-			Name:            body.Name,
-			WorkDirs:        proj.WorkDirs,
-			ClaudeConfigDir: proj.ClaudeConfigDir,
-			Effort:          body.Effort,
-			Thinking:        body.Thinking,
-			ImageBase64:     body.Image.Base64,
-			ImageMediaType:  body.Image.MediaType,
-		}
-		if err := h.manager.StartTurn(opts); err != nil {
-			log.Printf("api: start turn: %v", err)
-		}
 	}
 
 	jsonResp(w, http.StatusCreated, sess)

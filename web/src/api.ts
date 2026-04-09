@@ -26,7 +26,7 @@ export const renameProject = (id: string, name: string) => req<void>('PATCH', `/
 
 // Sessions
 export const listSessions = (pid: string) => req<Session[]>('GET', `/api/projects/${pid}/sessions`)
-export const createSession = (pid: string, data: { message?: string; name?: string; model?: string; provider?: string; effort?: string; thinking?: string; image?: { base64: string; mediaType: string } | null }) =>
+export const createSession = (pid: string, data: { name?: string; model?: string; provider?: string }) =>
   req<Session>('POST', `/api/projects/${pid}/sessions`, data)
 export const deleteSession = (id: string) => req<void>('DELETE', `/api/sessions/${id}`)
 export const renameSession = (id: string, name: string) =>

@@ -47,6 +47,8 @@ interface AppState {
   sessionUsage: Record<string, TokenUsage>
   // ID of the last assistant message that arrived live via WebSocket (not loaded from REST)
   liveMessageId: Record<string, string>
+  // Sessions where user sent a message but server hasn't echoed it back yet
+  pendingSend: Record<string, boolean>
   filePreview: FilePreview | null
   starredMessages: Record<string, Message[]>
   starredPanelOpen: boolean
@@ -68,7 +70,7 @@ interface AppState {
   setActiveSession: (id: string) => Promise<void>
   setPendingSession: (projectId: string, model: string) => void
   clearPendingSession: () => void
-  createSession: (pid: string, data: { message?: string; name?: string; model?: string; effort?: string; thinking?: string }) => Promise<Session>
+  createSession: (pid: string, data: { name?: string; model?: string }) => Promise<Session>
   deleteSession: (id: string) => Promise<void>
   sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) => void
   respondHook: (sessId: string, decision: 'approve' | 'deny', reason?: string) => void
@@ -228,6 +230,7 @@ export const useStore = create<AppState>((set, get) => ({
   streamingThinking: {},
   sessionUsage: {},
   liveMessageId: {},
+  pendingSend: {},
   filePreview: null,
   starredMessages: {},
   starredPanelOpen: false,
@@ -274,7 +277,21 @@ export const useStore = create<AppState>((set, get) => ({
 
   setActiveSession: async (id) => {
     set({ activeSessionId: id })
-    await get().loadMessages(id)
+    const session = get().sessions.find(s => s.id === id)
+
+    if (session && session.message_count === 0) {
+      // Brand-new empty session — no messages to load, WS will deliver them
+      set(s => ({
+        messages: { ...s.messages, [id]: [] },
+        messagePagination: {
+          ...s.messagePagination,
+          [id]: { hasMore: false, oldestSeq: null, isLoadingMore: false },
+        },
+      }))
+    } else {
+      // Existing session (session not in store yet on direct URL load, or has messages) — load from API
+      await get().loadMessages(id)
+    }
   },
 
   setPendingSession: (projectId, model) => {
@@ -290,6 +307,7 @@ export const useStore = create<AppState>((set, get) => ({
     set(s => ({
       sessions: [session, ...s.sessions],
       activeSessionId: session.id, // Auto-select the new session so UI receives WS events
+      sessionStatus: { ...s.sessionStatus, [session.id]: session.status },
     }))
     return session
   },
@@ -305,64 +323,43 @@ export const useStore = create<AppState>((set, get) => ({
   sendMessage: (id, msg, model, effort, thinking, image) => {
     const pending = get().pendingSession
 
-    // Build content: text only or text + image blocks
-    let content = msg
-    if (image) {
-      const blocks = [
-        { type: 'text', text: msg },
-        { type: 'image', source: {
-          type: 'base64',
-          media_type: image.mediaType,
-          data: image.base64,
-        }},
-      ]
-      content = JSON.stringify(blocks)
-    }
-
-    // If sending first message in a pending session
+    // If sending first message in a pending session: create session first, then send turn
     if (pending) {
       api.createSession(pending.projectId, {
-        message: msg,
         name: toTitle(msg),
         model: model || pending.model,
-        effort,
-        thinking,
-        image,
       }).then(session => {
         set(s => ({
           sessions: [session, ...s.sessions],
           activeSessionId: session.id,
           pendingSession: null,
+          pendingSend: { ...s.pendingSend, [session.id]: true },
         }))
-        const userMsg: Message = {
-          id: `opt-${Date.now()}`,
-          session_id: session.id,
-          role: 'user',
-          content,
-          seq: 0,
-          created_at: new Date().toISOString(),
-        }
-        set(s => ({
-          messages: { ...s.messages, [session.id]: [userMsg] },
-        }))
+        // Send the first message as a normal turn
+        api.sendTurn(session.id, msg, model || pending.model, undefined, effort, thinking, image)
+          .catch(err => {
+            set(s => {
+              const next = { ...s.pendingSend }
+              delete next[session.id]
+              return { pendingSend: next }
+            })
+            console.error(err)
+          })
       }).catch(console.error)
       return
     }
 
-    // Normal sendTurn for existing sessions
-    api.sendTurn(id, msg, model, undefined, effort, thinking, image).catch(console.error)
-    const seq = (get().messages[id]?.length ?? 0)
-    const userMsg: Message = {
-      id: `opt-${Date.now()}`,
-      session_id: id,
-      role: 'user',
-      content,
-      seq,
-      created_at: new Date().toISOString(),
-    }
-    set(s => ({
-      messages: { ...s.messages, [id]: [...(s.messages[id] ?? []), userMsg] },
-    }))
+    // Normal sendTurn for existing sessions — show loader until server echoes user_message
+    set(s => ({ pendingSend: { ...s.pendingSend, [id]: true } }))
+    api.sendTurn(id, msg, model, undefined, effort, thinking, image).catch(err => {
+      // On error, clear the pending state
+      set(s => {
+        const next = { ...s.pendingSend }
+        delete next[id]
+        return { pendingSend: next }
+      })
+      console.error(err)
+    })
   },
 
   respondHook: (_sessId, _decision, _reason) => {
@@ -478,6 +475,27 @@ export const useStore = create<AppState>((set, get) => ({
 
   handleWSEvent: (event: WSEvent) => {
     switch (event.type) {
+      case 'user_message': {
+        const sessId = event.session_id
+        const userMsg: Message = {
+          id: event.id,
+          session_id: sessId,
+          role: 'user',
+          content: event.content,
+          seq: event.seq,
+          created_at: event.created_at,
+        }
+        set(s => {
+          const nextPending = { ...s.pendingSend }
+          delete nextPending[sessId]
+          return {
+            messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), userMsg] },
+            pendingSend: nextPending,
+          }
+        })
+        break
+      }
+
       case 'session_status':
         set(s => ({
           sessionStatus: { ...s.sessionStatus, [event.session_id]: event.status },
