@@ -37,7 +37,6 @@ func main() {
 
 	port := flag.Int("port", 8090, "HTTP listen port")
 	natsPort := flag.Int("nats-port", 5222, "NATS TCP port (internal)")
-	natsWSPort := flag.Int("nats-ws-port", 5224, "NATS WebSocket port for browsers and hooks")
 	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
@@ -54,10 +53,9 @@ func main() {
 	}
 	defer db.Close()
 
-	// Start embedded NATS server (TCP for internal Go client, WS for browser + lucodehook)
+	// Start embedded NATS server (TCP only, for internal Go client and lucodehook)
 	natsServer, err := natspkg.Start(natspkg.Options{
 		NATSPort: *natsPort,
-		WSPort:   *natsWSPort,
 	})
 	if err != nil {
 		log.Fatalf("nats: %v", err)
@@ -80,7 +78,7 @@ func main() {
 		log.Fatalf("nats bus: %v", err)
 	}
 
-	handler := apipkg.New(db, bus, manager, *workingDir, *natsWSPort)
+	handler := apipkg.New(db, bus, manager, *workingDir)
 
 	distFS, err := fs.Sub(webui.Dist, "dist")
 	if err != nil {

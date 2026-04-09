@@ -25,11 +25,10 @@ type Handler struct {
 	manager    *sessionpkg.Manager
 	workingDir string
 	ollamaHost string
-	natsWSPort int
 }
 
-func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string, natsWSPort int) *Handler {
-	return &Handler{db: db, bus: bus, manager: manager, workingDir: workingDir, ollamaHost: "http://localhost:11434", natsWSPort: natsWSPort}
+func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
+	return &Handler{db: db, bus: bus, manager: manager, workingDir: workingDir, ollamaHost: "http://localhost:11434"}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -578,8 +577,7 @@ func (h *Handler) deleteIdea(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) getConfig(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]any{
-		"working_dir":    h.workingDir,
-		"nats_ws_port":   h.natsWSPort,
+		"working_dir": h.workingDir,
 	})
 }
 

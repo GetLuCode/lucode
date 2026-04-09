@@ -23,8 +23,6 @@ type Server struct {
 type Options struct {
 	// NATSPort is the TCP port for internal Go client connections (default 5222).
 	NATSPort int
-	// WSPort is the WebSocket port exposed to browsers and lucodehook (default 5224).
-	WSPort int
 	// StoreDir is the directory for JetStream persistence (default os.TempDir()+"/nats-lucode").
 	StoreDir string
 }
@@ -33,9 +31,6 @@ type Options struct {
 func Start(opts Options) (*Server, error) {
 	if opts.NATSPort == 0 {
 		opts.NATSPort = 5222
-	}
-	if opts.WSPort == 0 {
-		opts.WSPort = 5224
 	}
 	if opts.StoreDir == "" {
 		opts.StoreDir = filepath.Join(os.TempDir(), "nats-lucode")
@@ -54,12 +49,6 @@ func Start(opts Options) (*Server, error) {
 		MaxPayload: 8 * 1024 * 1024,
 		JetStream:  true,
 		StoreDir:   opts.StoreDir,
-		Websocket: server.WebsocketOpts{
-			Host:        "0.0.0.0",
-			Port:        opts.WSPort,
-			NoTLS:       true,
-			Compression: false, // Disable for dev debugging (see frames as text in devtools)
-		},
 	}
 
 	ns, err := server.NewServer(so)
@@ -72,7 +61,7 @@ func Start(opts Options) (*Server, error) {
 	if !ns.ReadyForConnections(10 * time.Second) {
 		return nil, fmt.Errorf("nats server did not become ready in 10s")
 	}
-	log.Printf("[nats] ready — tcp://127.0.0.1:%d  ws://0.0.0.0:%d", opts.NATSPort, opts.WSPort)
+	log.Printf("[nats] ready — tcp://127.0.0.1:%d", opts.NATSPort)
 
 	nc, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", opts.NATSPort))
 	if err != nil {
