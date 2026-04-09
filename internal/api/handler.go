@@ -197,13 +197,17 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = proj.DefaultModel
 	}
-	_, model = resolveProvider(body.Provider, model)
+	provider, resolvedModel := resolveProvider(body.Provider, model)
+	storedModel := resolvedModel
+	if provider == sessionpkg.ProviderOllama && !strings.HasPrefix(storedModel, "ollama:") {
+		storedModel = "ollama:" + storedModel
+	}
 
 	sess := dbpkg.Session{
 		ID:        uuid.New().String(),
 		ProjectID: pid,
 		Name:      body.Name,
-		Model:     model,
+		Model:     storedModel,
 		Status:    string(sessionpkg.StatusIdle),
 	}
 	if err := dbpkg.InsertSession(h.db, sess); err != nil {

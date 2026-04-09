@@ -78,7 +78,8 @@ interface AppState {
   renameSession: (id: string, name: string) => Promise<void>
   loadMessages: (id: string) => Promise<void>
   loadMoreMessages: (id: string) => Promise<void>
-  handleWSEvent: (event: WSEvent) => void
+  handleWSEvent: (event: WSEvent) => void,
+  increaseSessionMessageCount: (id:string)=>void
 }
 
 // Mutable maps outside Zustand — no re-render needed
@@ -317,6 +318,13 @@ export const useStore = create<AppState>((set, get) => ({
     set(s => ({
       sessions: s.sessions.filter(sess => sess.id !== id),
       activeSessionId: s.activeSessionId === id ? null : s.activeSessionId,
+    }))
+  },
+
+  increaseSessionMessageCount: async (id) => {
+    const currentCount = get().sessions.find(s=>s.id==id)?.message_count||0
+    set(s => ({
+      sessions: s.sessions.map(s => s.id === id ? { ...s, message_count: currentCount+1} : s),
     }))
   },
 

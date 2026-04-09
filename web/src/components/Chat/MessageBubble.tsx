@@ -37,7 +37,7 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
   }
 
   return (
-    <div>
+    <div className='msg-container'>
       <motion.div
         className={`msg msg--${message.role}`}
         initial={{ opacity: 0 }}
@@ -46,11 +46,19 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
       >
         <div className={`msg__bubble${isBeingRead ? ' msg__bubble--reading' : ''}`}>
           <BubbleContent message={message} sendHookRespond={sendHookRespond} />
-          {(message.role === 'user' || message.role === 'assistant') && (
-            <div className="msg__actions">
-              {message.role === 'assistant' && (
+        </div> 
+      </motion.div>
+      <div className={`msg__info msg--${message.role}`}>
+        {message.usage && <TokenBadge usage={message.usage} />}
+        <time className={`msg__time msg__time--${message.role}`}>
+          {fmtTime(message.created_at)}
+        </time>
+        <div className={`msg__actions-container msg--${message.role}`}>
+            {(message.role === 'user' || message.role === 'assistant') && (
+              <div className="msg__actions">
                 <>
-                  <div className="tooltip-wrapper">
+                {
+                  message.role === 'assistant' && <div className="tooltip-wrapper">
                     {isBeingRead ? (
                       <button
                         className="msg__action-btn msg__action-btn--active"
@@ -67,33 +75,28 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
                     <div className="tooltip tooltip--up">
                       {isBeingRead ? 'Stop reading' : 'Read aloud'}
                     </div>
-                  </div>
-                  <div className="tooltip-wrapper">
+                  </div>}
+                  {message.role === 'assistant' &&<div className="tooltip-wrapper">
                     <button className="msg__action-btn" onClick={handleCopy} aria-label="Copy">
                       {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
                     </button>
                     <div className="tooltip tooltip--up">{copied ? 'Copied!' : 'Copy'}</div>
+                  </div>}
+                  <div className="tooltip-wrapper">
+                    <button
+                      className={`msg__action-btn msg__action-btn--star${isStarred ? ' msg__action-btn--starred' : ''}`}
+                      onClick={handleStar}
+                      aria-label={isStarred ? 'Remove star' : 'Star message'}
+                    >
+                      {isStarred ? <IconStarFilled size={13} /> : <IconStar size={13} />}
+                    </button>
+                    <div className="tooltip tooltip--up">{isStarred ? 'Starred' : 'Star'}</div>
                   </div>
                 </>
-              )}
-              <div className="tooltip-wrapper">
-                <button
-                  className={`msg__action-btn msg__action-btn--star${isStarred ? ' msg__action-btn--starred' : ''}`}
-                  onClick={handleStar}
-                  aria-label={isStarred ? 'Remove star' : 'Star message'}
-                >
-                  {isStarred ? <IconStarFilled size={13} /> : <IconStar size={13} />}
-                </button>
-                <div className="tooltip tooltip--up">{isStarred ? 'Starred' : 'Star'}</div>
               </div>
-            </div>
-          )}
-          {message.usage && <TokenBadge usage={message.usage} />}
-          <time className={`msg__time msg__time--${message.role}`}>
-            {fmtTime(message.created_at)}
-          </time>
+            )}
         </div>
-      </motion.div>
+      </div>
     </div>
   )
 }

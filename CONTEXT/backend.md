@@ -1,9 +1,9 @@
 # Backend
 
-## Entry Point — `cmd/orchestrator/main.go`
+## Entry Point — `cmd/lucode/main.go`
 
 ```
-./orchestrator [-port 8090] [-data ~/.claude-orchestrator]
+./lucode [-port 8090] [-data ~/.claude-orchestrator]
 ```
 
 Startup order:

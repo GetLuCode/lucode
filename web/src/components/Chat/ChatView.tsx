@@ -77,9 +77,12 @@ function ChatViewFull() {
   )
 
   const [input, setInput] = useState('')
-  const [model, setModel] = useState('haiku')
-  const [effort, setEffort] = useState('auto')
-  const [thinking, setThinking] = useState('adaptive')
+  const [model, setModelRaw] = useState(() => localStorage.getItem('pref_model') ?? 'haiku')
+  const [effort, setEffortRaw] = useState(() => localStorage.getItem('pref_effort') ?? 'auto')
+  const [thinking, setThinkingRaw] = useState(() => localStorage.getItem('pref_thinking') ?? 'adaptive')
+  const setModel = (v: string) => { localStorage.setItem('pref_model', v); setModelRaw(v) }
+  const setEffort = (v: string) => { localStorage.setItem('pref_effort', v); setEffortRaw(v) }
+  const setThinking = (v: string) => { localStorage.setItem('pref_thinking', v); setThinkingRaw(v) }
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mediaType: string } | null>(null)
   const [ollamaModels, setOllamaModels] = useState<{ name: string; label: string }[]>([])
 
@@ -242,6 +245,12 @@ function ChatViewFull() {
     isAtBottomRef.current = true
     isLoadingMoreRef.current = false
   }, [activeSessionId])
+
+  // Sync model selector to the active session's model
+  useEffect(() => {
+    const s = sessions.find(s => s.id === activeSessionId)
+    if (s?.model) setModelRaw(s.model)
+  }, [activeSessionId, sessions])
 
   // Stop TTS as soon as voice input is detected (interim = browser heard something)
   useEffect(() => {
@@ -487,38 +496,52 @@ function ChatViewFull() {
               <div className="chat__header-dropdown-divider" />
 
               {/* Claude models */}
-              <div className="chat__header-dropdown-label">Claude</div>
-              {CLAUDE_MODELS.map(m => (
-                <button
-                  key={m.value}
-                  className={`chat__header-dropdown-item${model === m.value ? ' chat__header-dropdown-item--active' : ''}`}
-                  onClick={() => { setModel(m.value); setHeaderMenuOpen(false) }}
-                >
-                  <span>{m.label}</span>
-                  {model === m.value && <IconCheck size={12} className="chat__header-dropdown-check" />}
-                </button>
-              ))}
-
-              {/* Ollama models — only shown when Ollama is running */}
-              {ollamaModels.length > 0 && (
-                <>
-                  <div className="chat__header-dropdown-divider" />
-                  <div className="chat__header-dropdown-label">Ollama</div>
-                  {ollamaModels.map(m => {
-                    const val = `ollama:${m.name}`
-                    return (
+              {(() => {
+                const sessionIsOllama = activeSessionId != null && model.startsWith('ollama:')
+                const sessionIsClaude = activeSessionId != null && !model.startsWith('ollama:')
+                const claudeDisabled = sessionIsOllama
+                const ollamaDisabled = sessionIsClaude
+                return (
+                  <>
+                    <div className="chat__header-dropdown-label">Claude</div>
+                    {CLAUDE_MODELS.map(m => (
                       <button
-                        key={m.name}
-                        className={`chat__header-dropdown-item${model === val ? ' chat__header-dropdown-item--active' : ''}`}
-                        onClick={() => { setModel(val); setHeaderMenuOpen(false) }}
+                        key={m.value}
+                        className={`chat__header-dropdown-item${model === m.value ? ' chat__header-dropdown-item--active' : ''}${claudeDisabled ? ' chat__header-dropdown-item--disabled' : ''}`}
+                        onClick={() => { if (!claudeDisabled) { setModel(m.value); setHeaderMenuOpen(false) } }}
+                        disabled={claudeDisabled}
+                        title={claudeDisabled ? 'Cannot switch provider mid-session' : undefined}
                       >
                         <span>{m.label}</span>
-                        {model === val && <IconCheck size={12} className="chat__header-dropdown-check" />}
+                        {model === m.value && <IconCheck size={12} className="chat__header-dropdown-check" />}
                       </button>
-                    )
-                  })}
-                </>
-              )}
+                    ))}
+
+                    {/* Ollama models — only shown when Ollama is running */}
+                    {ollamaModels.length > 0 && (
+                      <>
+                        <div className="chat__header-dropdown-divider" />
+                        <div className="chat__header-dropdown-label">Ollama</div>
+                        {ollamaModels.map(m => {
+                          const val = `ollama:${m.name}`
+                          return (
+                            <button
+                              key={m.name}
+                              className={`chat__header-dropdown-item${model === val ? ' chat__header-dropdown-item--active' : ''}${ollamaDisabled ? ' chat__header-dropdown-item--disabled' : ''}`}
+                              onClick={() => { if (!ollamaDisabled) { setModel(val); setHeaderMenuOpen(false) } }}
+                              disabled={ollamaDisabled}
+                              title={ollamaDisabled ? 'Cannot switch provider mid-session' : undefined}
+                            >
+                              <span>{m.label}</span>
+                              {model === val && <IconCheck size={12} className="chat__header-dropdown-check" />}
+                            </button>
+                          )
+                        })}
+                      </>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           )}
         </div>

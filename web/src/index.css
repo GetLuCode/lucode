@@ -720,6 +720,13 @@ html, body, #root {
   color: var(--accent);
 }
 
+.chat__header-dropdown-item--disabled,
+.chat__header-dropdown-item--disabled:hover {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: none;
+}
+
 .chat__header-dropdown-check {
   margin-left: auto;
   color: var(--accent);
@@ -833,7 +840,6 @@ html, body, #root {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-dim);
-  margin-top: 6px;
   letter-spacing: 0.04em;
 }
 
@@ -934,8 +940,6 @@ html, body, #root {
   display: block;
   font-size: 10px;
   color: var(--text-dim);
-  margin-top: 2px;
-  margin-bottom: 4px;
   letter-spacing: 0.02em;
 }
 .msg__time--user {
@@ -2446,14 +2450,37 @@ html, body, #root {
 .msg__actions {
   display: flex;
   gap: 2px;
-  margin-top: 8px;
   opacity: 0;
   transition: opacity 0.15s;
 }
 
-.msg__bubble:hover .msg__actions {
+.msg__actions-container{
+  display: flex;
+  align-items: center;
+  /*height: 0px;*/
+  overflow: hidden;
+  /*transition: height 0.15s;*/
+}
+
+.msg__info {
+  display: flex;
+  align-items: center;
+  flex-direction: row;
+  margin-top: 5px;
+  gap: 5px;
+}
+
+.msg__info.msg--user{
+  flex-direction: row-reverse;
+}
+
+.msg-container:hover .msg__actions {
   opacity: 1;
 }
+
+/*.msg-container:hover .msg__actions-container {
+  height: 30px;
+}*/
 
 .msg__action-btn {
   display: flex;

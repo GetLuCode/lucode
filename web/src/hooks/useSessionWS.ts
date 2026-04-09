@@ -5,6 +5,7 @@ import type { WSEvent } from '../types'
 
 export function useSessionWS(sessionId: string | null) {
   const handleWSEvent = useStore(s => s.handleWSEvent)
+  const increaseSessionMessageCount = useStore((s)=>s.increaseSessionMessageCount)
   const handleWSEventRef = useRef(handleWSEvent)
   handleWSEventRef.current = handleWSEvent
 
@@ -22,6 +23,7 @@ export function useSessionWS(sessionId: string | null) {
         const event = raw as unknown as WSEvent
         console.log(`[ws] event type=${event.type} sess=${sessionId}`)
         handleWSEventRef.current(event)
+        increaseSessionMessageCount(sessionId)
       } catch (err) {
         console.error('[ws] parse error:', err, 'raw:', e.data)
       }
