@@ -106,10 +106,19 @@ function ChatViewFull() {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isAtBottomRef = useRef(true)
   const prevScrollHeightRef = useRef(0)
   const isPrependingRef = useRef(false)
   const isLoadingMoreRef = useRef(false)
+
+  // Auto-resize textarea to fit content, growing upward naturally
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [input])
 
   // Load pending ideas count (both scopes) when project changes
   useEffect(() => {
@@ -607,6 +616,7 @@ function ChatViewFull() {
           )}
           <div className="chat__input-wrap">
           <textarea
+            ref={textareaRef}
             className="chat__input"
             placeholder={
               isRunning

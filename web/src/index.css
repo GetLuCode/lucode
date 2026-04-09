@@ -1107,7 +1107,7 @@ html, body, #root {
   border: 1px solid var(--border);
   border-radius: 12px;
   transition: border-color 0.15s;
-  overflow: visible;
+  overflow: hidden;
   position: relative;
 }
 .chat__input-wrap:focus-within { border-color: var(--accent); }
@@ -1123,9 +1123,10 @@ html, body, #root {
   outline: none;
   resize: none;
   min-height: 40px;
-  max-height: 200px;
+  max-height: min(50vh, 400px);
   overflow-y: auto;
   line-height: 1.5;
+  box-sizing: border-box;
 }
 .chat__input::placeholder { color: var(--text-dim); }
 .chat__input:disabled { opacity: 0.5; }
