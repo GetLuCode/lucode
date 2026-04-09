@@ -157,6 +157,35 @@ var lucodeTools = []ollamaTool{
 			},
 		},
 	},
+	{
+		Type: "function",
+		Function: ollamaToolFunc{
+			Name:        "webfetch",
+			Description: "Fetch content from an HTTP/HTTPS URL using curl and return the response body.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"url": map[string]interface{}{
+						"type":        "string",
+						"description": "The URL to fetch (e.g., http://localhost:11434/api/tags).",
+					},
+					"method": map[string]interface{}{
+						"type":        "string",
+						"description": "HTTP method: GET, POST, PUT, DELETE, etc. Defaults to GET.",
+					},
+					"body": map[string]interface{}{
+						"type":        "string",
+						"description": "Request body for POST/PUT requests (JSON or form data).",
+					},
+					"headers": map[string]interface{}{
+						"type":        "object",
+						"description": "Custom HTTP headers as key-value pairs (e.g., {\"Content-Type\": \"application/json\"}).",
+					},
+				},
+				"required": []string{"url"},
+			},
+		},
+	},
 }
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
@@ -286,6 +315,56 @@ func executeTool(name string, argsJSON json.RawMessage, workDir string) string {
 		const maxOut = 4000
 		if len(result) > maxOut {
 			result = result[:maxOut] + "\n... (truncated)"
+		}
+		return result
+
+	case "webfetch":
+		url := str("url")
+		method := str("method")
+		body := str("body")
+		headers, _ := args["headers"].(map[string]interface{})
+
+		if url == "" {
+			return "error: url is required"
+		}
+
+		if method == "" {
+			method = "GET"
+		}
+
+		curlArgs := []string{"-s", "-X", method, url}
+
+		// Add custom headers
+		for key, value := range headers {
+			if v, ok := value.(string); ok {
+				curlArgs = append(curlArgs, "-H", fmt.Sprintf("%s: %s", key, v))
+			}
+		}
+
+		// Add body for POST/PUT/PATCH requests
+		if body != "" {
+			curlArgs = append(curlArgs, "-d", body)
+		}
+
+		cmd := exec.Command("curl", curlArgs...)
+		out, err := cmd.CombinedOutput()
+		result := string(out)
+
+		if err != nil {
+			if result != "" {
+				return fmt.Sprintf("error: %v\n%s", err, result)
+			}
+			return fmt.Sprintf("error: %v", err)
+		}
+
+		if result == "" {
+			return "(empty response)"
+		}
+
+		// Truncate very long responses
+		const maxOut = 16000
+		if len(result) > maxOut {
+			result = result[:maxOut] + fmt.Sprintf("\n... (truncated, %d bytes total)", len(result))
 		}
 		return result
 
