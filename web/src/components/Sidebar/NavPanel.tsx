@@ -2,8 +2,10 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
-import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments } from '@tabler/icons-react'
+import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
+import { SettingsModal } from '../Settings/SettingsModal'
+import { AccountFooter } from './AccountFooter'
 
 interface NavPanelProps {
   onOpenSearch?: () => void
@@ -12,6 +14,9 @@ interface NavPanelProps {
 export function NavPanel({ onOpenSearch }: NavPanelProps) {
   const navigate = useNavigate()
   const projects = useStore(s => s.projects)
+  // Determine if a Claude/Anthropic model is active (not Ollama)
+  const activeModel = localStorage.getItem('pref_model') ?? 'haiku'
+  const isClaudeModel = !activeModel.startsWith('ollama:')
   const sessions = useStore(s => s.sessions)
   const activeProjectId = useStore(s => s.activeProjectId)
   const activeSessionId = useStore(s => s.activeSessionId)
@@ -28,6 +33,7 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [editingType, setEditingType] = useState<'project' | 'session' | null>(null)
@@ -137,13 +143,22 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
         >
           <IconSearch size={16} />
         </button>
+        <button
+          className="nav-panel__rail-btn"
+          onClick={() => navigate('/usage')}
+          title="Usage metrics"
+        >
+          <IconChartBar size={16} />
+        </button>
         <div className="nav-panel__rail-spacer" />
         <button
           className="nav-panel__rail-btn"
           title="Settings"
+          onClick={() => setShowSettings(true)}
         >
           <IconAdjustments size={16} />
         </button>
+        <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
       </div>
 
       <div className="nav-panel__body">
@@ -320,6 +335,8 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
             )
           })}
         </ul>
+
+        <AccountFooter visible={isClaudeModel} />
       </div>
     </aside>
   )

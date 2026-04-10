@@ -1,4 +1,4 @@
-import type { Project, Session, MessagesPage, Message, SearchResult } from './types'
+import type { Account, Project, Session, MessagesPage, Message, SearchResult } from './types'
 
 const BASE = ''
 
@@ -26,7 +26,7 @@ export const renameProject = (id: string, name: string) => req<void>('PATCH', `/
 
 // Sessions
 export const listSessions = (pid: string) => req<Session[]>('GET', `/api/projects/${pid}/sessions`)
-export const createSession = (pid: string, data: { name?: string; model?: string; provider?: string }) =>
+export const createSession = (pid: string, data: { name?: string; model?: string; provider?: string; account_id?: string }) =>
   req<Session>('POST', `/api/projects/${pid}/sessions`, data)
 export const deleteSession = (id: string) => req<void>('DELETE', `/api/sessions/${id}`)
 export const renameSession = (id: string, name: string) =>
@@ -61,3 +61,84 @@ export const listOllamaModels = () =>
 export const getConfig = () => req<{ working_dir: string }>('GET', '/api/config')
 export const listDirs = (path: string) =>
   req<{ path: string; parent: string; dirs: string[] }>('GET', `/api/fs/dirs?path=${encodeURIComponent(path)}`)
+
+// Accounts
+export const listAccounts = () => req<Account[]>('GET', '/api/accounts')
+export const createAccount = (data: { name: string; claude_config_dir: string }) =>
+  req<Account>('POST', '/api/accounts', data)
+export const deleteAccount = (id: string) => req<void>('DELETE', `/api/accounts/${id}`)
+export const listHomeDirs = (path: string) =>
+  req<{ path: string; parent: string; root: string; dirs: string[]; has_credentials: boolean }>('GET', `/api/fs/home-dirs?path=${encodeURIComponent(path)}`)
+
+export interface AccountProfile {
+  account: {
+    uuid: string
+    full_name: string
+    display_name: string
+    email: string
+    has_claude_max: boolean
+    has_claude_pro: boolean
+    created_at: string
+  }
+  organization: {
+    uuid: string
+    name: string
+    organization_type: string
+    billing_type: string
+    rate_limit_tier: string
+    has_extra_usage_enabled: boolean
+    subscription_status: string
+    subscription_created_at: string
+  }
+  application: {
+    uuid: string
+    name: string
+    slug: string
+  }
+}
+
+export interface AccountUsage {
+  five_hour: { utilization: number; resets_at: string } | null
+  seven_day: { utilization: number; resets_at: string } | null
+  seven_day_oauth_apps: { utilization: number; resets_at: string } | null
+  seven_day_opus: { utilization: number; resets_at: string } | null
+  seven_day_sonnet: { utilization: number; resets_at: string } | null
+  seven_day_cowork: { utilization: number; resets_at: string } | null
+  extra_usage: {
+    is_enabled: boolean
+    monthly_limit: number
+    used_credits: number
+    utilization: number
+  } | null
+}
+
+export const getAccountProfile = (id: string) => req<AccountProfile>('GET', `/api/accounts/${id}/profile`)
+export const getAccountUsage = (id: string, refresh = false) =>
+  req<AccountUsage>('GET', `/api/accounts/${id}/usage${refresh ? '?refresh=true' : ''}`)
+
+export interface DailyActivity {
+  date: string
+  messageCount: number
+  sessionCount: number
+  toolCallCount: number
+}
+
+export interface ModelUsageEntry {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+export interface AccountStats {
+  version: number
+  lastComputedDate: string
+  dailyActivity: DailyActivity[]
+  totalSessions: number
+  totalMessages: number
+  longestSession: number
+  firstSessionDate?: string
+  modelUsage?: Record<string, ModelUsageEntry>
+}
+
+export const getAccountStats = (id: string) => req<AccountStats>('GET', `/api/accounts/${id}/stats`)

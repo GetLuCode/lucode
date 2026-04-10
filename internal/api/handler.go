@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -11,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
@@ -19,16 +23,33 @@ import (
 	"github.com/google/uuid"
 )
 
+type cachedEntry struct {
+	body      json.RawMessage
+	expiresAt time.Time
+}
+
 type Handler struct {
 	db         *sql.DB
 	bus        *natspkg.Bus
 	manager    *sessionpkg.Manager
 	workingDir string
 	ollamaHost string
+
+	cacheMu      sync.Mutex
+	profileCache map[string]cachedEntry // account id → profile (24h TTL)
+	usageCache   map[string]cachedEntry // account id → usage (5min TTL)
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
-	return &Handler{db: db, bus: bus, manager: manager, workingDir: workingDir, ollamaHost: "http://localhost:11434"}
+	return &Handler{
+		db:           db,
+		bus:          bus,
+		manager:      manager,
+		workingDir:   workingDir,
+		ollamaHost:   "http://localhost:11434",
+		profileCache: make(map[string]cachedEntry),
+		usageCache:   make(map[string]cachedEntry),
+	}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -63,6 +84,15 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/projects/{id}", h.updateProject)
 
 	mux.HandleFunc("GET /api/ollama/models", h.listOllamaModels)
+
+	mux.HandleFunc("GET /api/accounts", h.listAccounts)
+	mux.HandleFunc("POST /api/accounts", h.createAccount)
+	mux.HandleFunc("DELETE /api/accounts/{id}", h.deleteAccount)
+	mux.HandleFunc("GET /api/accounts/{id}/profile", h.accountProfile)
+	mux.HandleFunc("GET /api/accounts/{id}/usage", h.accountUsage)
+	mux.HandleFunc("GET /api/accounts/{id}/stats", h.accountStats)
+
+	mux.HandleFunc("GET /api/fs/home-dirs", h.listHomeDirs)
 
 	mux.HandleFunc("GET /", h.globalWS)
 }
@@ -179,9 +209,10 @@ func (h *Handler) deleteProject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	var body struct {
-		Name     string `json:"name"`
-		Model    string `json:"model"`
-		Provider string `json:"provider"`
+		Name      string `json:"name"`
+		Model     string `json:"model"`
+		Provider  string `json:"provider"`
+		AccountID string `json:"account_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -209,6 +240,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		Name:      body.Name,
 		Model:     storedModel,
 		Status:    string(sessionpkg.StatusIdle),
+		AccountID: body.AccountID,
 	}
 	if err := dbpkg.InsertSession(h.db, sess); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -304,6 +336,14 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		Resume:          sess.MessageCount > 0,
 		ImageBase64:     body.Image.Base64,
 		ImageMediaType:  body.Image.MediaType,
+	}
+
+	// If the session has an account, override ClaudeConfigDir and set AccountClaudeConfigDir
+	if sess.AccountID != "" {
+		if acct, err := dbpkg.GetClaudeAccount(h.db, sess.AccountID); err == nil {
+			opts.ClaudeConfigDir = acct.ClaudeConfigDir
+			opts.AccountClaudeConfigDir = acct.ClaudeConfigDir
+		}
 	}
 
 	if err := h.manager.StartTurn(opts); err != nil {
@@ -700,11 +740,285 @@ func resolveProvider(providerField, model string) (sessionpkg.Provider, string) 
 	if providerField == string(sessionpkg.ProviderOllama) {
 		return sessionpkg.ProviderOllama, model
 	}
+	if providerField == string(sessionpkg.ProviderAnthropic) {
+		return sessionpkg.ProviderAnthropic, model
+	}
 	// Allow "ollama:modelname" shorthand in the model field.
 	if after, ok := strings.CutPrefix(model, "ollama:"); ok {
 		return sessionpkg.ProviderOllama, after
 	}
 	return sessionpkg.ProviderClaude, model
+}
+
+func (h *Handler) listAccounts(w http.ResponseWriter, r *http.Request) {
+	accounts, err := dbpkg.ListClaudeAccounts(h.db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type accountResp struct {
+		ID              string `json:"id"`
+		Name            string `json:"name"`
+		ClaudeConfigDir string `json:"claude_config_dir"`
+		SubscriptionType string `json:"subscription_type"`
+		CreatedAt       string `json:"created_at"`
+	}
+
+	out := make([]accountResp, 0, len(accounts))
+	for _, a := range accounts {
+		sub, _, _, _, _ := dbpkg.ReadCredentials(a.ClaudeConfigDir)
+		out = append(out, accountResp{
+			ID:              a.ID,
+			Name:            a.Name,
+			ClaudeConfigDir: a.ClaudeConfigDir,
+			SubscriptionType: sub,
+			CreatedAt:       a.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+	jsonResp(w, http.StatusOK, out)
+}
+
+func (h *Handler) createAccount(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name            string `json:"name"`
+		ClaudeConfigDir string `json:"claude_config_dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" || body.ClaudeConfigDir == "" {
+		http.Error(w, "name and claude_config_dir are required", http.StatusBadRequest)
+		return
+	}
+
+	a := dbpkg.ClaudeAccount{
+		ID:              uuid.New().String(),
+		Name:            body.Name,
+		ClaudeConfigDir: body.ClaudeConfigDir,
+	}
+	if err := dbpkg.InsertClaudeAccount(h.db, a); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Pre-fetch profile (24h cache) and usage (5min cache) in background so they're ready.
+	go func() {
+		if profileBody, err := h.fetchAnthropicRaw(a.ClaudeConfigDir, "https://api.anthropic.com/api/oauth/profile", false); err == nil {
+			h.cacheMu.Lock()
+			h.profileCache[a.ID] = cachedEntry{body: profileBody, expiresAt: time.Now().Add(24 * time.Hour)}
+			h.cacheMu.Unlock()
+		} else {
+			log.Printf("[accounts] pre-fetch profile for %s: %v", a.ID, err)
+		}
+		if usageBody, err := h.fetchAnthropicRaw(a.ClaudeConfigDir, "https://api.anthropic.com/api/oauth/usage", true); err == nil {
+			h.cacheMu.Lock()
+			h.usageCache[a.ID] = cachedEntry{body: usageBody, expiresAt: time.Now().Add(5 * time.Minute)}
+			h.cacheMu.Unlock()
+		} else {
+			log.Printf("[accounts] pre-fetch usage for %s: %v", a.ID, err)
+		}
+	}()
+
+	jsonResp(w, http.StatusCreated, a)
+}
+
+func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := dbpkg.DeleteClaudeAccount(h.db, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Evict cache entries
+	h.cacheMu.Lock()
+	delete(h.profileCache, id)
+	delete(h.usageCache, id)
+	h.cacheMu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) listHomeDirs(w http.ResponseWriter, r *http.Request) {
+	pathParam := r.URL.Query().Get("path")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "cannot determine home dir", http.StatusInternalServerError)
+		return
+	}
+
+	if pathParam == "" {
+		pathParam = home
+	}
+
+	// Security: path must be under home dir
+	absPath, err := filepath.Abs(pathParam)
+	if err != nil {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	absHome, _ := filepath.Abs(home)
+	if absPath != absHome && !strings.HasPrefix(absPath, absHome+string(os.PathSeparator)) {
+		http.Error(w, "path outside home directory", http.StatusBadRequest)
+		return
+	}
+
+	entries, err := os.ReadDir(pathParam)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, entry.Name())
+		}
+	}
+
+	// Check if .credentials.json exists in the current directory
+	_, credErr := os.Stat(filepath.Join(pathParam, ".credentials.json"))
+	hasCredentials := credErr == nil
+
+	parent := ""
+	if absPath != absHome {
+		parent = filepath.Dir(pathParam)
+		parentAbs, _ := filepath.Abs(parent)
+		if parentAbs != absHome && !strings.HasPrefix(parentAbs, absHome+string(os.PathSeparator)) {
+			parent = ""
+		}
+	}
+
+	jsonResp(w, http.StatusOK, map[string]any{
+		"path":            pathParam,
+		"parent":          parent,
+		"root":            home,
+		"dirs":            dirs,
+		"has_credentials": hasCredentials,
+	})
+}
+
+func (h *Handler) accountProfile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	acct, err := dbpkg.GetClaudeAccount(h.db, id)
+	if err != nil {
+		http.Error(w, "account not found", http.StatusNotFound)
+		return
+	}
+
+	// Check 24h cache
+	h.cacheMu.Lock()
+	entry, ok := h.profileCache[id]
+	h.cacheMu.Unlock()
+	if ok && time.Now().Before(entry.expiresAt) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		w.Write(entry.body)
+		return
+	}
+
+	body, err := h.fetchAnthropicRaw(acct.ClaudeConfigDir, "https://api.anthropic.com/api/oauth/profile", false)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	h.cacheMu.Lock()
+	h.profileCache[id] = cachedEntry{body: body, expiresAt: time.Now().Add(24 * time.Hour)}
+	h.cacheMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (h *Handler) accountUsage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	acct, err := dbpkg.GetClaudeAccount(h.db, id)
+	if err != nil {
+		http.Error(w, "account not found", http.StatusNotFound)
+		return
+	}
+
+	forceRefresh := r.URL.Query().Get("refresh") == "true"
+
+	if !forceRefresh {
+		h.cacheMu.Lock()
+		entry, ok := h.usageCache[id]
+		h.cacheMu.Unlock()
+		if ok && time.Now().Before(entry.expiresAt) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			w.Write(entry.body)
+			return
+		}
+	}
+
+	body, err := h.fetchAnthropicRaw(acct.ClaudeConfigDir, "https://api.anthropic.com/api/oauth/usage", true)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	h.cacheMu.Lock()
+	h.usageCache[id] = cachedEntry{body: body, expiresAt: time.Now().Add(5 * time.Minute)}
+	h.cacheMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (h *Handler) accountStats(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	acct, err := dbpkg.GetClaudeAccount(h.db, id)
+	if err != nil {
+		http.Error(w, "account not found", http.StatusNotFound)
+		return
+	}
+
+	statsPath := filepath.Join(acct.ClaudeConfigDir, "stats-cache.json")
+	data, err := os.ReadFile(statsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "stats-cache.json not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
+// fetchAnthropicRaw calls an Anthropic API endpoint using the account's credentials
+// and returns the raw JSON body.
+func (h *Handler) fetchAnthropicRaw(claudeConfigDir, url string, oauthBeta bool) (json.RawMessage, error) {
+	_, accessToken, _, _, err := dbpkg.ReadCredentials(claudeConfigDir)
+	if err != nil {
+		return nil, fmt.Errorf("read credentials: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", "claude-code/2.x")
+	if oauthBeta {
+		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("upstream: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream status %d: %s", resp.StatusCode, string(body))
+	}
+	return json.RawMessage(body), nil
 }
 
 func jsonResp(w http.ResponseWriter, status int, v any) {
