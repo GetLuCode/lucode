@@ -126,6 +126,30 @@ CREATE TABLE ideas (
 
 Quick notes / todo items per-project or globally. `scope='global'` for workspace-wide ideas, `scope=<project_id>` for project-specific. Boolean `done` stored as 0/1. No foreign key on scope (allows orphaning when project deleted, acceptable).
 
+### `user_tools` ⭐
+
+```sql
+CREATE TABLE user_tools (
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL UNIQUE,
+    description    TEXT NOT NULL DEFAULT '',
+    input_schema   TEXT NOT NULL DEFAULT '{}',      -- JSON Schema for tool arguments
+    code           TEXT NOT NULL DEFAULT '',          -- JavaScript code
+    execution_env  TEXT NOT NULL DEFAULT 'browser',   -- 'browser' | 'orchestrator'
+    created_at     DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at     DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+```
+
+User-defined tools for voice command detection. Each tool has:
+- **name**: unique identifier used by the LLM to select the tool (e.g. `ui_accept`, `quick_note`)
+- **description**: natural language description the LLM uses to match voice commands to tools
+- **input_schema**: JSON Schema defining expected arguments (validated before execution)
+- **code**: JavaScript code executed when the tool is invoked
+- **execution_env**: `browser` (client-side `Function()`) or `orchestrator` (server-side Goja VM)
+
+The `UNIQUE` constraint on `name` prevents duplicate tool definitions.
+
 ## Key Queries — `internal/db/queries.go`
 
 ```go
@@ -154,6 +178,13 @@ InsertIdea(db, idea)                                   // ⭐ create new idea
 ListIdeas(db, scope) []Idea                            // ⭐ get all ideas for scope (project_id or 'global')
 UpdateIdeaDone(db, id, done) error                     // ⭐ toggle done status
 DeleteIdea(db, id) error                               // ⭐ remove idea
+
+InsertUserTool(db, tool)                               // ⭐ create user tool
+ListUserTools(db) []UserTool                           // ⭐ all tools, ordered by created_at DESC
+GetUserTool(db, id) UserTool                           // ⭐ by ID
+GetUserToolByName(db, name) UserTool                   // ⭐ by unique name
+UpdateUserTool(db, tool) error                         // ⭐ update fields + updated_at timestamp
+DeleteUserTool(db, id) error                           // ⭐ remove tool
 ```
 
 **Pagination**: `ListMessagesPaginated(db, sessionID, 50, nil)` returns the 50 newest messages in ASC order. `ListMessagesPaginated(db, sessionID, 50, &oldestSeq)` returns 50 messages with `seq < oldestSeq`, also in ASC order. `hasMore=true` means more older messages exist.

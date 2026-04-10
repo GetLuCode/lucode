@@ -38,6 +38,14 @@ DELETE /api/ideas/{id}                  delete idea ⭐
 GET    /ws?role=client&session_id=<id>  browser UI WebSocket
 GET    /ws?role=hook&session_id=<id>    hook binary WebSocket
 
+GET    /api/tools                       list all user-defined tools ⭐
+POST   /api/tools                       create a new tool ⭐
+GET    /api/tools/{id}                  get tool by ID ⭐
+PATCH  /api/tools/{id}                  update tool fields ⭐
+DELETE /api/tools/{id}                  delete tool ⭐
+POST   /api/tools/{id}/execute          execute server-side tool via Goja ⭐
+POST   /api/command-detect              voice command detection via LLM ⭐
+
 GET    /api/health                      200 OK
 ```
 
@@ -244,3 +252,85 @@ ctx, cancel = context.WithTimeout(context.Background(), 30*time.Minute)
 - `cancel()` called in `streamOutput` defer (always)
 - `cmd.Wait()` called in defer to reap the process
 - Multiple sessions run fully concurrently — each has own goroutine + process
+
+## Command Detection Engine ⭐ — `internal/session/command.go`
+
+### `DetectCommand(transcript, tools, claudeConfigDir) → CommandDetectResult`
+
+Sends a voice transcript to the Anthropic API to classify whether it's a command:
+
+1. Builds Anthropic tool definitions from `[]UserTool`
+2. Adds a `__no_match` escape tool (used when transcript is not a command)
+3. Calls Anthropic API with `tool_choice: {"type": "any"}` — forces tool-only response, no text
+4. Uses `claude-haiku-4-5-20251001` — fast and cheap for classification
+5. Returns `ToolCallResult{tool_name, tool_id, arguments}` or `nil` if no match
+
+**System prompt**: conservative classifier — only matches when intent is clear.
+
+### `ExecuteUserTool(tool, args) → (result, error)`
+
+Runs a user-defined tool's JS code in the Goja sandbox. Delegates to `toolengine.Execute()`.
+
+## Tool Execution Engine ⭐ — `internal/toolengine/engine.go`
+
+Sandboxed JavaScript execution via [Goja](https://github.com/dop251/goja) (Go JS runtime).
+
+### `Execute(code, args, workDir) → (any, error)`
+
+1. Creates fresh Goja VM per execution (no shared state)
+2. Sets 10-second timeout via `vm.Interrupt()`
+3. Injects `args` as parsed JS object
+4. Injects SDK modules:
+   - **`fs`**: `readFile(path)`, `writeFile(path, content)`, `readDir(path)`, `exists(path)`
+     - All paths resolved relative to `workDir`
+     - Path traversal protection: rejects paths outside `workDir`
+   - **`http`**: `fetch(url, options?)` — returns `{status, statusText, body, json?}`
+     - HTTP client with 10s timeout
+   - **`log`**: `info(...)`, `warn(...)`, `error(...)`
+   - **`JSON`**: `parse(s)`, `stringify(v)`
+5. Wraps user code in `(function() { ... })()` to capture return value
+
+### Security
+
+- **Timeout**: `time.AfterFunc(10s)` + `vm.Interrupt("timeout")`
+- **Path traversal**: `filepath.Clean` + `strings.HasPrefix(resolved, workDir)`
+- **No ambient access**: Goja VM has no `require()`, no `process`, no Node.js APIs
+- **Fresh VM per call**: no cross-execution state leakage
+
+## User Tools API ⭐
+
+**Create tool**:
+```json
+POST /api/tools
+{
+  "name": "ui_accept",
+  "description": "Accept the current pending hook approval in the UI",
+  "input_schema": "{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\"}},\"required\":[\"action\"]}",
+  "code": "return { action: args.action };",
+  "execution_env": "browser"
+}
+→ 201: UserTool
+```
+
+**Command detection**:
+```json
+POST /api/command-detect
+{
+  "transcript": "accept that change",
+  "account_id": "acct-uuid"
+}
+→ 200: {
+  "tool_call": { "tool_name": "ui_accept", "tool_id": "...", "arguments": {"action":"accept"} }
+}
+// or:
+→ 200: { "tool_call": null, "reason": "no matching command detected" }
+```
+
+**Execute server-side tool**:
+```json
+POST /api/tools/{id}/execute
+{ "arguments": { "action": "accept" } }
+→ 200: { "success": true, "result": { "action": "accept" } }
+// or:
+→ 200: { "success": false, "error": "execution timeout exceeded" }
+```

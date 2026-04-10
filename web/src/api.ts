@@ -1,4 +1,4 @@
-import type { Account, Project, Session, MessagesPage, Message, SearchResult } from './types'
+import type { Account, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult } from './types'
 
 const BASE = ''
 
@@ -142,3 +142,14 @@ export interface AccountStats {
 }
 
 export const getAccountStats = (id: string) => req<AccountStats>('GET', `/api/accounts/${id}/stats`)
+
+// User Tools
+export const listUserTools = () => req<UserTool[]>('GET', '/api/tools')
+export const createUserTool = (data: Partial<UserTool>) => req<UserTool>('POST', '/api/tools', data)
+export const getUserTool = (id: string) => req<UserTool>('GET', `/api/tools/${id}`)
+export const updateUserTool = (id: string, data: Partial<UserTool>) => req<UserTool>('PATCH', `/api/tools/${id}`, data)
+export const deleteUserTool = (id: string) => req<void>('DELETE', `/api/tools/${id}`)
+export const executeUserTool = (id: string, args: Record<string, unknown>) =>
+  req<ToolExecuteResult>('POST', `/api/tools/${id}/execute`, { arguments: args })
+export const detectCommand = (transcript: string, accountId: string) =>
+  req<CommandDetectResult>('POST', '/api/command-detect', { transcript, account_id: accountId })

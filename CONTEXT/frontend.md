@@ -61,8 +61,9 @@ main.tsx
                 ├── Chat/IdeasModal.tsx (IdeasModal) — project/global ideas todo list ⭐
                 │                              textarea multiline, text truncated to 2 lines
                 │                              click to expand, mark done, delete
-                ├── Chat/VoiceBar.tsx (VoiceSettingsModal) — lang, auto-send, auto-read, no-echo ⭐
+                ├── Chat/VoiceBar.tsx (VoiceSettingsModal) — lang, auto-send, auto-read, no-echo, hotword ⭐
                 ├── Chat/ThinkingIndicator.tsx — animated dots while Claude is working
+                ├── Settings/ToolsTab.tsx — user tool CRUD (create/edit/delete tools) ⭐
                 └── Image preview + send button
 ```
 
@@ -86,6 +87,15 @@ forkSession(id, name, message?)
 
 listMessages(id, opts?: { limit?: number; beforeSeq?: number })
   → { messages: Message[], has_more: boolean, oldest_seq: number }
+
+// User Tools (voice command detection) ⭐
+listUserTools()
+createUserTool(data)
+getUserTool(id)
+updateUserTool(id, data)
+deleteUserTool(id)
+executeUserTool(id, args)
+detectCommand(transcript, accountId)
 ```
 
 **Image format** (optional in createSession + sendTurn):
@@ -115,6 +125,7 @@ Supports thinking modes: `enabled|disabled|adaptive`
   streamingText: Record<string, string>          // flat strings, reliable equality
   streamingThinking: Record<string, string>      // thinking block in progress
   sessionUsage: Record<string, TokenUsage>       // accumulated per session
+  userTools: UserTool[]                            // user-defined voice command tools ⭐
 }
 ```
 
@@ -343,7 +354,7 @@ Singleton module `tts` (not a React hook) with:
 **Markdown/emoji stripping**: removes code blocks, inline code, bold/italic, headers, links, emojis (unicode ranges) so TTS doesn't read symbols aloud.
 
 ### Voice Preferences — `web/src/lib/voicePrefs.ts`
-Persisted in `localStorage`: `voice_lang`, `voice_autosend`, `voice_autoread`, `voice_noecho`, `voice_uri`.
+Persisted in `localStorage`: `voice_lang`, `voice_autosend`, `voice_autoread`, `voice_noecho`, `voice_uri`, `voice_hotword` ⭐.
 
 ### VoiceSettingsModal — `web/src/components/Chat/VoiceBar.tsx`
 Opens from gear button. Uses **HeadlessUI Switch** components for toggles (styled as track + animated thumb). Options:
@@ -352,6 +363,7 @@ Opens from gear button. Uses **HeadlessUI Switch** components for toggles (style
 - **Auto-send** — sends message automatically when STT recording ends
 - **Auto-read** — reads each new assistant message aloud (skips already-read messages via IndexedDB)
 - **No-echo mode** — for headphones: keeps mic active while TTS plays; coherent speech (final STT result) stops TTS. Without this mode, mic is paused during TTS.
+- **Command Hotword** ⭐ — text input, configurable trigger phrase for voice commands (e.g. "hey lucode", "computer"). When speech starts with this phrase, transcript is routed through the command detection pipeline instead of being injected into chat input.
 
 ### TTS Read Cache — `web/src/hooks/useTTSReadCache.ts` ⭐
 Persists auto-read message IDs in IndexedDB (`tts_read_messages` via Dexie):
@@ -383,6 +395,54 @@ voiceURI: string | null              // selected voice from browser SpeechSynthe
 6. Click "Read aloud" on a different message → stops current, starts new
 
 **Block double-turn**: `isRunningRef.current` checked before auto-send so a voice transcript can't start a second Claude turn.
+
+### Command Detection Pipeline ⭐ — `web/src/hooks/useCommandDetection.ts`
+
+Processes voice transcripts through hotword detection and LLM classification:
+
+```
+Voice transcript arrives
+  │
+  ├── No hotword configured / no tools / no account → passthrough to input
+  │
+  ├── Transcript doesn't start with hotword → passthrough to input
+  │
+  └── Hotword detected → extract command text after hotword
+        │
+        ├── Call POST /api/command-detect (Anthropic API via backend)
+        │     Uses Haiku 4.5 for fast/cheap classification
+        │     tool_choice: "any" → forces tool-only response
+        │     "__no_match" escape tool → no false positives
+        │
+        ├── No tool_call → passthrough to input
+        │
+        └── Tool matched → execute
+              ├── Browser env → web/src/lib/toolExecutor.ts (Function())
+              └── Server env → POST /api/tools/{id}/execute (Goja VM)
+```
+
+**State in ChatView**:
+- `commandProcessing: boolean` — true while LLM is classifying
+- `commandFeedback: string | null` — "Executed: toolName" or "Command error: ..." (auto-clears after 3s)
+- `hotword: string` — from voice preferences
+
+**Mic button visual states** (InputControls):
+- `thinking-toggle--listening` — red pulse when recording
+- `thinking-toggle--beat` — scale animation when interim speech detected
+- `thinking-toggle--command` — purple glow when processing command
+
+### Browser-side Tool Executor ⭐ — `web/src/lib/toolExecutor.ts`
+
+- `validateArgs(args, schemaStr)` — basic JSON Schema validation (required fields, type checks)
+- `executeTool(tool, args)` — routes to browser or server based on `execution_env`
+- Browser execution: `new Function('args', code)` with `"use strict"` and async wrapper
+
+### User Tools UI ⭐ — `web/src/components/Settings/ToolsTab.tsx`
+
+Accessible via **Settings → Voice Tools** tab. Features:
+- **Tool list**: expandable items showing name, env badge, description, schema, code
+- **Tool form**: create/edit with fields for name, description, JSON schema (validated), JS code, execution env selector
+- **Env selector**: toggle between "Browser" and "Server (Goja)" with description hints
 
 ### MessageBubble assistant actions
 - **Read aloud / Stop** button: shows `IconVolume` normally, `IconVolumeOff` (accent color) when `isBeingRead=true`. Click to start/stop via `onSpeak(id, content)` / `onStopSpeaking()` props — both go through ChatView so `speakingMessageId` stays in sync.

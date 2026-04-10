@@ -1,3 +1,11 @@
+export interface Account {
+  id: string
+  name: string
+  claude_config_dir: string
+  subscription_type: string
+  created_at: string
+}
+
 export interface Project {
   id: string
   name: string
@@ -98,4 +106,32 @@ export type ToolResultContent = {
   type: 'tool_result'
   tool_use_id: string
   content: string | { type: string; text: string }[]
+}
+
+// ---- User-defined tools (voice command detection) ----
+
+export interface UserTool {
+  id: string
+  name: string
+  description: string
+  input_schema: string // JSON string
+  code: string
+  execution_env: 'browser' | 'orchestrator'
+  created_at: string
+  updated_at: string
+}
+
+export interface CommandDetectResult {
+  tool_call: {
+    tool_name: string
+    tool_id: string
+    arguments: Record<string, unknown>
+  } | null
+  reason?: string
+}
+
+export interface ToolExecuteResult {
+  success: boolean
+  result?: unknown
+  error?: string
 }

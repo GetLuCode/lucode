@@ -11,6 +11,7 @@ Claude Code Session Orchestrator — a web UI that wraps the `claude` CLI as an 
 | [hook.md](hook.md) | Hook binary, PreToolUse approval flow, concurrent tool routing by tool_use_id, timeout handling | `cmd/lucodehook/main.go`, `internal/session/manager.go` |
 | [frontend.md](frontend.md) | React app, Zustand store, streaming text/thinking, hook toast notifications, lazy sessions, image upload/display, effort/thinking controls | `web/src/` |
 | [database.md](database.md) | SQLite schema (including JSON content blocks for images), all tables, migration strategy | `internal/db/` |
+| [command-engine.md](command-engine.md) | Voice command detection engine: hotword → LLM classification → tool execution pipeline, Goja sandbox, user tool registry | `internal/toolengine/`, `internal/session/command.go`, `web/src/hooks/useCommandDetection.ts`, `web/src/lib/toolExecutor.ts`, `web/src/components/Settings/ToolsTab.tsx` |
 | [issues.md](issues.md) | **Recurring issues, gotchas, patterns, and implementation checklists** — read before refactoring | Various |
 
 ## System Overview
@@ -23,13 +24,17 @@ Browser UI (React + Zustand)
 Go Backend (port 8090)
   ├─ Hub: session-keyed WS clients, two roles (client / hook)
   ├─ Manager: one goroutine per active claude turn
+  ├─ ToolEngine: Goja VM sandbox for server-side user tool execution
   └─ SQLite: ~/.claude-orchestrator/orchestrator.db
   │
   ├── exec: claude CLI process (one per turn)
   │         stdout → stream-json lines → broadcast to WS
   │
-  └── Hook WS: ws://localhost:8090/ws?role=hook&session_id=<id>
-               ↑ connected by hook binary on each PreToolUse
+  ├── Hook WS: ws://localhost:8090/ws?role=hook&session_id=<id>
+  │            ↑ connected by hook binary on each PreToolUse
+  │
+  └── Command Detection: POST /api/command-detect
+               ↑ voice transcript → Anthropic API (Haiku) → tool_call or null
 ```
 
 ## Critical Invariants

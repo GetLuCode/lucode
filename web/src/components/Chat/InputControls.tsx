@@ -1,4 +1,4 @@
-import { IconGauge, IconMicrophone, IconMicrophoneOff, IconNotes, IconPlayerStop } from '@tabler/icons-react'
+import { IconApi, IconGauge, IconMicrophone, IconMicrophoneOff, IconNotes, IconPlayerStop, IconTerminal } from '@tabler/icons-react'
 import { AttachmentButton } from './AttachmentButton'
 import { ThinkingToggle } from './ThinkingToggle'
 import { SettingsMenu } from './SettingsMenu'
@@ -31,6 +31,14 @@ interface Props {
   hasPendingIdeas?: boolean
   isSpeaking?: boolean
   onStopReading?: () => void
+  /** Whether accounts exist — only show CLI/API switch when true */
+  hasAccounts?: boolean
+  providerMode?: 'cli' | 'api'
+  onProviderModeChange?: (mode: 'cli' | 'api') => void
+  /** Voice command is being processed */
+  commandProcessing?: boolean
+  /** Whether interim (partial) speech has been detected */
+  hasInterimSpeech?: boolean
 }
 
 export function InputControls({
@@ -50,6 +58,11 @@ export function InputControls({
   hasPendingIdeas = false,
   isSpeaking = false,
   onStopReading = () => {},
+  hasAccounts = false,
+  providerMode = 'cli',
+  onProviderModeChange = () => {},
+  commandProcessing = false,
+  hasInterimSpeech = false,
 }: Props) {
   const handleEffortCycle = () => {
     const idx = EFFORTS.indexOf(effort as Effort)
@@ -94,6 +107,21 @@ export function InputControls({
           <div className="tooltip">{hasPendingIdeas ? 'Notes — pending items' : 'Notes'}</div>
         </div>
 
+        {/* CLI / API provider switch — only when accounts exist */}
+        {hasAccounts && (
+          <div className="tooltip-wrapper">
+            <button
+              className={`thinking-toggle provider-toggle${providerMode === 'api' ? ' provider-toggle--api' : ''}`}
+              onClick={() => onProviderModeChange(providerMode === 'cli' ? 'api' : 'cli')}
+              disabled={isRunning}
+              title={providerMode === 'cli' ? 'Using CLI — click to switch to API' : 'Using API — click to switch to CLI'}
+            >
+              {providerMode === 'api' ? <IconApi size={16} /> : <IconTerminal size={16} />}
+            </button>
+            <div className="tooltip">{providerMode === 'api' ? 'Direct API' : 'Claude CLI'}</div>
+          </div>
+        )}
+
         {/* Settings menu */}
         <SettingsMenu onVoiceSettingsClick={onSettingsClick} disabled={isRunning} />
 
@@ -116,15 +144,15 @@ export function InputControls({
       <div className="input-controls__group input-controls__group--right">
         <div className="tooltip-wrapper">
           <button
-            className={`thinking-toggle ${isListening ? 'thinking-toggle--listening' : ''}`}
+            className={`thinking-toggle ${isListening ? 'thinking-toggle--listening' : ''} ${isListening && hasInterimSpeech ? 'thinking-toggle--beat' : ''} ${commandProcessing ? 'thinking-toggle--command' : ''}`}
             onClick={onMicToggle}
             disabled={isRunning}
-            title={isListening ? 'Stop recording' : 'Start voice input'}
+            title={commandProcessing ? 'Processing command…' : isListening ? 'Stop recording' : 'Start voice input'}
           >
             {isListening ? <IconMicrophoneOff size={18} /> : <IconMicrophone size={18} />}
           </button>
           <div className="tooltip">
-            {isListening ? 'Stop recording' : 'Start voice input'}
+            {commandProcessing ? 'Processing command…' : isListening ? 'Stop recording' : 'Start voice input'}
           </div>
         </div>
 

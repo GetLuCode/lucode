@@ -23,12 +23,14 @@ interface Props {
   autoRead: boolean
   noEcho: boolean
   voiceURI: string | null
+  hotword?: string
   onClose: () => void
   onLangChange: (lang: string) => void
   onAutoSendToggle: () => void
   onAutoReadToggle: () => void
   onNoEchoToggle: () => void
   onVoiceChange: (voiceURI: string | null) => void
+  onHotwordChange?: (hotword: string) => void
 }
 
 export function VoiceSettingsModal({
@@ -38,12 +40,14 @@ export function VoiceSettingsModal({
   autoRead,
   noEcho,
   voiceURI,
+  hotword = '',
   onClose,
   onLangChange,
   onAutoSendToggle,
   onAutoReadToggle,
   onNoEchoToggle,
   onVoiceChange,
+  onHotwordChange,
 }: Props) {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
 
@@ -188,6 +192,26 @@ export function VoiceSettingsModal({
             </div>
             <p className="voice-modal__help-text">
               When active, coherent speech stops TTS playback. Use if you have speakers (not headphones). Clicking mic while TTS plays also stops it.
+            </p>
+          </div>
+
+          {/* Hotword */}
+          <div className="voice-modal__option">
+            <label htmlFor="voice-hotword" className="voice-modal__label">
+              Command Hotword
+            </label>
+            <input
+              id="voice-hotword"
+              type="text"
+              value={hotword}
+              onChange={(e) => onHotwordChange?.(e.target.value)}
+              placeholder='e.g. "hey lucode", "computer"'
+              className="voice-modal__select"
+              style={{ fontFamily: 'inherit' }}
+            />
+            <p className="voice-modal__help-text">
+              When speech starts with this word/phrase, it will be processed as a voice command
+              and matched against your defined tools. Leave empty to disable.
             </p>
           </div>
         </div>

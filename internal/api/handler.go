@@ -94,6 +94,15 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/fs/home-dirs", h.listHomeDirs)
 
+	// User tools (voice command detection)
+	mux.HandleFunc("GET /api/tools", h.listUserTools)
+	mux.HandleFunc("POST /api/tools", h.createUserTool)
+	mux.HandleFunc("GET /api/tools/{id}", h.getUserTool)
+	mux.HandleFunc("PATCH /api/tools/{id}", h.updateUserTool)
+	mux.HandleFunc("DELETE /api/tools/{id}", h.deleteUserTool)
+	mux.HandleFunc("POST /api/tools/{id}/execute", h.executeUserTool)
+	mux.HandleFunc("POST /api/command-detect", h.detectCommand)
+
 	mux.HandleFunc("GET /", h.globalWS)
 }
 
@@ -1025,4 +1034,216 @@ func jsonResp(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// ---- User Tools CRUD ----
+
+func (h *Handler) listUserTools(w http.ResponseWriter, r *http.Request) {
+	tools, err := dbpkg.ListUserTools(h.db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if tools == nil {
+		tools = []dbpkg.UserTool{}
+	}
+	jsonResp(w, http.StatusOK, tools)
+}
+
+func (h *Handler) createUserTool(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		InputSchema  string `json:"input_schema"`
+		Code         string `json:"code"`
+		ExecutionEnv string `json:"execution_env"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if body.ExecutionEnv == "" {
+		body.ExecutionEnv = "browser"
+	}
+	if body.InputSchema == "" {
+		body.InputSchema = `{"type":"object","properties":{}}`
+	}
+
+	// Validate JSON schema is valid JSON
+	var schemaCheck json.RawMessage
+	if err := json.Unmarshal([]byte(body.InputSchema), &schemaCheck); err != nil {
+		http.Error(w, "input_schema must be valid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	tool := dbpkg.UserTool{
+		ID:           uuid.New().String(),
+		Name:         body.Name,
+		Description:  body.Description,
+		InputSchema:  body.InputSchema,
+		Code:         body.Code,
+		ExecutionEnv: body.ExecutionEnv,
+	}
+	if err := dbpkg.InsertUserTool(h.db, tool); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			http.Error(w, "tool with this name already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Re-read to get timestamps
+	saved, _ := dbpkg.GetUserTool(h.db, tool.ID)
+	jsonResp(w, http.StatusCreated, saved)
+}
+
+func (h *Handler) getUserTool(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	tool, err := dbpkg.GetUserTool(h.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	jsonResp(w, http.StatusOK, tool)
+}
+
+func (h *Handler) updateUserTool(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	existing, err := dbpkg.GetUserTool(h.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	var body struct {
+		Name         *string `json:"name"`
+		Description  *string `json:"description"`
+		InputSchema  *string `json:"input_schema"`
+		Code         *string `json:"code"`
+		ExecutionEnv *string `json:"execution_env"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if body.Name != nil {
+		existing.Name = *body.Name
+	}
+	if body.Description != nil {
+		existing.Description = *body.Description
+	}
+	if body.InputSchema != nil {
+		var check json.RawMessage
+		if err := json.Unmarshal([]byte(*body.InputSchema), &check); err != nil {
+			http.Error(w, "input_schema must be valid JSON", http.StatusBadRequest)
+			return
+		}
+		existing.InputSchema = *body.InputSchema
+	}
+	if body.Code != nil {
+		existing.Code = *body.Code
+	}
+	if body.ExecutionEnv != nil {
+		existing.ExecutionEnv = *body.ExecutionEnv
+	}
+
+	if err := dbpkg.UpdateUserTool(h.db, existing); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	saved, _ := dbpkg.GetUserTool(h.db, id)
+	jsonResp(w, http.StatusOK, saved)
+}
+
+func (h *Handler) deleteUserTool(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := dbpkg.DeleteUserTool(h.db, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- Command Detection ----
+
+func (h *Handler) detectCommand(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Transcript string `json:"transcript"`
+		AccountID  string `json:"account_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Transcript == "" {
+		http.Error(w, "transcript required", http.StatusBadRequest)
+		return
+	}
+
+	// Load all user tools to build tool definitions
+	tools, err := dbpkg.ListUserTools(h.db)
+	if err != nil {
+		http.Error(w, "failed to load tools: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(tools) == 0 {
+		jsonResp(w, http.StatusOK, map[string]any{"tool_call": nil, "reason": "no tools defined"})
+		return
+	}
+
+	// Resolve account credentials
+	configDir := ""
+	if body.AccountID != "" {
+		acct, err := dbpkg.GetClaudeAccount(h.db, body.AccountID)
+		if err == nil {
+			configDir = acct.ClaudeConfigDir
+		}
+	}
+	if configDir == "" {
+		http.Error(w, "account_id required with valid credentials", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.manager.DetectCommand(body.Transcript, tools, configDir)
+	if err != nil {
+		log.Printf("[command-detect] error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, result)
+}
+
+// ---- Tool Execution (server-side) ----
+
+func (h *Handler) executeUserTool(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	tool, err := dbpkg.GetUserTool(h.db, id)
+	if err != nil {
+		http.Error(w, "tool not found", http.StatusNotFound)
+		return
+	}
+	if tool.ExecutionEnv != "orchestrator" {
+		http.Error(w, "tool is configured for browser execution", http.StatusBadRequest)
+		return
+	}
+
+	var body struct {
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.manager.ExecuteUserTool(tool, body.Arguments)
+	if err != nil {
+		jsonResp(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]any{"success": true, "result": result})
 }

@@ -4,6 +4,7 @@ import { IconChevronDown, IconCheck, IconStar } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
+import { useCommandDetection } from '../../hooks/useCommandDetection'
 import { tts } from '../../hooks/useTTS'
 import { getVoicePrefs, saveVoicePrefs } from '../../lib/voicePrefs'
 import { MessageBubble } from './MessageBubble'
@@ -75,6 +76,9 @@ function ChatViewFull() {
   const starredMessages = useStore(s =>
     activeSessionId ? (s.starredMessages[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   )
+  const accounts = useStore(s => s.accounts)
+  const selectedAccountId = useStore(s => s.selectedAccountId)
+  const setSelectedAccount = useStore(s => s.setSelectedAccount)
 
   const [input, setInput] = useState('')
   const [model, setModelRaw] = useState(() => localStorage.getItem('pref_model') ?? 'haiku')
@@ -85,6 +89,10 @@ function ChatViewFull() {
   const setThinking = (v: string) => { localStorage.setItem('pref_thinking', v); setThinkingRaw(v) }
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mediaType: string } | null>(null)
   const [ollamaModels, setOllamaModels] = useState<{ name: string; label: string }[]>([])
+  const [providerMode, setProviderModeRaw] = useState<'cli' | 'api'>(
+    () => (localStorage.getItem('pref_provider') as 'cli' | 'api') ?? 'cli'
+  )
+  const setProviderMode = (v: 'cli' | 'api') => { localStorage.setItem('pref_provider', v); setProviderModeRaw(v) }
 
   // Load Ollama models once on mount (silently ignored if Ollama is not running)
   useEffect(() => {
@@ -99,8 +107,16 @@ function ChatViewFull() {
   const [autoRead, setAutoRead] = useState(() => getVoicePrefs().autoRead)
   const [noEcho, setNoEcho] = useState(() => getVoicePrefs().noEcho)
   const [voiceURI, setVoiceURI] = useState(() => getVoicePrefs().voiceURI)
+  const [hotword, setHotword] = useState(() => getVoicePrefs().hotword)
   const [interimText, setInterimText] = useState('')
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
+  const [commandProcessing, setCommandProcessing] = useState(false)
+  const [commandFeedback, setCommandFeedback] = useState<string | null>(null)
+
+  // User tools for command detection
+  const userTools = useStore(s => s.userTools)
+  const loadUserTools = useStore(s => s.loadUserTools)
+  useEffect(() => { loadUserTools() }, [loadUserTools])
   const [ideasOpen, setIdeasOpen] = useState(false)
   const [pendingIdeasCount, setPendingIdeasCount] = useState(0)
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
@@ -163,6 +179,50 @@ function ChatViewFull() {
   noEchoRef.current = noEcho
   const speakingMessageIdRef = useRef<string | null>(null)
 
+  // Command detection pipeline — processes voice through hotword → LLM → tool execution
+  const { processTranscript } = useCommandDetection({
+    hotword,
+    accountId: selectedAccountId,
+    tools: userTools,
+    onPassthrough: (text) => {
+      // No hotword or no match — inject into input and optionally auto-send
+      setInput((prev) => prev + (prev ? ' ' : '') + text)
+      setInterimText('')
+      if (autoSend && activeSessionId && !isRunningRef.current) {
+        setTimeout(() => {
+          const newInput = input + (input ? ' ' : '') + text
+          if (newInput.trim()) {
+            const targetId = activeSessionId || 'pending'
+            sendMessage(targetId, newInput.trim(), model, effort, thinking, attachedImage,
+              providerMode === 'api' ? 'anthropic' : undefined,
+              providerMode === 'api' ? (selectedAccountId ?? undefined) : undefined)
+            setInput('')
+            setAttachedImage(null)
+          }
+        }, 0)
+      }
+    },
+    onCommandStart: () => {
+      setCommandProcessing(true)
+      setCommandFeedback(null)
+    },
+    onCommandResult: (result) => {
+      setCommandProcessing(false)
+      setCommandFeedback(
+        result.success
+          ? `Executed: ${result.toolName}`
+          : `Tool error: ${result.error}`
+      )
+      // Clear feedback after 3 seconds
+      setTimeout(() => setCommandFeedback(null), 3000)
+    },
+    onCommandError: (error) => {
+      setCommandProcessing(false)
+      setCommandFeedback(`Command error: ${error}`)
+      setTimeout(() => setCommandFeedback(null), 3000)
+    },
+  })
+
   // Voice input
   const { isListening, start: startListening, stop: stopListening } = useVoiceInput({
     lang: voiceLang,
@@ -186,20 +246,8 @@ function ChatViewFull() {
         return // discard the transcript that was picking up TTS audio
       }
 
-      setInput((prev) => prev + (prev ? ' ' : '') + text)
-      setInterimText('')
-      // Auto-send only if not already running a turn (prevents double-turn)
-      if (autoSend && activeSessionId && !isRunningRef.current) {
-        setTimeout(() => {
-          const newInput = input + (input ? ' ' : '') + text
-          if (newInput.trim()) {
-            const targetId = activeSessionId || 'pending'
-            sendMessage(targetId, newInput.trim(), model, effort, thinking, attachedImage)
-            setInput('')
-            setAttachedImage(null)
-          }
-        }, 0)
-      }
+      // Route through command detection pipeline
+      processTranscript(text)
     },
     onInterim: (text) => {
       setInterimText(text)
@@ -311,7 +359,9 @@ function ChatViewFull() {
     if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning) return
     // For pending sessions, we pass a placeholder ID; sendMessage handles the actual creation
     const targetId = activeSessionId || 'pending'
-    sendMessage(targetId, input.trim(), model, effort, thinking, attachedImage)
+    sendMessage(targetId, input.trim(), model, effort, thinking, attachedImage,
+      providerMode === 'api' ? 'anthropic' : undefined,
+      providerMode === 'api' ? (selectedAccountId ?? undefined) : undefined)
     setInput('')
     setAttachedImage(null)
   }
@@ -377,6 +427,11 @@ function ChatViewFull() {
     const newValue = !noEcho
     setNoEcho(newValue)
     saveVoicePrefs({ noEcho: newValue })
+  }
+
+  const handleHotwordChange = (value: string) => {
+    setHotword(value)
+    saveVoicePrefs({ hotword: value })
   }
 
   const handleMicToggle = () => {
@@ -650,16 +705,29 @@ function ChatViewFull() {
               </button>
             </div>
           )}
+          {/* Command detection feedback */}
+          {commandProcessing && (
+            <div className="chat__command-feedback chat__command-feedback--processing">
+              Detecting command…
+            </div>
+          )}
+          {commandFeedback && (
+            <div className={`chat__command-feedback ${commandFeedback.startsWith('Executed') ? 'chat__command-feedback--success' : 'chat__command-feedback--error'}`}>
+              {commandFeedback}
+            </div>
+          )}
           <div className="chat__input-wrap">
           <textarea
             ref={textareaRef}
             className="chat__input"
             placeholder={
-              isRunning
-                ? 'Claude is thinking…'
-                : interimText
-                  ? interimText
-                  : 'Message Claude… (paste images here)'
+              commandProcessing
+                ? 'Processing voice command…'
+                : isRunning
+                  ? 'Claude is thinking…'
+                  : interimText
+                    ? interimText
+                    : 'Message Claude… (paste images here)'
             }
             value={input}
             onChange={e => setInput(e.target.value)}
@@ -685,6 +753,11 @@ function ChatViewFull() {
             hasPendingIdeas={pendingIdeasCount > 0}
             isSpeaking={!!speakingMessageId}
             onStopReading={handleStopSpeaking}
+            hasAccounts={accounts.length > 0}
+            providerMode={providerMode}
+            onProviderModeChange={setProviderMode}
+            commandProcessing={commandProcessing}
+            hasInterimSpeech={interimText.length > 0}
           />
           </div>
         </div>
@@ -706,12 +779,14 @@ function ChatViewFull() {
         autoRead={autoRead}
         noEcho={noEcho}
         voiceURI={voiceURI}
+        hotword={hotword}
         onClose={() => setVoiceSettingsOpen(false)}
         onLangChange={handleVoiceLangChange}
         onAutoSendToggle={handleAutoSendToggle}
         onAutoReadToggle={handleAutoReadToggle}
         onNoEchoToggle={handleNoEchoToggle}
         onVoiceChange={handleVoiceURIChange}
+        onHotwordChange={handleHotwordChange}
       />
 
       {/* File preview panel — slides in from right, full chat height */}

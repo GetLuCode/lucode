@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"time"
 )
 
@@ -80,6 +81,7 @@ type Session struct {
 	Model        string    `json:"model"`
 	Status       string    `json:"status"`
 	ParentID     string    `json:"parent_id,omitempty"`
+	AccountID    string    `json:"account_id,omitempty"`
 	MessageCount int       `json:"message_count"`
 	CreatedAt    time.Time `json:"created_at"`
 	LastActive   time.Time `json:"last_active"`
@@ -87,8 +89,8 @@ type Session struct {
 
 func InsertSession(db *sql.DB, s Session) error {
 	_, err := db.Exec(
-		`INSERT INTO sessions (id, project_id, name, model, status, parent_id) VALUES (?,?,?,?,?,?)`,
-		s.ID, s.ProjectID, s.Name, s.Model, s.Status, nullStr(s.ParentID),
+		`INSERT INTO sessions (id, project_id, name, model, status, parent_id, account_id) VALUES (?,?,?,?,?,?,?)`,
+		s.ID, s.ProjectID, s.Name, s.Model, s.Status, nullStr(s.ParentID), s.AccountID,
 	)
 	return err
 }
@@ -98,8 +100,8 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 	var parentID sql.NullString
 	var createdAt, lastActive string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active FROM sessions WHERE id=?`, id,
-	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive)
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id FROM sessions WHERE id=?`, id,
+	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID)
 	if err != nil {
 		return s, err
 	}
@@ -113,7 +115,7 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 
 func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active FROM sessions WHERE project_id=? ORDER BY last_active DESC`,
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id FROM sessions WHERE project_id=? ORDER BY last_active DESC`,
 		projectID,
 	)
 	if err != nil {
@@ -125,7 +127,7 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		var s Session
 		var parentID sql.NullString
 		var createdAt, lastActive string
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -461,6 +463,86 @@ func DeleteIdea(db *sql.DB, id string) error {
 	return err
 }
 
+// ---- ClaudeAccount ----
+
+type ClaudeAccount struct {
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	ClaudeConfigDir string    `json:"claude_config_dir"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func InsertClaudeAccount(db *sql.DB, a ClaudeAccount) error {
+	_, err := db.Exec(
+		`INSERT INTO claude_accounts (id, name, claude_config_dir) VALUES (?,?,?)`,
+		a.ID, a.Name, a.ClaudeConfigDir,
+	)
+	return err
+}
+
+func ListClaudeAccounts(db *sql.DB) ([]ClaudeAccount, error) {
+	rows, err := db.Query(`SELECT id, name, claude_config_dir, created_at FROM claude_accounts ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ClaudeAccount
+	for rows.Next() {
+		var a ClaudeAccount
+		var createdAt string
+		if err := rows.Scan(&a.ID, &a.Name, &a.ClaudeConfigDir, &createdAt); err != nil {
+			return nil, err
+		}
+		a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func GetClaudeAccount(db *sql.DB, id string) (ClaudeAccount, error) {
+	var a ClaudeAccount
+	var createdAt string
+	err := db.QueryRow(
+		`SELECT id, name, claude_config_dir, created_at FROM claude_accounts WHERE id=?`, id,
+	).Scan(&a.ID, &a.Name, &a.ClaudeConfigDir, &createdAt)
+	if err != nil {
+		return a, err
+	}
+	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	return a, nil
+}
+
+func DeleteClaudeAccount(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM claude_accounts WHERE id=?`, id)
+	return err
+}
+
+// ReadCredentials reads OAuth credentials from {claudeConfigDir}/.credentials.json.
+// Returns subscriptionType, accessToken, refreshToken, expiresAt (Unix ms), and any error.
+func ReadCredentials(claudeConfigDir string) (sub, access, refresh string, expiresAt int64, err error) {
+	path := claudeConfigDir + "/.credentials.json"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken      string `json:"accessToken"`
+			RefreshToken     string `json:"refreshToken"`
+			ExpiresAt        int64  `json:"expiresAt"`
+			SubscriptionType string `json:"subscriptionType"`
+		} `json:"claudeAiOauth"`
+	}
+	if err = json.Unmarshal(data, &creds); err != nil {
+		return
+	}
+	sub = creds.ClaudeAiOauth.SubscriptionType
+	access = creds.ClaudeAiOauth.AccessToken
+	refresh = creds.ClaudeAiOauth.RefreshToken
+	expiresAt = creds.ClaudeAiOauth.ExpiresAt
+	return
+}
+
 // ---- helpers ----
 
 func boolToInt(b bool) int {
@@ -609,5 +691,72 @@ func Search(db *sql.DB, query string) ([]SearchResult, error) {
 	}
 
 	return results, nil
+}
+
+// ---- UserTool ----
+
+type UserTool struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	InputSchema  string `json:"input_schema"`
+	Code         string `json:"code"`
+	ExecutionEnv string `json:"execution_env"` // "browser" or "orchestrator"
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+func InsertUserTool(db *sql.DB, t UserTool) error {
+	_, err := db.Exec(
+		`INSERT INTO user_tools (id, name, description, input_schema, code, execution_env) VALUES (?,?,?,?,?,?)`,
+		t.ID, t.Name, t.Description, t.InputSchema, t.Code, t.ExecutionEnv,
+	)
+	return err
+}
+
+func ListUserTools(db *sql.DB) ([]UserTool, error) {
+	rows, err := db.Query(`SELECT id, name, description, input_schema, code, execution_env, created_at, updated_at FROM user_tools ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserTool
+	for rows.Next() {
+		var t UserTool
+		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.InputSchema, &t.Code, &t.ExecutionEnv, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func GetUserTool(db *sql.DB, id string) (UserTool, error) {
+	var t UserTool
+	err := db.QueryRow(
+		`SELECT id, name, description, input_schema, code, execution_env, created_at, updated_at FROM user_tools WHERE id=?`, id,
+	).Scan(&t.ID, &t.Name, &t.Description, &t.InputSchema, &t.Code, &t.ExecutionEnv, &t.CreatedAt, &t.UpdatedAt)
+	return t, err
+}
+
+func GetUserToolByName(db *sql.DB, name string) (UserTool, error) {
+	var t UserTool
+	err := db.QueryRow(
+		`SELECT id, name, description, input_schema, code, execution_env, created_at, updated_at FROM user_tools WHERE name=?`, name,
+	).Scan(&t.ID, &t.Name, &t.Description, &t.InputSchema, &t.Code, &t.ExecutionEnv, &t.CreatedAt, &t.UpdatedAt)
+	return t, err
+}
+
+func UpdateUserTool(db *sql.DB, t UserTool) error {
+	_, err := db.Exec(
+		`UPDATE user_tools SET name=?, description=?, input_schema=?, code=?, execution_env=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		t.Name, t.Description, t.InputSchema, t.Code, t.ExecutionEnv, t.ID,
+	)
+	return err
+}
+
+func DeleteUserTool(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM user_tools WHERE id=?`, id)
+	return err
 }
 

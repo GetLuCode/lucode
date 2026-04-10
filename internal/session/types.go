@@ -25,8 +25,9 @@ type ProcessState struct {
 type Provider string
 
 const (
-	ProviderClaude Provider = "claude" // claude CLI (default)
-	ProviderOllama Provider = "ollama" // local Ollama API
+	ProviderClaude     Provider = "claude"    // claude CLI (default)
+	ProviderOllama     Provider = "ollama"    // local Ollama API
+	ProviderAnthropic  Provider = "anthropic" // direct Messages API via OAuth
 )
 
 type TurnOptions struct {
@@ -49,4 +50,7 @@ type TurnOptions struct {
 	Provider Provider
 	// OllamaHost is the base URL of the Ollama API (default: http://localhost:11434).
 	OllamaHost string
+	// AccountClaudeConfigDir is the resolved claude config dir from a registered account.
+	// Used by ProviderAnthropic to locate .credentials.json.
+	AccountClaudeConfigDir string
 }

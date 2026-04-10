@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Project, Session, Message, PendingHook, WSEvent } from '../types'
+import type { Account, Project, Session, Message, PendingHook, WSEvent, UserTool } from '../types'
 import * as api from '../api'
 
 export interface TokenUsage {
@@ -31,6 +31,8 @@ export interface FilePreview {
 }
 
 interface AppState {
+  accounts: Account[]
+  selectedAccountId: string | null
   projects: Project[]
   sessions: Session[]
   activeProjectId: string | null
@@ -53,6 +55,7 @@ interface AppState {
   starredMessages: Record<string, Message[]>
   starredPanelOpen: boolean
   jumpToMessageId: string | null
+  userTools: UserTool[]
 
   openFilePreview: (preview: FilePreview) => void
   closeFilePreview: () => void
@@ -62,6 +65,14 @@ interface AppState {
   closeStarredPanel: () => void
   setJumpToMessage: (id: string | null) => void
   loadMessageContext: (messageId: string, sessionId: string) => Promise<void>
+  loadUserTools: () => Promise<void>
+  createUserTool: (data: Partial<UserTool>) => Promise<UserTool>
+  updateUserTool: (id: string, data: Partial<UserTool>) => Promise<UserTool>
+  deleteUserTool: (id: string) => Promise<void>
+  loadAccounts: () => Promise<void>
+  createAccount: (data: { name: string; claude_config_dir: string }) => Promise<Account>
+  deleteAccount: (id: string) => Promise<void>
+  setSelectedAccount: (id: string | null) => void
   loadProjects: () => Promise<void>
   createProject: (data: Partial<Project>) => Promise<Project>
   deleteProject: (id: string) => Promise<void>
@@ -70,9 +81,9 @@ interface AppState {
   setActiveSession: (id: string) => Promise<void>
   setPendingSession: (projectId: string, model: string) => void
   clearPendingSession: () => void
-  createSession: (pid: string, data: { name?: string; model?: string }) => Promise<Session>
+  createSession: (pid: string, data: { name?: string; model?: string; provider?: string; account_id?: string }) => Promise<Session>
   deleteSession: (id: string) => Promise<void>
-  sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) => void
+  sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null, provider?: string, accountId?: string) => void
   respondHook: (sessId: string, decision: 'approve' | 'deny', reason?: string) => void
   forkSession: (id: string, name: string) => Promise<Session>
   renameSession: (id: string, name: string) => Promise<void>
@@ -218,6 +229,8 @@ function replayStoredMessages(raw: Message[]): Message[] {
 }
 
 export const useStore = create<AppState>((set, get) => ({
+  accounts: [],
+  selectedAccountId: null,
   projects: [],
   sessions: [],
   activeProjectId: null,
@@ -236,12 +249,56 @@ export const useStore = create<AppState>((set, get) => ({
   starredMessages: {},
   starredPanelOpen: false,
   jumpToMessageId: null,
+  userTools: [],
 
   openFilePreview: (preview) => set({ filePreview: preview }),
   closeFilePreview: () => set({ filePreview: null }),
   openStarredPanel: () => set({ starredPanelOpen: true }),
   closeStarredPanel: () => set({ starredPanelOpen: false }),
   setJumpToMessage: (id) => set({ jumpToMessageId: id }),
+
+  loadUserTools: async () => {
+    const tools = await api.listUserTools()
+    set({ userTools: tools })
+  },
+
+  createUserTool: async (data) => {
+    const tool = await api.createUserTool(data)
+    set(s => ({ userTools: [tool, ...s.userTools] }))
+    return tool
+  },
+
+  updateUserTool: async (id, data) => {
+    const tool = await api.updateUserTool(id, data)
+    set(s => ({ userTools: s.userTools.map(t => t.id === id ? tool : t) }))
+    return tool
+  },
+
+  deleteUserTool: async (id) => {
+    await api.deleteUserTool(id)
+    set(s => ({ userTools: s.userTools.filter(t => t.id !== id) }))
+  },
+
+  loadAccounts: async () => {
+    const accounts = await api.listAccounts()
+    set({ accounts })
+  },
+
+  createAccount: async (data) => {
+    const account = await api.createAccount(data)
+    set(s => ({ accounts: [...s.accounts, account] }))
+    return account
+  },
+
+  deleteAccount: async (id) => {
+    await api.deleteAccount(id)
+    set(s => ({
+      accounts: s.accounts.filter(a => a.id !== id),
+      selectedAccountId: s.selectedAccountId === id ? null : s.selectedAccountId,
+    }))
+  },
+
+  setSelectedAccount: (id) => set({ selectedAccountId: id }),
 
   loadProjects: async () => {
     const projects = await api.listProjects()
@@ -328,7 +385,7 @@ export const useStore = create<AppState>((set, get) => ({
     }))
   },
 
-  sendMessage: (id, msg, model, effort, thinking, image) => {
+  sendMessage: (id, msg, model, effort, thinking, image, provider, accountId) => {
     const pending = get().pendingSession
 
     // If sending first message in a pending session: create session first, then send turn
@@ -336,6 +393,8 @@ export const useStore = create<AppState>((set, get) => ({
       api.createSession(pending.projectId, {
         name: toTitle(msg),
         model: model || pending.model,
+        provider: provider || undefined,
+        account_id: accountId || undefined,
       }).then(session => {
         set(s => ({
           sessions: [session, ...s.sessions],
@@ -344,7 +403,7 @@ export const useStore = create<AppState>((set, get) => ({
           pendingSend: { ...s.pendingSend, [session.id]: true },
         }))
         // Send the first message as a normal turn
-        api.sendTurn(session.id, msg, model || pending.model, undefined, effort, thinking, image)
+        api.sendTurn(session.id, msg, model || pending.model, provider || undefined, effort, thinking, image)
           .catch(err => {
             set(s => {
               const next = { ...s.pendingSend }
@@ -359,7 +418,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     // Normal sendTurn for existing sessions — show loader until server echoes user_message
     set(s => ({ pendingSend: { ...s.pendingSend, [id]: true } }))
-    api.sendTurn(id, msg, model, undefined, effort, thinking, image).catch(err => {
+    api.sendTurn(id, msg, model, provider || undefined, effort, thinking, image).catch(err => {
       // On error, clear the pending state
       set(s => {
         const next = { ...s.pendingSend }

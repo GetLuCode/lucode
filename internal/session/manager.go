@@ -133,6 +133,32 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 		return nil
 	}
 
+	if opts.Provider == ProviderAnthropic {
+		history, _ := dbpkg.ListMessages(m.db, opts.SessionID)
+		if len(history) > 0 {
+			history = history[:len(history)-1]
+		}
+		handle, err := startAnthropicRun(ctx, opts, history)
+		if err != nil {
+			cancel()
+			dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusError))
+			m.bus.Broadcast(opts.SessionID, map[string]any{
+				"type":       "error",
+				"session_id": opts.SessionID,
+				"message":    err.Error(),
+			})
+			return err
+		}
+		handle.ps.Cancel = cancel
+
+		m.mu.Lock()
+		m.procs[opts.SessionID] = handle.ps
+		m.mu.Unlock()
+
+		go m.streamAnthropicOutput(handle)
+		return nil
+	}
+
 	// Default: claude CLI
 	opts.ClaudeSettings = m.claudeSettings
 	sr, err := spawnClaude(ctx, opts, m.backendNATSURL)
@@ -190,6 +216,48 @@ func (m *Manager) streamOllamaOutput(handle *ollamaRunHandle) {
 
 	streamOllama(handle, ps.SessionID, emit, persistText, askPermission,
 		handle.workDir, handle.host, handle.model, handle.options, handle.messages)
+
+	dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
+	m.bus.Broadcast(ps.SessionID, map[string]any{
+		"type":       "session_status",
+		"session_id": ps.SessionID,
+		"status":     string(StatusIdle),
+	})
+}
+
+func (m *Manager) streamAnthropicOutput(handle *anthropicRunHandle) {
+	ps := handle.ps
+	defer func() {
+		ps.Cancel()
+		m.mu.Lock()
+		delete(m.procs, ps.SessionID)
+		m.mu.Unlock()
+	}()
+
+	seq, _ := dbpkg.NextMessageSeq(m.db, ps.SessionID)
+
+	emit := func(event any) {
+		if data, err := json.Marshal(event); err == nil {
+			log.Printf("[anthropic→nats] session=%s %s", ps.SessionID[:8], string(data))
+		}
+		m.bus.Broadcast(ps.SessionID, event)
+	}
+
+	persistText := func(text string) {
+		_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
+			ID:        uuid.New().String(),
+			SessionID: ps.SessionID,
+			Role:      "assistant",
+			Content:   text,
+			Seq:       seq,
+		})
+	}
+
+	askPermission := func(toolUseID, toolName string, toolInput json.RawMessage) string {
+		return m.ollamaToolPermissionRequest(ps.SessionID, toolUseID, toolName, toolInput)
+	}
+
+	streamAnthropic(handle, ps.SessionID, emit, persistText, askPermission)
 
 	dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
 	m.bus.Broadcast(ps.SessionID, map[string]any{

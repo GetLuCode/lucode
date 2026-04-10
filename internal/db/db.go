@@ -104,6 +104,20 @@ CREATE TABLE IF NOT EXISTS ideas (
 	// Add starred column to messages (idempotent — ignore error if already exists)
 	db.Exec(`ALTER TABLE messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`)
 
+	// claude_accounts — named CLAUDE_CONFIG_DIR entries for account selection
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS claude_accounts (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    claude_config_dir TEXT NOT NULL,
+    created_at        DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`); err != nil {
+		return fmt.Errorf("create claude_accounts: %w", err)
+	}
+
+	// sessions.account_id — links session to a registered claude account (idempotent)
+	db.Exec(`ALTER TABLE sessions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''`)
+
 	// FTS5 virtual table with trigram tokenizer for substring search.
 	// Drop and recreate to ensure the tokenizer is correct (safe — just a search index).
 	if _, err := db.Exec(`DROP TABLE IF EXISTS messages_fts`); err != nil {
@@ -141,6 +155,21 @@ INSERT INTO messages_fts(message_id, session_id, role, content)
 SELECT id, session_id, role, content FROM messages
 WHERE role IN ('user', 'assistant', 'thinking')`); err != nil {
 		return fmt.Errorf("populate messages_fts table: %w", err)
+	}
+
+	// user_tools — user-defined tools for voice command detection
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS user_tools (
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL UNIQUE,
+    description    TEXT NOT NULL DEFAULT '',
+    input_schema   TEXT NOT NULL DEFAULT '{}',
+    code           TEXT NOT NULL DEFAULT '',
+    execution_env  TEXT NOT NULL DEFAULT 'browser',
+    created_at     DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at     DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`); err != nil {
+		return fmt.Errorf("create user_tools: %w", err)
 	}
 
 	return nil
