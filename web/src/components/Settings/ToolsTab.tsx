@@ -29,7 +29,23 @@ function ToolForm({
   onCancel: () => void
 }) {
   const [form, setForm] = useState<ToolFormData>(initial)
+  const [nameError, setNameError] = useState<string | null>(null)
   const [schemaError, setSchemaError] = useState<string | null>(null)
+
+  const TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,128}$/
+
+  const validateName = (n: string) => {
+    if (!n.trim()) {
+      setNameError('Name is required')
+      return false
+    }
+    if (!TOOL_NAME_RE.test(n)) {
+      setNameError('Only letters, numbers, underscores, and hyphens allowed (no spaces)')
+      return false
+    }
+    setNameError(null)
+    return true
+  }
 
   const validateSchema = (s: string) => {
     try {
@@ -47,7 +63,7 @@ function ToolForm({
   }
 
   const handleSubmit = () => {
-    if (!form.name.trim()) return
+    if (!validateName(form.name)) return
     if (!validateSchema(form.input_schema)) return
     onSave(form)
   }
@@ -55,11 +71,17 @@ function ToolForm({
   return (
     <div className="tool-form">
       <div className="tool-form__field">
-        <label className="tool-form__label">Name</label>
+        <label className="tool-form__label">
+          Name
+          {nameError && <span className="tool-form__error">{nameError}</span>}
+        </label>
         <input
           className="tool-form__input"
           value={form.name}
-          onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+          onChange={e => {
+            setForm(f => ({ ...f, name: e.target.value }))
+            if (nameError) setNameError(null)
+          }}
           placeholder="e.g. ui_accept, quick_note"
         />
       </div>

@@ -107,7 +107,11 @@ function ChatViewFull() {
   const [autoRead, setAutoRead] = useState(() => getVoicePrefs().autoRead)
   const [noEcho, setNoEcho] = useState(() => getVoicePrefs().noEcho)
   const [voiceURI, setVoiceURI] = useState(() => getVoicePrefs().voiceURI)
-  const [hotword, setHotword] = useState(() => getVoicePrefs().hotword)
+  const [hotword, setHotword] = useState(() => {
+    const h = getVoicePrefs().hotword
+    console.log('[cmd] loaded hotword from prefs:', JSON.stringify(h))
+    return h
+  })
   const [interimText, setInterimText] = useState('')
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
   const [commandProcessing, setCommandProcessing] = useState(false)
@@ -430,6 +434,7 @@ function ChatViewFull() {
   }
 
   const handleHotwordChange = (value: string) => {
+    console.log('[cmd] hotword changed to:', JSON.stringify(value))
     setHotword(value)
     saveVoicePrefs({ hotword: value })
   }

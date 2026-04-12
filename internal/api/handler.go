@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,9 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// toolNameRe matches valid Anthropic tool names: ^[a-zA-Z0-9_-]{1,128}$
+var toolNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 type cachedEntry struct {
 	body      json.RawMessage
@@ -1066,6 +1070,10 @@ func (h *Handler) createUserTool(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
+	if !toolNameRe.MatchString(body.Name) {
+		http.Error(w, "name must match ^[a-zA-Z0-9_-]{1,128}$ (no spaces or special characters)", http.StatusBadRequest)
+		return
+	}
 	if body.ExecutionEnv == "" {
 		body.ExecutionEnv = "browser"
 	}
@@ -1132,6 +1140,10 @@ func (h *Handler) updateUserTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.Name != nil {
+		if !toolNameRe.MatchString(*body.Name) {
+			http.Error(w, "name must match ^[a-zA-Z0-9_-]{1,128}$ (no spaces or special characters)", http.StatusBadRequest)
+			return
+		}
 		existing.Name = *body.Name
 	}
 	if body.Description != nil {

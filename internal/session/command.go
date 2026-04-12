@@ -7,10 +7,36 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 
 	dbpkg "claude-orchestrator/internal/db"
 	"claude-orchestrator/internal/toolengine"
 )
+
+// toolNameRe matches valid Anthropic tool names.
+var toolNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
+
+// sanitizeToolName replaces characters that don't match [a-zA-Z0-9_-] with underscores
+// and truncates to 128 characters.
+func sanitizeToolName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	s := b.String()
+	if len(s) > 128 {
+		s = s[:128]
+	}
+	if s == "" {
+		s = "tool"
+	}
+	return s
+}
 
 // CommandDetectResult is returned by DetectCommand.
 type CommandDetectResult struct {
@@ -34,15 +60,25 @@ func (m *Manager) DetectCommand(transcript string, tools []dbpkg.UserTool, claud
 		return nil, fmt.Errorf("token error: %w", err)
 	}
 
-	// Build Anthropic tool definitions from user tools
+	// Build Anthropic tool definitions from user tools.
+	// Tool names must match ^[a-zA-Z0-9_-]{1,128}$ — sanitize any that don't.
+	// Keep a mapping from sanitized name → original tool so we can resolve after the API call.
+	sanitizedToTool := make(map[string]dbpkg.UserTool, len(tools))
 	anthropicToolDefs := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
+		apiName := t.Name
+		if !toolNameRe.MatchString(apiName) {
+			apiName = sanitizeToolName(apiName)
+			log.Printf("[command-detect] sanitized tool name %q → %q", t.Name, apiName)
+		}
+		sanitizedToTool[apiName] = t
+
 		var schema json.RawMessage
 		if err := json.Unmarshal([]byte(t.InputSchema), &schema); err != nil {
 			schema = json.RawMessage(`{"type":"object","properties":{}}`)
 		}
 		anthropicToolDefs = append(anthropicToolDefs, map[string]any{
-			"name":         t.Name,
+			"name":         apiName,
 			"description":  t.Description,
 			"input_schema": schema,
 		})
@@ -133,13 +169,10 @@ Rules:
 				}, nil
 			}
 
-			// Find the tool ID from our database
+			// Resolve tool ID via sanitized-name map
 			var toolID string
-			for _, t := range tools {
-				if t.Name == block.Name {
-					toolID = t.ID
-					break
-				}
+			if t, ok := sanitizedToTool[block.Name]; ok {
+				toolID = t.ID
 			}
 
 			log.Printf("[command-detect] matched tool=%s args=%s", block.Name, string(block.Input))

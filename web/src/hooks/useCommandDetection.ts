@@ -45,13 +45,27 @@ export function useCommandDetection({
   const processingRef = useRef(false)
 
   const processTranscript = useCallback(async (transcript: string) => {
+    console.log('[cmd] transcript received:', JSON.stringify(transcript))
+
     if (processingRef.current) {
+      console.log('[cmd] already processing — passthrough')
       onPassthrough(transcript)
       return
     }
 
     // No hotword configured or no tools → passthrough
-    if (!hotword || tools.length === 0 || !accountId) {
+    if (!hotword) {
+      console.log('[cmd] no hotword configured — passthrough')
+      onPassthrough(transcript)
+      return
+    }
+    if (tools.length === 0) {
+      console.log('[cmd] no tools defined — passthrough')
+      onPassthrough(transcript)
+      return
+    }
+    if (!accountId) {
+      console.log('[cmd] no accountId — passthrough')
       onPassthrough(transcript)
       return
     }
@@ -59,16 +73,23 @@ export function useCommandDetection({
     // Check for hotword (case-insensitive)
     const normalized = transcript.trim().toLowerCase()
     const hotwordLower = hotword.trim().toLowerCase()
+    const hotwordIndex = normalized.indexOf(hotwordLower)
 
-    if (!normalized.startsWith(hotwordLower)) {
-      // No hotword detected → passthrough to input
+    console.log('[cmd] hotword check — transcript:', JSON.stringify(normalized), '| hotword:', JSON.stringify(hotwordLower), '| index:', hotwordIndex)
+
+    if (hotwordIndex === -1) {
+      console.log('[cmd] no hotword match — passthrough')
       onPassthrough(transcript)
       return
     }
 
-    // Extract command text after hotword
-    const commandText = transcript.trim().slice(hotword.trim().length).trim()
+    // Extract command text after hotword (wherever it appeared)
+    const afterHotword = transcript.slice(hotwordIndex + hotword.trim().length).trim()
+    const commandText = afterHotword
+    console.log('[cmd] hotword matched! command text:', JSON.stringify(commandText))
+
     if (!commandText) {
+      console.log('[cmd] empty command after hotword — passthrough')
       onPassthrough(transcript)
       return
     }
@@ -78,26 +99,32 @@ export function useCommandDetection({
     onCommandStart()
 
     try {
-      // Send to LLM for classification
+      console.log('[cmd] sending to LLM — accountId:', accountId, '| tools:', tools.map(t => t.name))
       const result = await detectCommand(commandText, accountId)
+      console.log('[cmd] LLM result:', result)
 
       if (!result.tool_call) {
-        // No tool matched — pass through the original text
+        console.log('[cmd] no tool matched — passthrough original transcript')
         onPassthrough(transcript)
         processingRef.current = false
         return
       }
 
+      console.log('[cmd] tool matched:', result.tool_call.tool_name, '| args:', result.tool_call.arguments)
+
       // Find the tool definition
       const tool = tools.find(t => t.name === result.tool_call!.tool_name)
       if (!tool) {
+        console.warn('[cmd] tool not found in registry:', result.tool_call.tool_name)
         onCommandError(`Tool "${result.tool_call.tool_name}" not found`)
         processingRef.current = false
         return
       }
 
       // Execute the tool
+      console.log('[cmd] executing tool:', tool.name, '| env:', tool.execution_env)
       const execResult = await executeTool(tool, result.tool_call.arguments)
+      console.log('[cmd] execution result:', execResult)
 
       onCommandResult({
         toolName: result.tool_call.tool_name,
@@ -108,6 +135,7 @@ export function useCommandDetection({
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      console.error('[cmd] error:', message)
       onCommandError(message)
     } finally {
       processingRef.current = false
