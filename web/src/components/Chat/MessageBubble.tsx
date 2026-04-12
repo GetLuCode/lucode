@@ -5,6 +5,7 @@ import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFille
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
+import { ToolExecutionMessage } from './ToolExecutionMessage'
 import type { Message } from '../../types'
 
 marked.use({ gfm: true, breaks: false })
@@ -139,6 +140,9 @@ function BubbleContent({ message, sendHookRespond }: { message: Message; sendHoo
         />
       )
     }
+
+    case 'tool_execution':
+      return <ToolExecutionMessage content={message.content} />
 
     default:
       return <pre className="msg__code">{message.content}</pre>

@@ -39,9 +39,21 @@ type Handler struct {
 	workingDir string
 	ollamaHost string
 
-	cacheMu      sync.Mutex
-	profileCache map[string]cachedEntry // account id → profile (24h TTL)
-	usageCache   map[string]cachedEntry // account id → usage (5min TTL)
+	cacheMu       sync.Mutex
+	profileCache  map[string]cachedEntry // account id → profile (24h TTL)
+	usageCache    map[string]cachedEntry // account id → usage (5min TTL)
+	toolExecMu    sync.RWMutex
+	toolExecMap   map[string]map[string]*toolExecution // sessID → tool_use_id → execution
+}
+
+// toolExecution tracks a tool execution from PreToolUse to PostToolUse
+type toolExecution struct {
+	ToolName     string
+	ToolInput    json.RawMessage
+	ToolResponse json.RawMessage
+	ToolUseID    string
+	MessageID    string
+	Timestamp    time.Time
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
@@ -53,6 +65,7 @@ func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir s
 		ollamaHost:   "http://localhost:11434",
 		profileCache: make(map[string]cachedEntry),
 		usageCache:   make(map[string]cachedEntry),
+		toolExecMap:  make(map[string]map[string]*toolExecution),
 	}
 }
 
@@ -1266,7 +1279,7 @@ func (h *Handler) executeUserTool(w http.ResponseWriter, r *http.Request) {
 // ---- HTTP Hook Endpoint ----
 
 // hookEvent receives all hook events from Claude Code CLI via HTTP hook mode.
-// It logs the event to the session chat and returns an approval response.
+// Combines PreToolUse and PostToolUse into a single tool execution message.
 //
 // Route: POST /api/hooks/{event}
 func (h *Handler) hookEvent(w http.ResponseWriter, r *http.Request) {
@@ -1292,33 +1305,12 @@ func (h *Handler) hookEvent(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[hook-http] event=%s sess=%s tool=%s id=%s", eventName, sessID, toolName, toolUseID)
 
-	// Persist event to chat and broadcast to connected clients.
-	if sessID != "" {
-		content, _ := json.Marshal(map[string]any{
-			"hook_event_name": eventName,
-			"tool_name":       toolName,
-			"tool_use_id":     toolUseID,
-			"payload":         payload,
-			"timestamp":       time.Now().UTC().Format(time.RFC3339),
-		})
-		seq, _ := dbpkg.NextMessageSeq(h.db, sessID)
-		_ = dbpkg.InsertMessage(h.db, dbpkg.Message{
-			ID:        uuid.New().String(),
-			SessionID: sessID,
-			Role:      "hook_event",
-			Content:   string(content),
-			Seq:       seq,
-		})
-
-		h.bus.Broadcast(sessID, map[string]any{
-			"type":            "hook_event",
-			"session_id":      sessID,
-			"hook_event_name": eventName,
-			"tool_name":       toolName,
-			"tool_use_id":     toolUseID,
-			"payload":         payload,
-			"timestamp":       time.Now().UTC().Format(time.RFC3339),
-		})
+	// Only process PreToolUse and PostToolUse for tool execution tracking
+	// Skip other hook events
+	if eventName == "PreToolUse" && sessID != "" && toolUseID != "" {
+		h.handlePreToolUse(sessID, toolUseID, toolName, payload)
+	} else if eventName == "PostToolUse" && sessID != "" && toolUseID != "" {
+		h.handlePostToolUse(sessID, toolUseID, payload)
 	}
 
 	// Return an approval response for all event types.
@@ -1327,7 +1319,7 @@ func (h *Handler) hookEvent(w http.ResponseWriter, r *http.Request) {
 	if eventName == "PreToolUse" {
 		resp = map[string]any{
 			"hookSpecificOutput": map[string]any{
-				"hookEventName":    "PreToolUse",
+				"hookEventName":      "PreToolUse",
 				"permissionDecision": "allow",
 			},
 			"continue": true,
@@ -1337,6 +1329,103 @@ func (h *Handler) hookEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResp(w, http.StatusOK, resp)
+}
+
+func (h *Handler) handlePreToolUse(sessID, toolUseID, toolName string, payload map[string]json.RawMessage) {
+	h.toolExecMu.Lock()
+	defer h.toolExecMu.Unlock()
+
+	if h.toolExecMap[sessID] == nil {
+		h.toolExecMap[sessID] = make(map[string]*toolExecution)
+	}
+
+	msgID := uuid.New().String()
+	toolInput := payload["tool_input"]
+	if toolInput == nil {
+		toolInput = json.RawMessage("{}")
+	}
+
+	h.toolExecMap[sessID][toolUseID] = &toolExecution{
+		ToolName:  toolName,
+		ToolInput: toolInput,
+		ToolUseID: toolUseID,
+		MessageID: msgID,
+		Timestamp: time.Now().UTC(),
+	}
+
+	// Create initial message with tool in progress
+	content, _ := json.Marshal(map[string]any{
+		"tool_name":     toolName,
+		"tool_input":    json.RawMessage(toolInput),
+		"tool_use_id":   toolUseID,
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+	})
+	seq, _ := dbpkg.NextMessageSeq(h.db, sessID)
+	_ = dbpkg.InsertMessage(h.db, dbpkg.Message{
+		ID:        msgID,
+		SessionID: sessID,
+		Role:      "tool_execution",
+		Content:   string(content),
+		Seq:       seq,
+	})
+
+	h.bus.Broadcast(sessID, map[string]any{
+		"type":          "tool_execution",
+		"session_id":    sessID,
+		"tool_name":     toolName,
+		"tool_use_id":   toolUseID,
+		"tool_input":    json.RawMessage(toolInput),
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+		"message_id":    msgID,
+	})
+}
+
+func (h *Handler) handlePostToolUse(sessID, toolUseID string, payload map[string]json.RawMessage) {
+	h.toolExecMu.Lock()
+	defer h.toolExecMu.Unlock()
+
+	if h.toolExecMap[sessID] == nil {
+		return
+	}
+
+	exec, ok := h.toolExecMap[sessID][toolUseID]
+	if !ok {
+		return
+	}
+
+	toolResponse := payload["tool_response"]
+	if toolResponse == nil {
+		toolResponse = json.RawMessage("{}")
+	}
+	exec.ToolResponse = toolResponse
+
+	// Update message with tool response
+	content, _ := json.Marshal(map[string]any{
+		"tool_name":     exec.ToolName,
+		"tool_input":    exec.ToolInput,
+		"tool_response": json.RawMessage(toolResponse),
+		"tool_use_id":   toolUseID,
+		"timestamp":     exec.Timestamp.Format(time.RFC3339),
+	})
+	_ = dbpkg.UpdateMessageContent(h.db, exec.MessageID, string(content))
+
+	h.bus.Broadcast(sessID, map[string]any{
+		"type":           "tool_execution_complete",
+		"session_id":     sessID,
+		"tool_use_id":    toolUseID,
+		"tool_response":  json.RawMessage(toolResponse),
+		"message_id":     exec.MessageID,
+	})
+
+	// Clean up after 5 minutes
+	go func() {
+		time.Sleep(5 * time.Minute)
+		h.toolExecMu.Lock()
+		defer h.toolExecMu.Unlock()
+		if h.toolExecMap[sessID] != nil {
+			delete(h.toolExecMap[sessID], toolUseID)
+		}
+	}()
 }
 
 func hookPayloadStr(raw json.RawMessage) string {

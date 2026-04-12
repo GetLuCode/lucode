@@ -23,7 +23,10 @@ export function useSessionWS(sessionId: string | null) {
         const event = raw as unknown as WSEvent
         console.log(`[ws] event type=${event.type} sess=${sessionId}`)
         handleWSEventRef.current(event)
-        increaseSessionMessageCount(sessionId)
+        // Only increment message count for actual message events, not notifications
+        if (event.type === 'user_message' || event.type === 'stream_event' || event.type === 'tool_execution') {
+          increaseSessionMessageCount(sessionId)
+        }
       } catch (err) {
         console.error('[ws] parse error:', err, 'raw:', e.data)
       }

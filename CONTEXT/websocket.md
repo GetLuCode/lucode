@@ -94,19 +94,31 @@ Inner `stream_event` contains Anthropic streaming events:
 - `message_delta` — output token count
 - `message_stop` — end of assistant message
 
-### `hook_event`
+### `tool_execution`
 ```json
 {
-  "type": "hook_event",
+  "type": "tool_execution",
   "session_id": "...",
-  "hook_event_name": "PreToolUse|PostToolUse|SessionStart|SessionEnd|UserPromptSubmit|Stop|SubagentStop",
   "tool_name": "Bash",
   "tool_use_id": "toolu_...",
-  "payload": { ...full hook payload... },
-  "timestamp": "2026-04-12T..."
+  "tool_input": { "command": "..." },
+  "timestamp": "2026-04-12T...",
+  "message_id": "..."
 }
 ```
-Notification event received via HTTP hook mode. Logged to DB as `role=hook_event` and broadcast to clients. Always auto-approved (no user action needed).
+Tool is starting execution. Shows in chat with loading indicator (spinning hourglass). Role in DB is `tool_execution`.
+
+### `tool_execution_complete`
+```json
+{
+  "type": "tool_execution_complete",
+  "session_id": "...",
+  "tool_use_id": "toolu_...",
+  "tool_response": { "stdout": "...", "stderr": "...", "exit_code": 0 },
+  "message_id": "..."
+}
+```
+Tool execution completed. Updates the existing `tool_execution` message with the response (result, diff for Edit, etc.).
 
 ### `hook_pending`
 ```json

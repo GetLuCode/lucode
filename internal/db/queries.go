@@ -188,6 +188,14 @@ func InsertMessage(db *sql.DB, m Message) error {
 	return err
 }
 
+func UpdateMessageContent(db *sql.DB, messageID, content string) error {
+	_, err := db.Exec(
+		`UPDATE messages SET content=? WHERE id=?`,
+		content, messageID,
+	)
+	return err
+}
+
 func GetMessage(db *sql.DB, messageID string) (Message, error) {
 	var m Message
 	var createdAt string
@@ -469,19 +477,22 @@ type ClaudeAccount struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
 	ClaudeConfigDir string    `json:"claude_config_dir"`
+	AccessToken     string    `json:"access_token,omitempty"`
+	RefreshToken    string    `json:"refresh_token,omitempty"`
+	ExpiresAt       int64     `json:"expires_at,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
 func InsertClaudeAccount(db *sql.DB, a ClaudeAccount) error {
 	_, err := db.Exec(
-		`INSERT INTO claude_accounts (id, name, claude_config_dir) VALUES (?,?,?)`,
-		a.ID, a.Name, a.ClaudeConfigDir,
+		`INSERT INTO claude_accounts (id, name, claude_config_dir, access_token, refresh_token, expires_at) VALUES (?,?,?,?,?,?)`,
+		a.ID, a.Name, a.ClaudeConfigDir, a.AccessToken, a.RefreshToken, a.ExpiresAt,
 	)
 	return err
 }
 
 func ListClaudeAccounts(db *sql.DB) ([]ClaudeAccount, error) {
-	rows, err := db.Query(`SELECT id, name, claude_config_dir, created_at FROM claude_accounts ORDER BY created_at DESC`)
+	rows, err := db.Query(`SELECT id, name, claude_config_dir, access_token, refresh_token, expires_at, created_at FROM claude_accounts ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -490,7 +501,7 @@ func ListClaudeAccounts(db *sql.DB) ([]ClaudeAccount, error) {
 	for rows.Next() {
 		var a ClaudeAccount
 		var createdAt string
-		if err := rows.Scan(&a.ID, &a.Name, &a.ClaudeConfigDir, &createdAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.ClaudeConfigDir, &a.AccessToken, &a.RefreshToken, &a.ExpiresAt, &createdAt); err != nil {
 			return nil, err
 		}
 		a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
@@ -503,8 +514,8 @@ func GetClaudeAccount(db *sql.DB, id string) (ClaudeAccount, error) {
 	var a ClaudeAccount
 	var createdAt string
 	err := db.QueryRow(
-		`SELECT id, name, claude_config_dir, created_at FROM claude_accounts WHERE id=?`, id,
-	).Scan(&a.ID, &a.Name, &a.ClaudeConfigDir, &createdAt)
+		`SELECT id, name, claude_config_dir, access_token, refresh_token, expires_at, created_at FROM claude_accounts WHERE id=?`, id,
+	).Scan(&a.ID, &a.Name, &a.ClaudeConfigDir, &a.AccessToken, &a.RefreshToken, &a.ExpiresAt, &createdAt)
 	if err != nil {
 		return a, err
 	}
@@ -514,6 +525,15 @@ func GetClaudeAccount(db *sql.DB, id string) (ClaudeAccount, error) {
 
 func DeleteClaudeAccount(db *sql.DB, id string) error {
 	_, err := db.Exec(`DELETE FROM claude_accounts WHERE id=?`, id)
+	return err
+}
+
+// UpdateClaudeAccountCredentials updates the stored OAuth tokens for an account.
+func UpdateClaudeAccountCredentials(db *sql.DB, id, accessToken, refreshToken string, expiresAt int64) error {
+	_, err := db.Exec(
+		`UPDATE claude_accounts SET access_token=?, refresh_token=?, expires_at=? WHERE id=?`,
+		accessToken, refreshToken, expiresAt, id,
+	)
 	return err
 }
 
@@ -541,6 +561,150 @@ func ReadCredentials(claudeConfigDir string) (sub, access, refresh string, expir
 	refresh = creds.ClaudeAiOauth.RefreshToken
 	expiresAt = creds.ClaudeAiOauth.ExpiresAt
 	return
+}
+
+// ---- User ----
+
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func InsertUser(db *sql.DB, u User) error {
+	_, err := db.Exec(
+		`INSERT INTO users (id, username, password_hash) VALUES (?,?,?)`,
+		u.ID, u.Username, u.PasswordHash,
+	)
+	return err
+}
+
+func GetUserByUsername(db *sql.DB, username string) (User, error) {
+	var u User
+	var createdAt string
+	err := db.QueryRow(
+		`SELECT id, username, password_hash, created_at FROM users WHERE username=?`, username,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &createdAt)
+	if err != nil {
+		return u, err
+	}
+	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	return u, nil
+}
+
+func GetUserByID(db *sql.DB, id string) (User, error) {
+	var u User
+	var createdAt string
+	err := db.QueryRow(
+		`SELECT id, username, password_hash, created_at FROM users WHERE id=?`, id,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &createdAt)
+	if err != nil {
+		return u, err
+	}
+	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	return u, nil
+}
+
+func CountUsers(db *sql.DB) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, err
+}
+
+// ---- AuthSession ----
+
+type AuthSession struct {
+	Token     string    `json:"token"`
+	UserID    string    `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func InsertAuthSession(db *sql.DB, s AuthSession) error {
+	_, err := db.Exec(
+		`INSERT INTO sessions_auth (token, user_id, expires_at) VALUES (?,?,?)`,
+		s.Token, s.UserID, s.ExpiresAt.UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+func GetAuthSession(db *sql.DB, token string) (AuthSession, error) {
+	var s AuthSession
+	var createdAt, expiresAt string
+	err := db.QueryRow(
+		`SELECT token, user_id, created_at, expires_at FROM sessions_auth WHERE token=?`, token,
+	).Scan(&s.Token, &s.UserID, &createdAt, &expiresAt)
+	if err != nil {
+		return s, err
+	}
+	s.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	s.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt)
+	return s, nil
+}
+
+func DeleteAuthSession(db *sql.DB, token string) error {
+	_, err := db.Exec(`DELETE FROM sessions_auth WHERE token=?`, token)
+	return err
+}
+
+// ---- APIKey ----
+
+type APIKey struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Name      string    `json:"name"`
+	KeyHash   string    `json:"-"`
+	Prefix    string    `json:"prefix"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func InsertAPIKey(db *sql.DB, k APIKey) error {
+	_, err := db.Exec(
+		`INSERT INTO api_keys (id, user_id, name, key_hash, prefix) VALUES (?,?,?,?,?)`,
+		k.ID, k.UserID, k.Name, k.KeyHash, k.Prefix,
+	)
+	return err
+}
+
+func ListAPIKeys(db *sql.DB, userID string) ([]APIKey, error) {
+	rows, err := db.Query(
+		`SELECT id, user_id, name, prefix, created_at FROM api_keys WHERE user_id=? ORDER BY created_at DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []APIKey
+	for rows.Next() {
+		var k APIKey
+		var createdAt string
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.Prefix, &createdAt); err != nil {
+			return nil, err
+		}
+		k.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func GetAPIKeyByHash(db *sql.DB, keyHash string) (APIKey, error) {
+	var k APIKey
+	var createdAt string
+	err := db.QueryRow(
+		`SELECT id, user_id, name, key_hash, prefix, created_at FROM api_keys WHERE key_hash=?`, keyHash,
+	).Scan(&k.ID, &k.UserID, &k.Name, &k.KeyHash, &k.Prefix, &createdAt)
+	if err != nil {
+		return k, err
+	}
+	k.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	return k, nil
+}
+
+func DeleteAPIKey(db *sql.DB, id, userID string) error {
+	_, err := db.Exec(`DELETE FROM api_keys WHERE id=? AND user_id=?`, id, userID)
+	return err
 }
 
 // ---- helpers ----

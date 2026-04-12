@@ -833,6 +833,59 @@ export const useStore = create<AppState>((set, get) => ({
         }))
         break
 
+      case 'tool_execution': {
+        // Tool execution started — add to messages with loading state
+        const sessId = event.session_id
+        set(s => {
+          const toolExecMsg: Message = {
+            id: event.message_id,
+            session_id: sessId,
+            role: 'tool_execution',
+            content: JSON.stringify({
+              tool_name: event.tool_name,
+              tool_input: event.tool_input,
+              tool_use_id: event.tool_use_id,
+              timestamp: event.timestamp,
+            }),
+            seq: (s.messages[sessId]?.length ?? 0),
+            created_at: event.timestamp,
+          }
+          return {
+            messages: {
+              ...s.messages,
+              [sessId]: [...(s.messages[sessId] ?? []), toolExecMsg],
+            },
+          }
+        })
+        break
+      }
+
+      case 'tool_execution_complete': {
+        // Tool execution completed — update the message with response
+        const sessId = event.session_id
+        const msgId = event.message_id
+        set(s => {
+          const msgs = s.messages[sessId] ?? []
+          const updated = msgs.map(m => {
+            if (m.id === msgId) {
+              const oldContent = JSON.parse(m.content) as Record<string, unknown>
+              return {
+                ...m,
+                content: JSON.stringify({
+                  ...oldContent,
+                  tool_response: event.tool_response,
+                }),
+              }
+            }
+            return m
+          })
+          return {
+            messages: { ...s.messages, [sessId]: updated },
+          }
+        })
+        break
+      }
+
       case 'info':
         // Non-fatal informational message — add to chat, don't change session status
         set(s => ({

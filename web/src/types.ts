@@ -37,7 +37,7 @@ export interface MessageUsage {
 export interface Message {
   id: string
   session_id: string
-  role: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'thinking' | 'raw' | 'hook'
+  role: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'thinking' | 'raw' | 'hook' | 'tool_execution'
   content: string
   seq: number
   created_at: string
@@ -74,6 +74,8 @@ export type WSEvent =
   | { type: 'session_status'; session_id: string; status: string }
   | { type: 'stream_event'; session_id: string; event: unknown; partial?: boolean }
   | { type: 'user_message'; session_id: string; id: string; content: string; seq: number; created_at: string }
+  | { type: 'tool_execution'; session_id: string; tool_name: string; tool_use_id: string; tool_input: unknown; timestamp: string; message_id: string }
+  | { type: 'tool_execution_complete'; session_id: string; tool_use_id: string; tool_response: unknown; message_id: string }
   | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown; created_at: string }
   | { type: 'hook_resolved'; session_id: string; tool_use_id: string; decision: string }
   | { type: 'turn_complete'; session_id: string; result_subtype: string; result_text: string }
