@@ -107,6 +107,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tools/{id}/execute", h.executeUserTool)
 	mux.HandleFunc("POST /api/command-detect", h.detectCommand)
 
+	// HTTP hook endpoint — receives all hook events from Claude Code CLI.
+	mux.HandleFunc("POST /api/hooks/{event}", h.hookEvent)
+
 	mux.HandleFunc("GET /", h.globalWS)
 }
 
@@ -1258,4 +1261,91 @@ func (h *Handler) executeUserTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, map[string]any{"success": true, "result": result})
+}
+
+// ---- HTTP Hook Endpoint ----
+
+// hookEvent receives all hook events from Claude Code CLI via HTTP hook mode.
+// It logs the event to the session chat and returns an approval response.
+//
+// Route: POST /api/hooks/{event}
+func (h *Handler) hookEvent(w http.ResponseWriter, r *http.Request) {
+	eventName := r.PathValue("event")
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		log.Printf("[hook-http] read body error: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("[hook-http] parse error event=%s: %v", eventName, err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	sessID := hookPayloadStr(payload["session_id"])
+	toolName := hookPayloadStr(payload["tool_name"])
+	toolUseID := hookPayloadStr(payload["tool_use_id"])
+
+	log.Printf("[hook-http] event=%s sess=%s tool=%s id=%s", eventName, sessID, toolName, toolUseID)
+
+	// Persist event to chat and broadcast to connected clients.
+	if sessID != "" {
+		content, _ := json.Marshal(map[string]any{
+			"hook_event_name": eventName,
+			"tool_name":       toolName,
+			"tool_use_id":     toolUseID,
+			"payload":         payload,
+			"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		})
+		seq, _ := dbpkg.NextMessageSeq(h.db, sessID)
+		_ = dbpkg.InsertMessage(h.db, dbpkg.Message{
+			ID:        uuid.New().String(),
+			SessionID: sessID,
+			Role:      "hook_event",
+			Content:   string(content),
+			Seq:       seq,
+		})
+
+		h.bus.Broadcast(sessID, map[string]any{
+			"type":            "hook_event",
+			"session_id":      sessID,
+			"hook_event_name": eventName,
+			"tool_name":       toolName,
+			"tool_use_id":     toolUseID,
+			"payload":         payload,
+			"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+
+	// Return an approval response for all event types.
+	// PreToolUse needs a permissionDecision; others just need continue:true.
+	var resp map[string]any
+	if eventName == "PreToolUse" {
+		resp = map[string]any{
+			"hookSpecificOutput": map[string]any{
+				"hookEventName":    "PreToolUse",
+				"permissionDecision": "allow",
+			},
+			"continue": true,
+		}
+	} else {
+		resp = map[string]any{"continue": true}
+	}
+
+	jsonResp(w, http.StatusOK, resp)
+}
+
+func hookPayloadStr(raw json.RawMessage) string {
+	if raw == nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
 }

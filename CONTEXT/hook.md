@@ -2,7 +2,9 @@
 
 ## Overview
 
-**lucodehook** es un binario Go compilado que Claude Code invoca sincronizamente en cada evento `PreToolUse`. Actúa como puente entre el CLI de claude y el backend del orchestrator: se conecta via NATS pub/sub, envía la información de la herramienta, espera la decisión de aprobación/denegación del usuario, y sale con 0 (permitir) o 2 (denegar). Claude bloquea hasta que el hook sale.
+**lucodehook** es un binario Go compilado que Claude Code invoca sincronizamente para eventos `PermissionRequest`. Actúa como puente entre el CLI de claude y el backend del orchestrator: se conecta via NATS pub/sub, envía la información de la herramienta, espera la decisión de aprobación/denegación del usuario, y sale con 0 (permitir) o 2 (denegar). Claude bloquea hasta que el hook sale.
+
+Todos los demás hooks (`PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop`, `SubagentStop`) se envían via **HTTP hook mode** al endpoint `POST /api/hooks/{event}` del backend de lucode.
 
 ## Architecture
 
@@ -54,15 +56,23 @@ El binario `lucodehook` se genera y **embebe** en el ejecutable `lucode` en tiem
    ```json
    {
      "hooks": {
-       "PreToolUse": [
+       "PermissionRequest": [
          {
            "matcher": "",
-           "hooks": [{
-             "type": "command",
-             "command": "/home/homebox/.lucode/lucodehook"
-           }]
+           "hooks": [{"type": "command", "command": "/home/homebox/.lucode/lucodehook"}]
          }
-       ]
+       ],
+       "PreToolUse": [
+         {"matcher": "", "hooks": [{"type": "http", "url": "http://localhost:8090/api/hooks/PreToolUse"}]}
+       ],
+       "PostToolUse": [
+         {"matcher": "", "hooks": [{"type": "http", "url": "http://localhost:8090/api/hooks/PostToolUse"}]}
+       ],
+       "SessionStart": [...],
+       "SessionEnd": [...],
+       "UserPromptSubmit": [...],
+       "Stop": [...],
+       "SubagentStop": [...]
      }
    }
    ```
@@ -78,30 +88,50 @@ Inyectadas por `session.Manager` (ver `process.go`) cuando crea el proceso Claud
 
 ## Stdin Format
 
-Claude pasa esta información JSON en el stdin del hook:
+Claude pasa esta información JSON en el stdin del hook (para `PermissionRequest`):
 ```json
 {
   "session_id": "...",
   "transcript_path": "/path/to/transcript.jsonl",
   "cwd": "/path/to/working/dir",
   "permission_mode": "default",
-  "hook_event_name": "PreToolUse",
+  "hook_event_name": "PermissionRequest",
   "tool_name": "Bash",
-  "tool_input": { "command": "ls -la", "description": "List files" },
-  "tool_use_id": "toolu_01Q5iS3HFyLyqPhMxA985Squ"
+  "tool_input": { "command": "rm -rf /", "description": "Remove files" },
+  "tool_use_id": "toolu_01Q5iS3HFyLyqPhMxA985Squ",
+  "permission_suggestions": [...]
 }
 ```
 
-Campos extraídos: `tool_name`, `tool_use_id`, `tool_input`.
+Campos extraídos: `hook_event_name`, `tool_name`, `tool_use_id`, `tool_input`.
 
-## Approval Flow (NATS-based)
+El hook binario solo procesa `hook_event_name == "PermissionRequest"`. Para cualquier otro evento, sale con 0 inmediatamente (passthrough). Los otros eventos llegan al backend directamente via HTTP.
+
+## HTTP Hook Events (all events except PermissionRequest)
 
 ```
-Claude PreToolUse
+Claude CLI (PreToolUse / PostToolUse / SessionStart / etc.)
+  │
+  └─ POST http://localhost:8090/api/hooks/{eventName}
+       │  Body: full hook payload JSON
+       │
+       │  Backend (hookEvent handler):
+       │    - persists event as "hook_event" role message in DB
+       │    - broadcasts hook_event to browser WS clients
+       │    - returns { "continue": true } (or with permissionDecision for PreToolUse)
+       │
+       └─ Response: 200 OK { "continue": true }
+```
+
+## Approval Flow (NATS-based, PermissionRequest only)
+
+```
+Claude PermissionRequest
   │
   └─ runs lucodehook
        │
-       ├─ read stdin (tool info)
+       ├─ read stdin (hook_event_name, tool info)
+       ├─ verify hook_event_name == "PermissionRequest"
        ├─ connect NATS (TCP o WS)
        ├─ subscribe to: hooks.{sessionID}.response.{toolUseID}
        ├─ publish hook_request to: hooks.{sessionID}.request
@@ -112,7 +142,6 @@ Claude PreToolUse
        │    - broadcasts hook_pending to browser (WS)
        │
        ├─ hook waits for hook_response (4 min timeout)
-       │  (otros mensajes ignorados durante espera)
        │
        │  User clicks Approve/Deny en browser:
        │    - browser envía hook_respond { tool_use_id, decision }
@@ -120,8 +149,8 @@ Claude PreToolUse
        │
        ├─ hook recibe hook_response { decision }
        │
-       ├─ decision == "deny" → exit 2
-       └─ decision == "approve" → exit 0
+       ├─ decision == "deny" → exit 2 (stderr → Claude error)
+       └─ decision == "approve" → stdout JSON approval response → exit 0
 ```
 
 ## Concurrent Tool Calls

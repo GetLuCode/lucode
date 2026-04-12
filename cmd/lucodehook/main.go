@@ -26,11 +26,26 @@ func initLogger() *os.File {
 	return f
 }
 
-func allow(reason string) {
+// allow exits 0 and optionally writes a JSON approval response to stdout.
+func allow(reason string, writeJSON bool) {
 	logger.Printf("EXIT allow — %s", reason)
+	if writeJSON {
+		// PermissionRequest approval response
+		resp := map[string]any{
+			"hookSpecificOutput": map[string]any{
+				"hookEventName": "PermissionRequest",
+				"decision": map[string]any{
+					"behavior": "allow",
+				},
+			},
+			"continue": true,
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(resp)
+	}
 	os.Exit(0)
 }
 
+// deny exits 2 (blocking error). stderr is fed to Claude as the error message.
 func deny(reason string) {
 	logger.Printf("EXIT deny — %s", reason)
 	fmt.Fprintln(os.Stderr, reason)
@@ -55,28 +70,35 @@ func main() {
 	logger.Printf("LUCODE_NATS_URL=%q", natsURL)
 
 	if sessionID == "" {
-		allow("no LUCODE_SESSION_ID — not running under lucode")
+		allow("no LUCODE_SESSION_ID — not running under lucode", false)
 	}
 
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		allow(fmt.Sprintf("stdin read error: %v", err))
+		allow(fmt.Sprintf("stdin read error: %v", err), false)
 	}
 	if len(input) == 0 {
-		allow("empty stdin")
+		allow("empty stdin", false)
 	}
 	logger.Printf("stdin: %s", string(input))
 
 	var hookEvent map[string]json.RawMessage
 	if err := json.Unmarshal(input, &hookEvent); err != nil {
-		allow(fmt.Sprintf("json parse error: %v", err))
+		allow(fmt.Sprintf("json parse error: %v", err), false)
 	}
 
+	hookEventName := jsonStr(hookEvent["hook_event_name"])
 	toolName := jsonStr(hookEvent["tool_name"])
 	toolUseID := jsonStr(hookEvent["tool_use_id"])
-	logger.Printf("tool_name=%q tool_use_id=%q", toolName, toolUseID)
+	logger.Printf("hook_event_name=%q tool_name=%q tool_use_id=%q", hookEventName, toolName, toolUseID)
+
+	// Only handle PermissionRequest events. All other events are handled via HTTP hooks.
+	if hookEventName != "PermissionRequest" {
+		allow(fmt.Sprintf("not a PermissionRequest event (got %q) — passthrough", hookEventName), false)
+	}
+
 	if toolName == "" {
-		allow("no tool_name in event")
+		allow("no tool_name in PermissionRequest event", true)
 	}
 
 	logger.Printf("connecting to NATS %s", natsURL)
@@ -86,7 +108,8 @@ func main() {
 	)
 	if err != nil {
 		logger.Printf("nats connect error: %v", err)
-		allow("backend not reachable")
+		// Cannot reach backend — allow by default so Claude isn't blocked.
+		allow("backend not reachable", true)
 	}
 	defer nc.Close()
 	logger.Printf("nats connected")
@@ -97,27 +120,28 @@ func main() {
 	sub, err := nc.SubscribeSync(responseSubj)
 	if err != nil {
 		logger.Printf("subscribe error: %v", err)
-		allow("subscribe error")
+		allow("subscribe error", true)
 	}
 	defer sub.Unsubscribe()
 
-	// Publish hook_request
+	// Publish hook_request so the backend can show the approval UI.
 	req := map[string]any{
-		"type":        "hook_request",
-		"session_id":  sessionID,
-		"tool_use_id": toolUseID,
-		"tool_name":   toolName,
-		"tool_input":  hookEvent["tool_input"],
+		"type":             "hook_request",
+		"session_id":       sessionID,
+		"tool_use_id":      toolUseID,
+		"tool_name":        toolName,
+		"tool_input":       hookEvent["tool_input"],
+		"hook_event_name":  hookEventName,
 	}
 	data, _ := json.Marshal(req)
 	requestSubj := fmt.Sprintf("hooks.%s.request", sessionID)
 	if err := nc.Publish(requestSubj, data); err != nil {
 		logger.Printf("publish hook_request error: %v", err)
-		allow("publish error")
+		allow("publish error", true)
 	}
 	if err := nc.Flush(); err != nil {
 		logger.Printf("flush error: %v", err)
-		allow("flush error")
+		allow("flush error", true)
 	}
 	logger.Printf("hook_request published to %s, waiting on %s ...", requestSubj, responseSubj)
 
@@ -129,9 +153,9 @@ func main() {
 	}
 
 	var resp struct {
-		Type      string `json:"type"`
-		Decision  string `json:"decision"`
-		Reason    string `json:"reason"`
+		Type     string `json:"type"`
+		Decision string `json:"decision"`
+		Reason   string `json:"reason"`
 	}
 	if err := json.Unmarshal(msg.Data, &resp); err != nil {
 		logger.Printf("response parse error: %v", err)
@@ -146,7 +170,7 @@ func main() {
 		}
 		deny(reason)
 	} else if resp.Decision == "approve" || resp.Decision == "allow" {
-		allow("user approved")
+		allow("user approved", true)
 	} else {
 		deny("invalid decision response")
 	}

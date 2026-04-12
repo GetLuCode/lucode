@@ -94,6 +94,20 @@ Inner `stream_event` contains Anthropic streaming events:
 - `message_delta` — output token count
 - `message_stop` — end of assistant message
 
+### `hook_event`
+```json
+{
+  "type": "hook_event",
+  "session_id": "...",
+  "hook_event_name": "PreToolUse|PostToolUse|SessionStart|SessionEnd|UserPromptSubmit|Stop|SubagentStop",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_...",
+  "payload": { ...full hook payload... },
+  "timestamp": "2026-04-12T..."
+}
+```
+Notification event received via HTTP hook mode. Logged to DB as `role=hook_event` and broadcast to clients. Always auto-approved (no user action needed).
+
 ### `hook_pending`
 ```json
 {
@@ -104,7 +118,7 @@ Inner `stream_event` contains Anthropic streaming events:
   "tool_input": { "command": "...", "description": "..." }
 }
 ```
-Triggers the approval modal. Multiple may be in-flight simultaneously (parallel tool calls).
+Triggers the approval modal for `PermissionRequest` events. Multiple may be in-flight simultaneously (parallel tool calls).
 
 ### `hook_resolved`
 ```json

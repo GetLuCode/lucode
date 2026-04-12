@@ -65,7 +65,8 @@ func main() {
 	bus := natspkg.NewBus(natsServer.Conn)
 	bus.OnBroadcast = apipkg.BroadcastToWS
 
-	claudeSettingsJSON, err := hookcfg.BuildJSON(*hookBinary)
+	backendBaseURL := fmt.Sprintf("http://localhost:%d", *port)
+	claudeSettingsJSON, err := hookcfg.BuildJSON(*hookBinary, backendBaseURL)
 	if err != nil {
 		log.Fatalf("build claude settings: %v", err)
 	}
@@ -157,7 +158,7 @@ func runInstall() {
 
 	// 5. Write ~/.lucode/settings.json.
 	settingsPath := filepath.Join(installDir, "settings.json")
-	if err := hookcfg.WriteSettings(settingsPath, hookDst); err != nil {
+	if err := hookcfg.WriteSettings(settingsPath, hookDst, "http://localhost:8090"); err != nil {
 		log.Fatalf("install: write settings: %v", err)
 	}
 	fmt.Printf("  ✓  wrote settings        →  %s\n", settingsPath)

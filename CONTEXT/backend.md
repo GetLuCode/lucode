@@ -45,6 +45,7 @@ PATCH  /api/tools/{id}                  update tool fields ⭐
 DELETE /api/tools/{id}                  delete tool ⭐
 POST   /api/tools/{id}/execute          execute server-side tool via Goja ⭐
 POST   /api/command-detect              voice command detection via LLM ⭐
+POST   /api/hooks/{event}               HTTP hook receiver for Claude Code hook events ⭐
 
 GET    /api/health                      200 OK
 ```

@@ -20,28 +20,52 @@ type settings struct {
 
 type hookGroup struct {
 	Matcher string    `json:"matcher"`
-	Hooks   []hookCmd `json:"hooks"`
+	Hooks   []hookDef `json:"hooks"`
 }
 
-type hookCmd struct {
+// hookDef is a hook entry — either a command or an HTTP hook.
+type hookDef struct {
 	Type    string `json:"type"`
-	Command string `json:"command"`
+	Command string `json:"command,omitempty"` // for type=command
+	URL     string `json:"url,omitempty"`     // for type=http
 }
 
-// BuildJSON returns the Claude settings JSON string for the given hook binary path.
-// This can be passed inline via --settings='{...}' to each claude process.
-func BuildJSON(hookBinaryPath string) (string, error) {
-	s := settings{
+// httpHookGroup returns a hookGroup that POSTs to the lucode HTTP hook endpoint.
+func httpHookGroup(backendBaseURL, eventName string) hookGroup {
+	return hookGroup{
+		Matcher: "",
+		Hooks:   []hookDef{{Type: "http", URL: backendBaseURL + "/api/hooks/" + eventName}},
+	}
+}
+
+// buildSettings constructs the settings struct for the given hook binary and backend URL.
+func buildSettings(hookBinaryPath, backendBaseURL string) settings {
+	return settings{
 		Permissions: permissions{DefaultMode: "bypassPermissions"},
 		Hooks: map[string][]hookGroup{
-			"PreToolUse": {
+			// PermissionRequest: command mode — lucodehook handles interactive approval via NATS.
+			"PermissionRequest": {
 				{
 					Matcher: "",
-					Hooks:   []hookCmd{{Type: "command", Command: hookBinaryPath}},
+					Hooks:   []hookDef{{Type: "command", Command: hookBinaryPath}},
 				},
 			},
+			// All other hooks: HTTP mode — lucode backend logs events and always approves.
+			"PreToolUse":      {httpHookGroup(backendBaseURL, "PreToolUse")},
+			"PostToolUse":     {httpHookGroup(backendBaseURL, "PostToolUse")},
+			"SessionStart":    {httpHookGroup(backendBaseURL, "SessionStart")},
+			"SessionEnd":      {httpHookGroup(backendBaseURL, "SessionEnd")},
+			"UserPromptSubmit": {httpHookGroup(backendBaseURL, "UserPromptSubmit")},
+			"Stop":            {httpHookGroup(backendBaseURL, "Stop")},
+			"SubagentStop":    {httpHookGroup(backendBaseURL, "SubagentStop")},
 		},
 	}
+}
+
+// BuildJSON returns the Claude settings JSON string for the given hook binary path and backend base URL.
+// This can be passed inline via --settings='{...}' to each claude process.
+func BuildJSON(hookBinaryPath, backendBaseURL string) (string, error) {
+	s := buildSettings(hookBinaryPath, backendBaseURL)
 	data, err := json.Marshal(s)
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
@@ -49,24 +73,14 @@ func BuildJSON(hookBinaryPath string) (string, error) {
 	return string(data), nil
 }
 
-// WriteSettings writes (or overwrites) settingsPath with a minimal Claude
-// settings file that registers hookBinaryPath as a PreToolUse hook.
-func WriteSettings(settingsPath, hookBinaryPath string) error {
+// WriteSettings writes (or overwrites) settingsPath with a Claude settings file
+// that registers the lucodehook for PermissionRequest and HTTP hooks for all other events.
+func WriteSettings(settingsPath, hookBinaryPath, backendBaseURL string) error {
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	s := settings{
-		Permissions: permissions{DefaultMode: "bypassPermissions"},
-		Hooks: map[string][]hookGroup{
-			"PreToolUse": {
-				{
-					Matcher: "",
-					Hooks:   []hookCmd{{Type: "command", Command: hookBinaryPath}},
-				},
-			},
-		},
-	}
+	s := buildSettings(hookBinaryPath, backendBaseURL)
 
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
