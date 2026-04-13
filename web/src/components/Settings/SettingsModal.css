@@ -169,6 +169,30 @@
   color: #6c7086;
 }
 
+.accounts-tab__badge--expired {
+  background: rgba(243, 139, 168, 0.15);
+  color: #f38ba8;
+}
+
+.accounts-tab__badge--expiring {
+  background: rgba(250, 179, 135, 0.15);
+  color: #fab387;
+}
+
+.accounts-tab__field-hint {
+  font-size: 11px;
+  color: var(--text-muted, #6c7086);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.accounts-tab__field-hint code {
+  font-family: monospace;
+  background: rgba(255,255,255,0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
 .accounts-tab__delete {
   background: none;
   border: none;

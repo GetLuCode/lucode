@@ -2,10 +2,27 @@ import type { Account, Project, Session, MessagesPage, Message, SearchResult, Us
 
 const BASE = ''
 
+function getAuthToken(): string | null {
+  try {
+    const raw = localStorage.getItem('lucode-auth')
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.state?.token ?? null
+  } catch {
+    return null
+  }
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (body) headers['Content-Type'] = 'application/json'
+
+  const token = getAuthToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
@@ -17,6 +34,22 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   }
   return res.json()
 }
+
+// Auth
+export const getAuthStatus = () =>
+  req<{ signup_open: boolean }>('GET', '/api/auth/status')
+export const signup = (username: string, password: string) =>
+  req<{ user_id: string; is_admin: boolean }>('POST', '/api/auth/signup', { username, password })
+export const login = (username: string, password: string) =>
+  req<{ token: string; user_id: string; is_admin: boolean }>('POST', '/api/auth/login', { username, password })
+export const logout = () => req<void>('POST', '/api/auth/logout')
+
+// API Keys
+export const listAPIKeys = () =>
+  req<{ id: string; name: string; prefix: string; created_at: string }[]>('GET', '/api/apikeys')
+export const createAPIKey = (name: string) =>
+  req<{ id: string; name: string; prefix: string; key: string; created_at: string }>('POST', '/api/apikeys', { name })
+export const deleteAPIKey = (id: string) => req<void>('DELETE', `/api/apikeys/${id}`)
 
 // Projects
 export const listProjects = () => req<Project[]>('GET', '/api/projects')
@@ -64,9 +97,19 @@ export const listDirs = (path: string) =>
 
 // Accounts
 export const listAccounts = () => req<Account[]>('GET', '/api/accounts')
-export const createAccount = (data: { name: string; claude_config_dir: string }) =>
-  req<Account>('POST', '/api/accounts', data)
+export const createAccount = (data: {
+  name: string
+  access_token?: string
+  refresh_token?: string
+  expires_at?: number
+  claude_config_dir?: string
+}) => req<Account>('POST', '/api/accounts', data)
 export const deleteAccount = (id: string) => req<void>('DELETE', `/api/accounts/${id}`)
+export const updateAccountCredentials = (id: string, data: {
+  access_token: string
+  refresh_token: string
+  expires_at: number
+}) => req<Account>('PUT', `/api/accounts/${id}/credentials`, data)
 export const listHomeDirs = (path: string) =>
   req<{ path: string; parent: string; root: string; dirs: string[]; has_credentials: boolean }>('GET', `/api/fs/home-dirs?path=${encodeURIComponent(path)}`)
 

@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS ideas (
 CREATE TABLE IF NOT EXISTS claude_accounts (
     id                TEXT PRIMARY KEY,
     name              TEXT NOT NULL,
-    claude_config_dir TEXT NOT NULL,
+    claude_config_dir TEXT NOT NULL DEFAULT '',
     created_at        DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 )`); err != nil {
 		return fmt.Errorf("create claude_accounts: %w", err)
@@ -171,6 +171,49 @@ CREATE TABLE IF NOT EXISTS user_tools (
 )`); err != nil {
 		return fmt.Errorf("create user_tools: %w", err)
 	}
+
+	// users — lucode web UI user accounts
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    is_admin      INTEGER NOT NULL DEFAULT 0,
+    created_at    DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`); err != nil {
+		return fmt.Errorf("create users: %w", err)
+	}
+	// Idempotent: add is_admin to existing DBs
+	db.Exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`)
+
+	// sessions_auth — web session tokens (distinct from claude sessions)
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS sessions_auth (
+    token      TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    expires_at DATETIME NOT NULL
+)`); err != nil {
+		return fmt.Errorf("create sessions_auth: %w", err)
+	}
+
+	// api_keys — per-user API keys for machine-to-machine access (e.g. credfeeder)
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL DEFAULT '',
+    key_hash   TEXT NOT NULL UNIQUE,
+    prefix     TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`); err != nil {
+		return fmt.Errorf("create api_keys: %w", err)
+	}
+
+	// claude_accounts: add token columns (idempotent)
+	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN access_token  TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN expires_at    INTEGER NOT NULL DEFAULT 0`)
 
 	return nil
 }

@@ -205,6 +205,27 @@ html, body, #root {
   border-top: 1px solid var(--border, #313244);
 }
 
+.nav-logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #6c7086);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.15s, background 0.15s;
+  border-top: 1px solid var(--border, #313244);
+}
+
+.nav-logout-btn:hover {
+  color: #f38ba8;
+  background: rgba(243, 139, 168, 0.08);
+}
+
 /* Shared avatar */
 .af-avatar {
   border-radius: 50%;
@@ -1121,6 +1142,20 @@ html, body, #root {
 .msg--raw .msg__bubble {
   background: transparent;
   padding-left: 0;
+}
+
+.msg--system .msg__bubble {
+  background: transparent;
+  padding-left: 0;
+}
+
+.msg__system-notice {
+  font-size: 13px;
+  color: var(--text-dim, #888);
+  font-style: italic;
+  margin: 0;
+  padding: 4px 0;
+  text-align: center;
 }
 
 .msg__text {

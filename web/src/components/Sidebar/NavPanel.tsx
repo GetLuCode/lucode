@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
-import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar } from '@tabler/icons-react'
+import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 import { SettingsModal } from '../Settings/SettingsModal'
 import { AccountFooter } from './AccountFooter'
+import { useAuthStore } from '../../store/auth'
+import * as api from '../../api'
 
 interface NavPanelProps {
   onOpenSearch?: () => void
@@ -337,7 +339,32 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
         </ul>
 
         <AccountFooter visible={isClaudeModel} />
+        <LogoutButton />
       </div>
     </aside>
+  )
+}
+
+function LogoutButton() {
+  const token = useAuthStore(s => s.token)
+  const clearAuth = useAuthStore(s => s.clearAuth)
+
+  // Only show if there's an active session
+  if (!token) return null
+
+  async function handleLogout() {
+    try { await api.logout() } catch { /* ignore */ }
+    clearAuth()
+  }
+
+  return (
+    <button
+      className="nav-logout-btn"
+      onClick={handleLogout}
+      title="Sign out"
+    >
+      <IconLogout size={14} />
+      <span>Sign out</span>
+    </button>
   )
 }

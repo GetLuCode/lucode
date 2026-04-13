@@ -569,13 +569,14 @@ type User struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
+	IsAdmin      bool      `json:"is_admin"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
 func InsertUser(db *sql.DB, u User) error {
 	_, err := db.Exec(
-		`INSERT INTO users (id, username, password_hash) VALUES (?,?,?)`,
-		u.ID, u.Username, u.PasswordHash,
+		`INSERT INTO users (id, username, password_hash, is_admin) VALUES (?,?,?,?)`,
+		u.ID, u.Username, u.PasswordHash, boolToInt(u.IsAdmin),
 	)
 	return err
 }
@@ -583,12 +584,14 @@ func InsertUser(db *sql.DB, u User) error {
 func GetUserByUsername(db *sql.DB, username string) (User, error) {
 	var u User
 	var createdAt string
+	var isAdmin int
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, created_at FROM users WHERE username=?`, username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &createdAt)
+		`SELECT id, username, password_hash, is_admin, created_at FROM users WHERE username=?`, username,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &isAdmin, &createdAt)
 	if err != nil {
 		return u, err
 	}
+	u.IsAdmin = isAdmin != 0
 	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	return u, nil
 }
@@ -596,12 +599,14 @@ func GetUserByUsername(db *sql.DB, username string) (User, error) {
 func GetUserByID(db *sql.DB, id string) (User, error) {
 	var u User
 	var createdAt string
+	var isAdmin int
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, created_at FROM users WHERE id=?`, id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &createdAt)
+		`SELECT id, username, password_hash, is_admin, created_at FROM users WHERE id=?`, id,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &isAdmin, &createdAt)
 	if err != nil {
 		return u, err
 	}
+	u.IsAdmin = isAdmin != 0
 	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	return u, nil
 }

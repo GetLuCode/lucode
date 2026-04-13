@@ -141,6 +141,9 @@ function BubbleContent({ message, sendHookRespond }: { message: Message; sendHoo
       )
     }
 
+    case 'system':
+      return <p className="msg__system-notice">{message.content}</p>
+
     case 'tool_execution':
       return <ToolExecutionMessage content={message.content} />
 

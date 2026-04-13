@@ -1,8 +1,9 @@
 export interface Account {
   id: string
   name: string
-  claude_config_dir: string
-  subscription_type: string
+  claude_config_dir?: string
+  has_token: boolean
+  expires_at?: number
   created_at: string
 }
 

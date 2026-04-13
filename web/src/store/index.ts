@@ -70,7 +70,7 @@ interface AppState {
   updateUserTool: (id: string, data: Partial<UserTool>) => Promise<UserTool>
   deleteUserTool: (id: string) => Promise<void>
   loadAccounts: () => Promise<void>
-  createAccount: (data: { name: string; claude_config_dir: string }) => Promise<Account>
+  createAccount: (data: { name: string; access_token?: string; refresh_token?: string; expires_at?: number; claude_config_dir?: string }) => Promise<Account>
   deleteAccount: (id: string) => Promise<void>
   setSelectedAccount: (id: string | null) => void
   loadProjects: () => Promise<void>
@@ -804,14 +804,31 @@ export const useStore = create<AppState>((set, get) => ({
         break
       }
 
-      case 'turn_complete':
-        set(s => ({
-          sessionStatus: { ...s.sessionStatus, [event.session_id]: 'idle' },
-          sessions: s.sessions.map(sess =>
-            sess.id === event.session_id ? { ...sess, status: 'idle' as const } : sess
-          ),
-        }))
+      case 'turn_complete': {
+        const tcSessId = event.session_id
+        set(s => {
+          const extraMessages: Message[] = (event.result_text && event.result_subtype !== 'success')
+            ? [{
+                id: `tc-${Date.now()}`,
+                session_id: tcSessId,
+                role: 'system' as const,
+                content: event.result_text,
+                seq: (s.messages[tcSessId]?.length ?? 0),
+                created_at: new Date().toISOString(),
+              }]
+            : []
+          return {
+            sessionStatus: { ...s.sessionStatus, [tcSessId]: 'idle' },
+            sessions: s.sessions.map(sess =>
+              sess.id === tcSessId ? { ...sess, status: 'idle' as const } : sess
+            ),
+            messages: extraMessages.length > 0
+              ? { ...s.messages, [tcSessId]: [...(s.messages[tcSessId] ?? []), ...extraMessages] }
+              : s.messages,
+          }
+        })
         break
+      }
 
       case 'error':
         set(s => ({
