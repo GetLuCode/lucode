@@ -2,7 +2,9 @@ package session
 
 import (
 	"context"
+	"io"
 	"os/exec"
+	"sync"
 )
 
 type Status string
@@ -19,6 +21,8 @@ type ProcessState struct {
 	Cmd       *exec.Cmd
 	Done      chan struct{}
 	Cancel    context.CancelFunc
+	StdinPipe io.WriteCloser
+	StdinMu   sync.Mutex
 }
 
 // Provider selects the AI backend for a turn.
@@ -53,4 +57,6 @@ type TurnOptions struct {
 	// AccountClaudeConfigDir is the resolved claude config dir from a registered account.
 	// Used by ProviderAnthropic to locate .credentials.json.
 	AccountClaudeConfigDir string
+	// AccountID is the ID of the claude_account used for this turn (for metrics).
+	AccountID string
 }

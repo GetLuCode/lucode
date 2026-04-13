@@ -62,6 +62,14 @@ func ParseLine(sessID string, line []byte) (ParsedEvent, bool, error) {
 			ResultText:    resultText,
 		}, true, nil
 
+	case "control_response":
+		// SDK control request response — not a turn result, handled separately.
+		return ParsedEvent{
+			EventType: "control_response",
+			SessionID: sessID,
+			Event:     line,
+		}, false, nil
+
 	default:
 		// Pass everything else through: stream_event, rate_limit_event, thinking, etc.
 		// The frontend handles rendering based on inner event.type

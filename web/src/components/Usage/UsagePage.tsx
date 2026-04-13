@@ -1,15 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import {
+  BarChart, Bar, LineChart, Line, AreaChart, Area,
+  PieChart, Pie, Cell, Tooltip, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Legend,
+} from 'recharts'
 import { useStore } from '../../store'
 import * as api from '../../api'
-import type { AccountStats } from '../../api'
-import type { Account } from '../../types'
+import type { DailyUsageRow, ModelUsageRow, SessionUsageRow, UsageRange } from '../../api'
+import { estimateCost, formatCost } from '../../lib/tokenPricing'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
 
 function fmtNum(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -17,174 +17,415 @@ function fmtNum(n: number): string {
   return String(n)
 }
 
-// ─── Mini bar chart ──────────────────────────────────────────────────────────
+function fmtDate(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
 
-function ActivityChart({ data }: { data: api.DailyActivity[] }) {
-  if (data.length === 0) return <div className="usage-chart__empty">No activity data</div>
+function fmtDuration(minutes: number): string {
+  if (minutes < 60) return `${Math.round(minutes)}m`
+  return `${(minutes / 60).toFixed(1)}h`
+}
 
-  const recent = data.slice(-90)
-  const maxMsg = Math.max(...recent.map(d => d.messageCount), 1)
+const MODEL_COLORS = ['#6366f1', '#d97706', '#22c55e', '#f59e0b', '#8b5cf6', '#3b82f6', '#ef4444', '#14b8a6']
 
+// ─── Range selector ──────────────────────────────────────────────────────────
+
+interface RangeSelectorProps {
+  value: UsageRange
+  onChange: (r: UsageRange) => void
+}
+
+function RangeSelector({ value, onChange }: RangeSelectorProps) {
+  const options: { label: string; value: UsageRange }[] = [
+    { label: '7d', value: '7d' },
+    { label: '30d', value: '30d' },
+    { label: '90d', value: '90d' },
+    { label: 'All', value: 'all' },
+  ]
   return (
-    <div className="usage-chart">
-      {recent.map(d => {
-        const pct = (d.messageCount / maxMsg) * 100
-        return (
-          <div
-            key={d.date}
-            className="usage-chart__bar-wrap"
-            title={`${formatDate(d.date)}: ${d.messageCount} msgs · ${d.sessionCount} sessions · ${d.toolCallCount} tools`}
-          >
-            <div
-              className="usage-chart__bar"
-              style={{ height: `${Math.max(2, pct)}%` }}
-            />
-          </div>
-        )
-      })}
+    <div className="usage-range">
+      {options.map(o => (
+        <button
+          key={o.value}
+          className={`usage-range__btn${value === o.value ? ' usage-range__btn--active' : ''}`}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   )
 }
 
-// ─── Model usage table ───────────────────────────────────────────────────────
+// ─── Chart type selector ─────────────────────────────────────────────────────
 
-function ModelTable({ modelUsage }: { modelUsage: Record<string, api.ModelUsageEntry> }) {
-  const entries = Object.entries(modelUsage).sort((a, b) =>
-    (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens)
-  )
-  if (entries.length === 0) return null
+type ChartType = 'bar' | 'line' | 'area'
 
+interface ChartTypeSelectorProps {
+  value: ChartType
+  onChange: (t: ChartType) => void
+}
+
+function ChartTypeSelector({ value, onChange }: ChartTypeSelectorProps) {
   return (
-    <table className="usage-table">
-      <thead>
-        <tr>
-          <th>Model</th>
-          <th>Input</th>
-          <th>Output</th>
-          <th>Cache read</th>
-          <th>Cache write</th>
-        </tr>
-      </thead>
-      <tbody>
-        {entries.map(([model, u]) => (
-          <tr key={model}>
-            <td className="usage-table__model">{model}</td>
-            <td>{fmtNum(u.inputTokens)}</td>
-            <td>{fmtNum(u.outputTokens)}</td>
-            <td>{fmtNum(u.cacheReadTokens ?? 0)}</td>
-            <td>{fmtNum(u.cacheWriteTokens ?? 0)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="usage-range">
+      {(['bar', 'line', 'area'] as ChartType[]).map(t => (
+        <button
+          key={t}
+          className={`usage-range__btn${value === t ? ' usage-range__btn--active' : ''}`}
+          onClick={() => onChange(t)}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
   )
 }
 
-// ─── Per-account stats panel ─────────────────────────────────────────────────
+// ─── Daily usage chart ───────────────────────────────────────────────────────
 
-function AccountStatsPanel({ account }: { account: Account }) {
-  const [stats, setStats] = useState<AccountStats | null>(null)
+interface DailyChartProps {
+  data: DailyUsageRow[]
+  chartType: ChartType
+  showCache: boolean
+}
+
+function aggregateByDate(data: DailyUsageRow[]): { date: string; input: number; output: number; cache_read: number; cache_write: number }[] {
+  const map: Record<string, { input: number; output: number; cache_read: number; cache_write: number }> = {}
+  for (const row of data) {
+    if (!map[row.date]) map[row.date] = { input: 0, output: 0, cache_read: 0, cache_write: 0 }
+    map[row.date].input      += row.input_tokens
+    map[row.date].output     += row.output_tokens
+    map[row.date].cache_read  += row.cache_read_input_tokens
+    map[row.date].cache_write += row.cache_creation_input_tokens
+  }
+  return Object.entries(map)
+    .map(([date, v]) => ({ date, ...v }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+function DailyChart({ data, chartType, showCache }: DailyChartProps) {
+  const aggregated = useMemo(() => aggregateByDate(data), [data])
+  if (aggregated.length === 0) return <div className="usage-chart__empty">No data for this period</div>
+
+  const chartData = aggregated.map(d => ({
+    ...d,
+    date: fmtDate(d.date),
+  }))
+
+  const commonProps = {
+    data: chartData,
+    margin: { top: 4, right: 8, left: 0, bottom: 0 },
+  }
+
+  const bars = [
+    { key: 'input',       name: 'Input',       color: '#6366f1' },
+    { key: 'output',      name: 'Output',      color: '#d97706' },
+    ...(showCache ? [
+      { key: 'cache_read',  name: 'Cache read',  color: '#22c55e' },
+      { key: 'cache_write', name: 'Cache write', color: '#f59e0b' },
+    ] : []),
+  ]
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tooltipFormatter = (value: any) => fmtNum(Number(value))
+  const yFormatter = (v: number) => fmtNum(v)
+
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      {chartType === 'bar' ? (
+        <BarChart {...commonProps}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} interval="preserveStartEnd" />
+          <YAxis tickFormatter={yFormatter} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} width={42} />
+          <Tooltip formatter={tooltipFormatter} contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {bars.map(b => <Bar key={b.key} dataKey={b.key} name={b.name} fill={b.color} stackId="a" />)}
+        </BarChart>
+      ) : chartType === 'line' ? (
+        <LineChart {...commonProps}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} interval="preserveStartEnd" />
+          <YAxis tickFormatter={yFormatter} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} width={42} />
+          <Tooltip formatter={tooltipFormatter} contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {bars.map(b => <Line key={b.key} dataKey={b.key} name={b.name} stroke={b.color} dot={false} />)}
+        </LineChart>
+      ) : (
+        <AreaChart {...commonProps}>
+          <defs>
+            {bars.map(b => (
+              <linearGradient key={b.key} id={`grad-${b.key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={b.color} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={b.color} stopOpacity={0} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} interval="preserveStartEnd" />
+          <YAxis tickFormatter={yFormatter} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} width={42} />
+          <Tooltip formatter={tooltipFormatter} contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {bars.map(b => (
+            <Area key={b.key} dataKey={b.key} name={b.name} stroke={b.color} fill={`url(#grad-${b.key})`} stackId="a" />
+          ))}
+        </AreaChart>
+      )}
+    </ResponsiveContainer>
+  )
+}
+
+// ─── Model pie chart ─────────────────────────────────────────────────────────
+
+function ModelPie({ data }: { data: ModelUsageRow[] }) {
+  if (data.length === 0) return <div className="usage-chart__empty">No data</div>
+  const pieData = data.map(r => ({
+    name: r.model.replace(/claude-/i, '').replace(/-\d{8}$/, ''),
+    value: r.input_tokens + r.output_tokens,
+  }))
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <PieChart>
+        <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`} labelLine={false}>
+          {pieData.map((_, i) => (
+            <Cell key={i} fill={MODEL_COLORS[i % MODEL_COLORS.length]} />
+          ))}
+        </Pie>
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+        <Tooltip formatter={(v: any) => fmtNum(Number(v))} contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }} />
+      </PieChart>
+    </ResponsiveContainer>
+  )
+}
+
+// ─── KPI cards ───────────────────────────────────────────────────────────────
+
+interface KPICardProps {
+  label: string
+  value: string
+}
+
+function KPICard({ label, value }: KPICardProps) {
+  return (
+    <div className="usage-kpi">
+      <span className="usage-kpi__value">{value}</span>
+      <span className="usage-kpi__label">{label}</span>
+    </div>
+  )
+}
+
+// ─── Session table ────────────────────────────────────────────────────────────
+
+type SortKey = keyof SessionUsageRow
+
+function SessionTable({ data }: { data: SessionUsageRow[] }) {
+  const navigate = useNavigate()
+  const projects = useStore(s => s.projects)
+  const [sortKey, setSortKey] = useState<SortKey>('created_at')
+  const [sortAsc, setSortAsc] = useState(false)
+
+  const sorted = useMemo(() => {
+    return [...data].sort((a, b) => {
+      const av = a[sortKey], bv = b[sortKey]
+      if (typeof av === 'number' && typeof bv === 'number') return sortAsc ? av - bv : bv - av
+      return sortAsc
+        ? String(av).localeCompare(String(bv))
+        : String(bv).localeCompare(String(av))
+    })
+  }, [data, sortKey, sortAsc])
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) setSortAsc(v => !v)
+    else { setSortKey(key); setSortAsc(false) }
+  }
+
+  const th = (key: SortKey, label: string) => (
+    <th onClick={() => handleSort(key)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+      {label} {sortKey === key ? (sortAsc ? '↑' : '↓') : ''}
+    </th>
+  )
+
+  if (data.length === 0) return <div className="usage-chart__empty">No sessions in this period</div>
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table className="usage-table usage-table--sessions">
+        <thead>
+          <tr>
+            {th('session_name', 'Session')}
+            <th>Project</th>
+            {th('model', 'Model')}
+            {th('input_tokens', 'Input')}
+            {th('output_tokens', 'Output')}
+            {th('turn_count', 'Turns')}
+            {th('duration_minutes', 'Duration')}
+            <th>Est. cost</th>
+            {th('created_at', 'Date')}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(row => {
+            const proj = projects.find(p => p.id === row.project_id)
+            const cost = estimateCost(row.model, row.input_tokens, row.output_tokens, row.cache_read_input_tokens, row.cache_creation_input_tokens)
+            return (
+              <tr
+                key={row.session_id}
+                onClick={() => navigate(`/projects/${row.project_id}/sessions/${row.session_id}`)}
+                style={{ cursor: 'pointer' }}
+                className="usage-table__row--clickable"
+              >
+                <td className="usage-table__model">{row.session_name || row.session_id.slice(0, 8)}</td>
+                <td>{proj?.name ?? row.project_id.slice(0, 8)}</td>
+                <td className="usage-table__model">{row.model.replace(/claude-/i, '').replace(/-\d{8}$/, '')}</td>
+                <td>{fmtNum(row.input_tokens)}</td>
+                <td>{fmtNum(row.output_tokens)}</td>
+                <td>{row.turn_count}</td>
+                <td>{fmtDuration(row.duration_minutes)}</td>
+                <td>{formatCost(cost)}</td>
+                <td>{fmtDate(row.created_at.slice(0, 10))}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ─── Main page ───────────────────────────────────────────────────────────────
+
+export function UsagePage() {
+  const [range, setRange] = useState<UsageRange>('30d')
+  const [chartType, setChartType] = useState<ChartType>('bar')
+  const [showCache, setShowCache] = useState(false)
+
+  const [dailyData, setDailyData] = useState<DailyUsageRow[]>([])
+  const [modelData, setModelData] = useState<ModelUsageRow[]>([])
+  const [sessionData, setSessionData] = useState<SessionUsageRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+
+  const loadProjects = useStore(s => s.loadProjects)
+  useEffect(() => { loadProjects() }, [])
 
   useEffect(() => {
     setLoading(true)
-    setError(null)
-    api.getAccountStats(account.id)
-      .then(s => { setStats(s); setLoading(false) })
-      .catch(e => { setError(e.message ?? 'Failed to load'); setLoading(false) })
-  }, [account.id])
+    Promise.all([
+      api.getUsageDaily(range),
+      api.getUsageModels(range),
+      api.getUsageSessions(range),
+    ]).then(([d, m, s]) => {
+      setDailyData(d)
+      setModelData(m)
+      setSessionData(s)
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [range])
 
-  const last7 = stats
-    ? stats.dailyActivity.slice(-7).reduce(
-        (acc, d) => ({ msgs: acc.msgs + d.messageCount, sessions: acc.sessions + d.sessionCount, tools: acc.tools + d.toolCallCount }),
-        { msgs: 0, sessions: 0, tools: 0 }
-      )
-    : null
-
-  return (
-    <section className="usage-account">
-      <div className="usage-account__header">
-        <span className="usage-account__name">{account.name}</span>
-        {stats?.firstSessionDate && (
-          <span className="usage-account__since">since {formatDate(stats.firstSessionDate)}</span>
-        )}
-        {stats && (
-          <span className="usage-account__computed">last computed {stats.lastComputedDate}</span>
-        )}
-      </div>
-
-      {loading && <div className="usage-account__loading">Loading…</div>}
-      {error && <div className="usage-account__error">{error}</div>}
-
-      {stats && (
-        <>
-          <div className="usage-kpis">
-            <div className="usage-kpi">
-              <span className="usage-kpi__value">{fmtNum(stats.totalMessages)}</span>
-              <span className="usage-kpi__label">total messages</span>
-            </div>
-            <div className="usage-kpi">
-              <span className="usage-kpi__value">{fmtNum(stats.totalSessions)}</span>
-              <span className="usage-kpi__label">total sessions</span>
-            </div>
-            {last7 && (
-              <>
-                <div className="usage-kpi">
-                  <span className="usage-kpi__value">{fmtNum(last7.msgs)}</span>
-                  <span className="usage-kpi__label">messages (7d)</span>
-                </div>
-                <div className="usage-kpi">
-                  <span className="usage-kpi__value">{fmtNum(last7.sessions)}</span>
-                  <span className="usage-kpi__label">sessions (7d)</span>
-                </div>
-                <div className="usage-kpi">
-                  <span className="usage-kpi__value">{fmtNum(last7.tools)}</span>
-                  <span className="usage-kpi__label">tool calls (7d)</span>
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="usage-section-label">Daily messages — last 90 days</div>
-          <ActivityChart data={stats.dailyActivity} />
-
-          {stats.modelUsage && Object.keys(stats.modelUsage).length > 0 && (
-            <>
-              <div className="usage-section-label">Token usage by model</div>
-              <ModelTable modelUsage={stats.modelUsage} />
-            </>
-          )}
-        </>
-      )}
-    </section>
-  )
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-export function UsagePage() {
-  const accounts = useStore(s => s.accounts)
-  const loadAccounts = useStore(s => s.loadAccounts)
-
-  useEffect(() => {
-    if (accounts.length === 0) loadAccounts()
-  }, [])
+  const kpis = useMemo(() => {
+    const totalInput  = dailyData.reduce((s, r) => s + r.input_tokens, 0)
+    const totalOutput = dailyData.reduce((s, r) => s + r.output_tokens, 0)
+    const totalCacheR = dailyData.reduce((s, r) => s + r.cache_read_input_tokens, 0)
+    const totalCacheW = dailyData.reduce((s, r) => s + r.cache_creation_input_tokens, 0)
+    const totalTurns  = dailyData.reduce((s, r) => s + r.turn_count, 0)
+    const totalCost   = modelData.reduce((s, r) =>
+      s + estimateCost(r.model, r.input_tokens, r.output_tokens, r.cache_read_input_tokens, r.cache_creation_input_tokens), 0)
+    return { totalInput, totalOutput, totalCacheR, totalCacheW, totalTurns, totalCost }
+  }, [dailyData, modelData])
 
   return (
     <div className="usage-page">
       <div className="usage-page__header">
         <h1 className="usage-page__title">Usage</h1>
-        <p className="usage-page__subtitle">Historical activity from stats-cache.json for each account</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <RangeSelector value={range} onChange={setRange} />
+        </div>
       </div>
 
-      <div className="usage-page__content">
-        {accounts.length === 0 ? (
-          <div className="usage-page__empty">No accounts configured.</div>
-        ) : (
-          accounts.map(a => <AccountStatsPanel key={a.id} account={a} />)
-        )}
-      </div>
+      {loading ? (
+        <div className="usage-page__loading">Loading…</div>
+      ) : (
+        <div className="usage-page__content">
+
+          {/* KPI cards */}
+          <div className="usage-kpis" style={{ marginBottom: 24 }}>
+            <KPICard label="Input tokens" value={fmtNum(kpis.totalInput)} />
+            <KPICard label="Output tokens" value={fmtNum(kpis.totalOutput)} />
+            <KPICard label="Cache read" value={fmtNum(kpis.totalCacheR)} />
+            <KPICard label="Cache write" value={fmtNum(kpis.totalCacheW)} />
+            <KPICard label="Turns" value={fmtNum(kpis.totalTurns)} />
+            <KPICard label="Est. cost" value={formatCost(kpis.totalCost)} />
+          </div>
+
+          {/* Daily usage chart */}
+          <div className="usage-section">
+            <div className="usage-section__header">
+              <span className="usage-section-label">Daily token usage</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label className="usage-cache-toggle">
+                  <input type="checkbox" checked={showCache} onChange={e => setShowCache(e.target.checked)} />
+                  <span>Show cache</span>
+                </label>
+                <ChartTypeSelector value={chartType} onChange={setChartType} />
+              </div>
+            </div>
+            <DailyChart data={dailyData} chartType={chartType} showCache={showCache} />
+          </div>
+
+          {/* Model distribution */}
+          {modelData.length > 0 && (
+            <div className="usage-section" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+              <div>
+                <div className="usage-section-label">Model distribution</div>
+                <ModelPie data={modelData} />
+              </div>
+              <div>
+                <div className="usage-section-label">Token usage by model</div>
+                <table className="usage-table">
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th>Input</th>
+                      <th>Output</th>
+                      <th>Cache R</th>
+                      <th>Cache W</th>
+                      <th>Turns</th>
+                      <th>Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modelData.map(r => (
+                      <tr key={r.model}>
+                        <td className="usage-table__model">{r.model.replace(/claude-/i, '').replace(/-\d{8}$/, '')}</td>
+                        <td>{fmtNum(r.input_tokens)}</td>
+                        <td>{fmtNum(r.output_tokens)}</td>
+                        <td>{fmtNum(r.cache_read_input_tokens)}</td>
+                        <td>{fmtNum(r.cache_creation_input_tokens)}</td>
+                        <td>{r.turn_count}</td>
+                        <td>{formatCost(estimateCost(r.model, r.input_tokens, r.output_tokens, r.cache_read_input_tokens, r.cache_creation_input_tokens))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Session breakdown */}
+          <div className="usage-section">
+            <div className="usage-section-label">Sessions ({sessionData.length})</div>
+            <SessionTable data={sessionData} />
+          </div>
+
+          {/* Legacy per-account stats */}
+          <div className="usage-section">
+            <div className="usage-section-label">Account activity (stats-cache.json)</div>
+            <p className="usage-page__subtitle" style={{ fontSize: 12, marginTop: 4 }}>
+              Historical data from external stats-cache.json per account. Requires credfeeder to be running.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

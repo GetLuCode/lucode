@@ -70,6 +70,22 @@ export interface SearchResult {
   seq: number
 }
 
+// Context window usage breakdown
+export interface ContextCategory {
+  name: string
+  tokens: number
+  color: string
+}
+
+export interface ContextUsage {
+  categories: ContextCategory[]
+  totalTokens: number
+  maxTokens: number
+  percentage: number
+  model: string
+  session_id: string
+}
+
 // WebSocket events from backend
 export type WSEvent =
   | { type: 'session_status'; session_id: string; status: string }
@@ -83,6 +99,8 @@ export type WSEvent =
   | { type: 'session_updated'; session: Session }
   | { type: 'error'; session_id: string; message: string }
   | { type: 'info'; session_id: string; message: string }
+  | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
+  | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
 
 // Structured assistant message content
 export interface AssistantMessage {

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Account, Project, Session, Message, PendingHook, WSEvent, UserTool } from '../types'
+import type { Account, Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage } from '../types'
 import * as api from '../api'
 
 export interface TokenUsage {
@@ -56,6 +56,8 @@ interface AppState {
   starredPanelOpen: boolean
   jumpToMessageId: string | null
   userTools: UserTool[]
+  // Context window usage per session (updated after each turn via WS)
+  contextUsage: Record<string, ContextUsage>
 
   openFilePreview: (preview: FilePreview) => void
   closeFilePreview: () => void
@@ -250,6 +252,7 @@ export const useStore = create<AppState>((set, get) => ({
   starredPanelOpen: false,
   jumpToMessageId: null,
   userTools: [],
+  contextUsage: {},
 
   openFilePreview: (preview) => set({ filePreview: preview }),
   closeFilePreview: () => set({ filePreview: null }),
@@ -919,6 +922,43 @@ export const useStore = create<AppState>((set, get) => ({
           },
         }))
         break
+
+      case 'context_usage': {
+        set(s => ({
+          contextUsage: {
+            ...s.contextUsage,
+            [event.session_id]: {
+              categories: event.categories,
+              totalTokens: event.totalTokens,
+              maxTokens: event.maxTokens,
+              percentage: event.percentage,
+              model: event.model,
+              session_id: event.session_id,
+            },
+          },
+        }))
+        break
+      }
+
+      case 'turn_usage': {
+        // Server-authoritative token counts — update sessionUsage so the header badge is accurate
+        const tuSessId = event.session_id
+        set(s => {
+          const prev = s.sessionUsage[tuSessId] ?? { input_tokens: 0, output_tokens: 0 }
+          return {
+            sessionUsage: {
+              ...s.sessionUsage,
+              [tuSessId]: {
+                input_tokens: prev.input_tokens + event.input_tokens,
+                output_tokens: prev.output_tokens + event.output_tokens,
+                cache_creation_input_tokens: (prev.cache_creation_input_tokens ?? 0) + event.cache_creation_input_tokens,
+                cache_read_input_tokens: (prev.cache_read_input_tokens ?? 0) + event.cache_read_input_tokens,
+              },
+            },
+          }
+        })
+        break
+      }
     }
   },
 }))

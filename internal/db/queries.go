@@ -712,6 +712,156 @@ func DeleteAPIKey(db *sql.DB, id, userID string) error {
 	return err
 }
 
+// ---- TurnUsage ----
+
+type TurnUsage struct {
+	ID                        string    `json:"id"`
+	SessionID                 string    `json:"session_id"`
+	ProjectID                 string    `json:"project_id"`
+	AccountID                 string    `json:"account_id"`
+	Model                     string    `json:"model"`
+	InputTokens               int       `json:"input_tokens"`
+	OutputTokens              int       `json:"output_tokens"`
+	CacheCreationInputTokens  int       `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens      int       `json:"cache_read_input_tokens"`
+	CreatedAt                 time.Time `json:"created_at"`
+}
+
+func InsertTurnUsage(db *sql.DB, u TurnUsage) error {
+	_, err := db.Exec(
+		`INSERT INTO turn_usage (id, session_id, project_id, account_id, model,
+		 input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)
+		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		u.ID, u.SessionID, u.ProjectID, u.AccountID, u.Model,
+		u.InputTokens, u.OutputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens,
+	)
+	return err
+}
+
+// DailyUsageRow aggregates token usage grouped by date and model.
+type DailyUsageRow struct {
+	Date                     string `json:"date"`
+	Model                    string `json:"model"`
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	TurnCount                int    `json:"turn_count"`
+}
+
+func AggregateDailyUsage(db *sql.DB, since time.Time) ([]DailyUsageRow, error) {
+	rows, err := db.Query(`
+SELECT date(created_at) as day, model,
+       SUM(input_tokens), SUM(output_tokens),
+       SUM(cache_creation_input_tokens), SUM(cache_read_input_tokens),
+       COUNT(*) as turn_count
+FROM turn_usage
+WHERE created_at >= ?
+GROUP BY day, model
+ORDER BY day`, since.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DailyUsageRow
+	for rows.Next() {
+		var r DailyUsageRow
+		if err := rows.Scan(&r.Date, &r.Model, &r.InputTokens, &r.OutputTokens,
+			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.TurnCount); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ModelUsageRow aggregates token usage grouped by model.
+type ModelUsageRow struct {
+	Model                    string `json:"model"`
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	TurnCount                int    `json:"turn_count"`
+}
+
+func AggregateModelUsage(db *sql.DB, since time.Time) ([]ModelUsageRow, error) {
+	rows, err := db.Query(`
+SELECT model,
+       SUM(input_tokens), SUM(output_tokens),
+       SUM(cache_creation_input_tokens), SUM(cache_read_input_tokens),
+       COUNT(*) as turn_count
+FROM turn_usage
+WHERE created_at >= ?
+GROUP BY model
+ORDER BY SUM(input_tokens + output_tokens) DESC`, since.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ModelUsageRow
+	for rows.Next() {
+		var r ModelUsageRow
+		if err := rows.Scan(&r.Model, &r.InputTokens, &r.OutputTokens,
+			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.TurnCount); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SessionUsageRow aggregates usage per session.
+type SessionUsageRow struct {
+	SessionID                string  `json:"session_id"`
+	SessionName              string  `json:"session_name"`
+	ProjectID                string  `json:"project_id"`
+	Model                    string  `json:"model"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
+	TurnCount                int     `json:"turn_count"`
+	DurationMinutes          float64 `json:"duration_minutes"`
+	CreatedAt                string  `json:"created_at"`
+}
+
+func AggregateSessionUsage(db *sql.DB, since time.Time, projectID string) ([]SessionUsageRow, error) {
+	query := `
+SELECT tu.session_id, s.name, tu.project_id, tu.model,
+       SUM(tu.input_tokens), SUM(tu.output_tokens),
+       SUM(tu.cache_creation_input_tokens), SUM(tu.cache_read_input_tokens),
+       COUNT(*) as turn_count,
+       ROUND((julianday(s.last_active) - julianday(s.created_at)) * 1440, 1) as duration_minutes,
+       s.created_at
+FROM turn_usage tu
+JOIN sessions s ON s.id = tu.session_id
+WHERE tu.created_at >= ?`
+	args := []any{since.Format(time.RFC3339)}
+	if projectID != "" {
+		query += ` AND tu.project_id = ?`
+		args = append(args, projectID)
+	}
+	query += ` GROUP BY tu.session_id ORDER BY s.created_at DESC`
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionUsageRow
+	for rows.Next() {
+		var r SessionUsageRow
+		if err := rows.Scan(&r.SessionID, &r.SessionName, &r.ProjectID, &r.Model,
+			&r.InputTokens, &r.OutputTokens, &r.CacheCreationInputTokens, &r.CacheReadInputTokens,
+			&r.TurnCount, &r.DurationMinutes, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ---- helpers ----
 
 func boolToInt(b bool) int {

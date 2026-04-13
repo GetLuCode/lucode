@@ -269,7 +269,16 @@ func (m *Manager) streamAnthropicOutput(handle *anthropicRunHandle) {
 
 func (m *Manager) streamOutput(sr *spawnResult) {
 	ps := sr.ps
+	opts := sr.opts
 	defer func() {
+		// Close stdin so the CLI sees EOF and can exit cleanly.
+		ps.StdinMu.Lock()
+		if ps.StdinPipe != nil {
+			ps.StdinPipe.Close()
+			ps.StdinPipe = nil
+		}
+		ps.StdinMu.Unlock()
+
 		ps.Cancel()
 		close(ps.Done)
 		ps.Cmd.Wait()
@@ -306,6 +315,25 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 
 		log.Printf("[event] session=%s type=%s partial=%v isResult=%v", sid8, event.EventType, event.Partial, isResult)
 
+		// Handle control_response (e.g. get_context_usage) — don't broadcast raw,
+		// instead parse and re-broadcast as a context_usage event.
+		if event.EventType == "control_response" {
+			if cu, err := parseContextUsage(event.Event); err == nil {
+				m.bus.Broadcast(ps.SessionID, map[string]any{
+					"type":        "context_usage",
+					"session_id":  ps.SessionID,
+					"categories":  cu.Categories,
+					"totalTokens": cu.TotalTokens,
+					"maxTokens":   cu.MaxTokens,
+					"percentage":  cu.Percentage,
+					"model":       cu.Model,
+				})
+			} else {
+				log.Printf("[context] parse error session=%s: %v", sid8, err)
+			}
+			continue
+		}
+
 		// Broadcast immediately (before processing) so frontend sees updates live
 		m.bus.Broadcast(ps.SessionID, event)
 
@@ -325,7 +353,44 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 				"session_id": ps.SessionID,
 				"status":     string(StatusIdle),
 			})
-			return
+
+			// Persist token usage for this turn.
+			if accum.inputTokens > 0 || accum.outputTokens > 0 {
+				tu := dbpkg.TurnUsage{
+					ID:                       uuid.New().String(),
+					SessionID:                ps.SessionID,
+					ProjectID:                opts.ProjectID,
+					AccountID:                opts.AccountID,
+					Model:                    opts.Model,
+					InputTokens:              accum.inputTokens,
+					OutputTokens:             accum.outputTokens,
+					CacheCreationInputTokens: accum.cacheCreationInputTokens,
+					CacheReadInputTokens:     accum.cacheReadInputTokens,
+				}
+				if err := dbpkg.InsertTurnUsage(m.db, tu); err != nil {
+					log.Printf("[usage] insert error session=%s: %v", sid8, err)
+				}
+				// Broadcast authoritative token counts so the UI header stays accurate.
+				m.bus.Broadcast(ps.SessionID, map[string]any{
+					"type":                        "turn_usage",
+					"session_id":                  ps.SessionID,
+					"input_tokens":                accum.inputTokens,
+					"output_tokens":               accum.outputTokens,
+					"cache_creation_input_tokens": accum.cacheCreationInputTokens,
+					"cache_read_input_tokens":     accum.cacheReadInputTokens,
+					"model":                       opts.Model,
+				})
+			}
+
+			// Send get_context_usage and keep scanning — the control_response
+			// will arrive as another stdout line and be handled in the next iteration.
+			if err := RequestContextUsage(ps); err != nil {
+				log.Printf("[context] request error session=%s: %v", sid8, err)
+				return
+			}
+			// Don't return yet — wait for the control_response line.
+			// The process will exit after responding, causing scanner.Scan() to return false.
+			continue
 		}
 	}
 
@@ -493,6 +558,12 @@ type turnAccum struct {
 	text       strings.Builder
 	thinking   strings.Builder
 	blockTypes map[int]string
+
+	// token usage accumulated from the stream
+	inputTokens              int
+	outputTokens             int
+	cacheCreationInputTokens int
+	cacheReadInputTokens     int
 }
 
 func newTurnAccum() *turnAccum {
@@ -513,6 +584,34 @@ func (a *turnAccum) process(raw json.RawMessage, sessionID string) []dbpkg.Messa
 	}
 
 	switch jsonStr(inner["type"]) {
+	case "message_start":
+		// Extract input token counts from the inner event (outer.Event)
+		var msgStart struct {
+			Message struct {
+				Usage struct {
+					InputTokens              int `json:"input_tokens"`
+					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(outer.Event, &msgStart); err == nil {
+			a.inputTokens = msgStart.Message.Usage.InputTokens
+			a.cacheCreationInputTokens = msgStart.Message.Usage.CacheCreationInputTokens
+			a.cacheReadInputTokens = msgStart.Message.Usage.CacheReadInputTokens
+		}
+
+	case "message_delta":
+		// Extract output token count from the inner event
+		var msgDelta struct {
+			Usage struct {
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(outer.Event, &msgDelta); err == nil {
+			a.outputTokens = msgDelta.Usage.OutputTokens
+		}
+
 	case "content_block_start":
 		var idx int
 		json.Unmarshal(inner["index"], &idx)

@@ -138,6 +138,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// HTTP hook endpoint — receives all hook events from Claude Code CLI.
 	mux.HandleFunc("POST /api/hooks/{event}", h.hookEvent)
 
+	// Usage / metrics endpoints
+	mux.HandleFunc("GET /api/usage/daily", h.usageDaily)
+	mux.HandleFunc("GET /api/usage/models", h.usageModels)
+	mux.HandleFunc("GET /api/usage/sessions", h.usageSessions)
+
 	mux.HandleFunc("GET /", h.globalWS)
 }
 
@@ -451,6 +456,7 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		if acct, err := dbpkg.GetClaudeAccount(h.db, sess.AccountID); err == nil {
 			opts.ClaudeConfigDir = acct.ClaudeConfigDir
 			opts.AccountClaudeConfigDir = acct.ClaudeConfigDir
+			opts.AccountID = sess.AccountID
 		}
 	}
 
@@ -1860,4 +1866,60 @@ func (h *Handler) requireAPIKey(r *http.Request) (string, error) {
 	}
 
 	return key.UserID, nil
+}
+
+// ---- Usage / Metrics ----
+
+// parseRangeParam maps a "range" query param (7d|30d|90d|all) to a since time.Time.
+func parseRangeParam(r *http.Request) time.Time {
+	switch r.URL.Query().Get("range") {
+	case "7d":
+		return time.Now().AddDate(0, 0, -7)
+	case "30d":
+		return time.Now().AddDate(0, 0, -30)
+	case "90d":
+		return time.Now().AddDate(0, 0, -90)
+	default: // "all" or empty
+		return time.Time{} // zero time = no filter
+	}
+}
+
+func (h *Handler) usageDaily(w http.ResponseWriter, r *http.Request) {
+	since := parseRangeParam(r)
+	rows, err := dbpkg.AggregateDailyUsage(h.db, since)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []dbpkg.DailyUsageRow{}
+	}
+	jsonResp(w, http.StatusOK, rows)
+}
+
+func (h *Handler) usageModels(w http.ResponseWriter, r *http.Request) {
+	since := parseRangeParam(r)
+	rows, err := dbpkg.AggregateModelUsage(h.db, since)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []dbpkg.ModelUsageRow{}
+	}
+	jsonResp(w, http.StatusOK, rows)
+}
+
+func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
+	since := parseRangeParam(r)
+	projectID := r.URL.Query().Get("project_id")
+	rows, err := dbpkg.AggregateSessionUsage(h.db, since, projectID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []dbpkg.SessionUsageRow{}
+	}
+	jsonResp(w, http.StatusOK, rows)
 }

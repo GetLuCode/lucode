@@ -21,10 +21,11 @@ type stdinMsg struct {
 	Content interface{} `json:"content"` // string or []map[string]interface{} for content with images
 }
 
-// spawnResult holds the started process and its stdout reader.
+// spawnResult holds the started process, its stdout reader, and the turn options.
 type spawnResult struct {
 	ps     *ProcessState
 	stdout io.ReadCloser
+	opts   TurnOptions
 }
 
 // spawnClaude creates and starts the claude CLI process.
@@ -119,14 +120,45 @@ func spawnClaude(ctx context.Context, opts TurnOptions, backendNATSURL string) (
 	data, _ := json.Marshal(msg)
 	log.Printf("[stdin] session=%s: %s", opts.SessionID[:8], string(data))
 	fmt.Fprintf(stdinPipe, "%s\n", data)
-	stdinPipe.Close()
+	// Keep stdin open so SDK control requests (e.g. get_context_usage) can be
+	// written after the turn starts. Closed by streamOutput's defer.
 
 	ps := &ProcessState{
 		SessionID: opts.SessionID,
 		Cmd:       cmd,
 		Done:      make(chan struct{}),
+		StdinPipe: stdinPipe,
 	}
-	return &spawnResult{ps: ps, stdout: stdoutPipe}, nil
+	return &spawnResult{ps: ps, stdout: stdoutPipe, opts: opts}, nil
+}
+
+// SendControlRequest writes an SDK control_request JSON line to the process stdin.
+// Safe for concurrent use.
+func SendControlRequest(ps *ProcessState, subtype string) error {
+	type req struct {
+		Subtype string `json:"subtype"`
+	}
+	msg := struct {
+		Type      string `json:"type"`
+		RequestID string `json:"request_id"`
+		Request   req    `json:"request"`
+	}{
+		Type:      "control_request",
+		RequestID: "cr-" + subtype,
+		Request:   req{Subtype: subtype},
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	ps.StdinMu.Lock()
+	defer ps.StdinMu.Unlock()
+	if ps.StdinPipe == nil {
+		return fmt.Errorf("stdin pipe is closed")
+	}
+	_, err = fmt.Fprintf(ps.StdinPipe, "%s\n", data)
+	return err
 }
 
 func buildArgs(opts TurnOptions) []string {

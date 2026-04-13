@@ -186,6 +186,52 @@ export interface AccountStats {
 
 export const getAccountStats = (id: string) => req<AccountStats>('GET', `/api/accounts/${id}/stats`)
 
+// ── Metrics / Usage ─────────────────────────────────────────────────────────
+
+export type UsageRange = '7d' | '30d' | '90d' | 'all'
+
+export interface DailyUsageRow {
+  date: string
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  turn_count: number
+}
+
+export interface ModelUsageRow {
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  turn_count: number
+}
+
+export interface SessionUsageRow {
+  session_id: string
+  session_name: string
+  project_id: string
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  turn_count: number
+  duration_minutes: number
+  created_at: string
+}
+
+export const getUsageDaily = (range: UsageRange) =>
+  req<DailyUsageRow[]>('GET', `/api/usage/daily?range=${range}`)
+
+export const getUsageModels = (range: UsageRange) =>
+  req<ModelUsageRow[]>('GET', `/api/usage/models?range=${range}`)
+
+export const getUsageSessions = (range: UsageRange, projectId?: string) =>
+  req<SessionUsageRow[]>('GET', `/api/usage/sessions?range=${range}${projectId ? `&project_id=${projectId}` : ''}`)
+
 // User Tools
 export const listUserTools = () => req<UserTool[]>('GET', '/api/tools')
 export const createUserTool = (data: Partial<UserTool>) => req<UserTool>('POST', '/api/tools', data)

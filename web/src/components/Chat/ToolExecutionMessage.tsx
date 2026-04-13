@@ -80,9 +80,9 @@ function ToolInputDisplay({ toolName, input }: { toolName: string; input: Record
           <div className="tool-input__bash">
             <div className="tool-input__label">Command:</div>
             <code className="tool-input__code">{String(input.command)}</code>
-            {input.description && (
+            {input.description ? (
               <div className="tool-input__description">{String(input.description)}</div>
-            )}
+            ) : null}
           </div>
         )
       case 'Grep':
@@ -90,12 +90,12 @@ function ToolInputDisplay({ toolName, input }: { toolName: string; input: Record
           <div className="tool-input__grep">
             <div className="tool-input__label">Pattern:</div>
             <code className="tool-input__code">{String(input.pattern)}</code>
-            {input.path && (
+            {input.path ? (
               <>
                 <div className="tool-input__label">Path:</div>
                 <div className="tool-input__path">{String(input.path)}</div>
               </>
-            )}
+            ) : null}
           </div>
         )
       case 'Edit':
@@ -103,9 +103,9 @@ function ToolInputDisplay({ toolName, input }: { toolName: string; input: Record
           <div className="tool-input__edit">
             <div className="tool-input__label">File:</div>
             <div className="tool-input__path">{String(input.file_path)}</div>
-            {input.description && (
+            {input.description ? (
               <div className="tool-input__description">{String(input.description)}</div>
-            )}
+            ) : null}
           </div>
         )
       case 'Read':

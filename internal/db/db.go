@@ -215,5 +215,26 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN expires_at    INTEGER NOT NULL DEFAULT 0`)
 
+	// turn_usage — per-turn token consumption for analytics
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS turn_usage (
+    id                           TEXT PRIMARY KEY,
+    session_id                   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id                   TEXT NOT NULL DEFAULT '',
+    account_id                   TEXT NOT NULL DEFAULT '',
+    model                        TEXT NOT NULL DEFAULT '',
+    input_tokens                 INTEGER NOT NULL DEFAULT 0,
+    output_tokens                INTEGER NOT NULL DEFAULT 0,
+    cache_creation_input_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_read_input_tokens      INTEGER NOT NULL DEFAULT 0,
+    created_at                   DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_session   ON turn_usage(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_project   ON turn_usage(project_id);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_created   ON turn_usage(created_at);
+`); err != nil {
+		return fmt.Errorf("create turn_usage: %w", err)
+	}
+
 	return nil
 }

@@ -14,6 +14,7 @@ import { VoiceSettingsModal } from './VoiceBar'
 import { IdeasModal } from './IdeasModal'
 import { FilePreviewPanel } from './FilePreviewPanel'
 import { StarredPanel } from './StarredPanel'
+import { ContextBar } from './ContextBar'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import { listOllamaModels } from '../../api'
 import type { Message } from '../../types'
@@ -78,7 +79,6 @@ function ChatViewFull() {
   )
   const accounts = useStore(s => s.accounts)
   const selectedAccountId = useStore(s => s.selectedAccountId)
-  const setSelectedAccount = useStore(s => s.setSelectedAccount)
 
   const [input, setInput] = useState('')
   const [model, setModelRaw] = useState(() => localStorage.getItem('pref_model') ?? 'haiku')
@@ -621,6 +621,10 @@ function ChatViewFull() {
           </span>
         </div>
       </div>
+
+      {activeSessionId && !pendingSession && (
+        <ContextBar sessionId={activeSessionId} />
+      )}
 
       <div className="chat__messages" ref={scrollRef} onScroll={handleScroll}>
         {/* Load-more indicator */}
