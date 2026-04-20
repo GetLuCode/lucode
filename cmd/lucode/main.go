@@ -14,6 +14,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/nats-io/nats.go"
 
 	apipkg "claude-orchestrator/internal/api"
 	dbpkg "claude-orchestrator/internal/db"
@@ -36,7 +39,7 @@ func main() {
 	}
 
 	port := flag.Int("port", 8090, "HTTP listen port")
-	natsPort := flag.Int("nats-port", 5222, "NATS TCP port (internal)")
+	natsURL := flag.String("nats-url", "nats://127.0.0.1:4222", "External NATS server URL")
 	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
@@ -53,16 +56,18 @@ func main() {
 	}
 	defer db.Close()
 
-	// Start embedded NATS server (TCP only, for internal Go client and lucodehook)
-	natsServer, err := natspkg.Start(natspkg.Options{
-		NATSPort: *natsPort,
-	})
+	// Connect to external NATS server.
+	nc, err := nats.Connect(*natsURL,
+		nats.Timeout(10*time.Second),
+		nats.RetryOnFailedConnect(false),
+	)
 	if err != nil {
-		log.Fatalf("nats: %v", err)
+		log.Fatalf("nats connect %s: %v", *natsURL, err)
 	}
-	defer natsServer.Shutdown()
+	defer nc.Drain()
+	log.Printf("[nats] connected — %s", *natsURL)
 
-	bus := natspkg.NewBus(natsServer.Conn)
+	bus := natspkg.NewBus(nc)
 	bus.OnBroadcast = apipkg.BroadcastToWS
 
 	backendBaseURL := fmt.Sprintf("http://localhost:%d", *port)
@@ -72,8 +77,7 @@ func main() {
 	}
 	log.Printf("claude settings: hook=%s settings=%s", *hookBinary, claudeSettingsJSON)
 
-	backendNATSURL := fmt.Sprintf("nats://127.0.0.1:%d", *natsPort)
-	manager := sessionpkg.NewManager(db, bus, backendNATSURL, claudeSettingsJSON)
+	manager := sessionpkg.NewManager(db, bus, *natsURL, claudeSettingsJSON)
 
 	if err := bus.Start(); err != nil {
 		log.Fatalf("nats bus: %v", err)

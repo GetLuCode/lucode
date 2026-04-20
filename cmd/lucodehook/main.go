@@ -63,7 +63,7 @@ func main() {
 	// LUCODE_NATS_URL can be a nats:// (TCP) or ws:// URL
 	natsURL := firstEnv("LUCODE_NATS_URL")
 	if natsURL == "" {
-		natsURL = "nats://127.0.0.1:5222"
+		natsURL = "nats://127.0.0.1:4222"
 	}
 
 	logger.Printf("LUCODE_SESSION_ID=%q", sessionID)
