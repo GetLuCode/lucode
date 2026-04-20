@@ -33,7 +33,7 @@ type ollamaMessage struct {
 	Role       string           `json:"role"`
 	Content    string           `json:"content"`
 	Images     []string         `json:"images,omitempty"`
-	ToolCalls  []ollamaToolCall `json:"tool_calls,omitempty"`  // only set on assistant messages
+	ToolCalls  []ollamaToolCall `json:"tool_calls,omitempty"`   // only set on assistant messages
 	ToolCallID string           `json:"tool_call_id,omitempty"` // only set on tool result messages
 }
 

@@ -79,6 +79,7 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 		contentJSON, _ := json.Marshal(contentBlocks)
 		content = string(contentJSON)
 	}
+	opts.TurnStartSeq = seq
 	userMsgID := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 	_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
@@ -282,8 +283,11 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 		ps.Cancel()
 		close(ps.Done)
 		ps.Cmd.Wait()
+		// Only remove our entry — a new turn may have already replaced it.
 		m.mu.Lock()
-		delete(m.procs, ps.SessionID)
+		if m.procs[ps.SessionID] == ps {
+			delete(m.procs, ps.SessionID)
+		}
 		m.mu.Unlock()
 	}()
 
@@ -295,6 +299,7 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 
 	seq, _ := dbpkg.NextMessageSeq(m.db, ps.SessionID)
 	accum := newTurnAccum()
+	turnCompleted := false
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -319,7 +324,7 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 		// instead parse and re-broadcast as a context_usage event.
 		if event.EventType == "control_response" {
 			if cu, err := parseContextUsage(event.Event); err == nil {
-				m.bus.Broadcast(ps.SessionID, map[string]any{
+				payload := map[string]any{
 					"type":        "context_usage",
 					"session_id":  ps.SessionID,
 					"categories":  cu.Categories,
@@ -327,7 +332,14 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 					"maxTokens":   cu.MaxTokens,
 					"percentage":  cu.Percentage,
 					"model":       cu.Model,
-				})
+				}
+				m.bus.Broadcast(ps.SessionID, payload)
+				// Persist so it survives page refresh
+				if usageJSON, err := json.Marshal(payload); err == nil {
+					if err := dbpkg.UpdateSessionContextUsage(m.db, ps.SessionID, string(usageJSON)); err != nil {
+						log.Printf("[context] persist error session=%s: %v", sid8, err)
+					}
+				}
 			} else {
 				log.Printf("[context] parse error session=%s: %v", sid8, err)
 			}
@@ -347,12 +359,6 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 
 		if isResult {
 			log.Printf("[stream] session=%s turn complete: subtype=%s", sid8, event.ResultSubtype)
-			dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
-			m.bus.Broadcast(ps.SessionID, map[string]any{
-				"type":       "session_status",
-				"session_id": ps.SessionID,
-				"status":     string(StatusIdle),
-			})
 
 			// Persist token usage for this turn.
 			if accum.inputTokens > 0 || accum.outputTokens > 0 {
@@ -370,6 +376,10 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 				if err := dbpkg.InsertTurnUsage(m.db, tu); err != nil {
 					log.Printf("[usage] insert error session=%s: %v", sid8, err)
 				}
+				// Embed turn-level tokens into this turn's tool_execution messages
+				if err := dbpkg.UpdateToolExecutionTokens(m.db, ps.SessionID, opts.TurnStartSeq, tu); err != nil {
+					log.Printf("[usage] tool_exec tokens error session=%s: %v", sid8, err)
+				}
 				// Broadcast authoritative token counts so the UI header stays accurate.
 				m.bus.Broadcast(ps.SessionID, map[string]any{
 					"type":                        "turn_usage",
@@ -381,6 +391,23 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 					"model":                       opts.Model,
 				})
 			}
+
+			// Remove from procs BEFORE broadcasting idle so new turns can start
+			// immediately without racing against the remaining process teardown
+			// (RequestContextUsage + process exit).
+			m.mu.Lock()
+			if m.procs[ps.SessionID] == ps {
+				delete(m.procs, ps.SessionID)
+			}
+			m.mu.Unlock()
+			turnCompleted = true
+
+			dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
+			m.bus.Broadcast(ps.SessionID, map[string]any{
+				"type":       "session_status",
+				"session_id": ps.SessionID,
+				"status":     string(StatusIdle),
+			})
 
 			// Send get_context_usage and keep scanning — the control_response
 			// will arrive as another stdout line and be handled in the next iteration.
@@ -404,16 +431,20 @@ func (m *Manager) streamOutput(sr *spawnResult) {
 	}
 	log.Printf("[stream] session=%s process exited code=%d", sid8, exitCode)
 
-	if exitCode != 0 {
-		msg := fmt.Sprintf("claude exited with code %s", strconv.Itoa(exitCode))
-		m.bus.Broadcast(ps.SessionID, map[string]any{
-			"type":       "error",
-			"session_id": ps.SessionID,
-			"message":    msg,
-		})
-		dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusError))
-	} else {
-		dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
+	// If the turn completed normally we already set status to idle and removed
+	// from procs. Don't touch session state here — a new turn may have started.
+	if !turnCompleted {
+		if exitCode != 0 {
+			msg := fmt.Sprintf("claude exited with code %s", strconv.Itoa(exitCode))
+			m.bus.Broadcast(ps.SessionID, map[string]any{
+				"type":       "error",
+				"session_id": ps.SessionID,
+				"message":    msg,
+			})
+			dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusError))
+		} else {
+			dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
+		}
 	}
 }
 

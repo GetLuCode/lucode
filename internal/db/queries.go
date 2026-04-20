@@ -85,6 +85,7 @@ type Session struct {
 	MessageCount int       `json:"message_count"`
 	CreatedAt    time.Time `json:"created_at"`
 	LastActive   time.Time `json:"last_active"`
+	ContextUsage string    `json:"context_usage,omitempty"`
 }
 
 func InsertSession(db *sql.DB, s Session) error {
@@ -100,8 +101,8 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 	var parentID sql.NullString
 	var createdAt, lastActive string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id FROM sessions WHERE id=?`, id,
-	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID)
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage FROM sessions WHERE id=?`, id,
+	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage)
 	if err != nil {
 		return s, err
 	}
@@ -115,7 +116,7 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 
 func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id FROM sessions WHERE project_id=? ORDER BY last_active DESC`,
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage FROM sessions WHERE project_id=? ORDER BY last_active DESC`,
 		projectID,
 	)
 	if err != nil {
@@ -127,7 +128,7 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		var s Session
 		var parentID sql.NullString
 		var createdAt, lastActive string
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -138,6 +139,12 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// UpdateSessionContextUsage persists the last known context window breakdown for a session.
+func UpdateSessionContextUsage(db *sql.DB, id, usageJSON string) error {
+	_, err := db.Exec(`UPDATE sessions SET context_usage=? WHERE id=?`, usageJSON, id)
+	return err
 }
 
 func UpdateSessionStatus(db *sql.DB, id, status string) error {
@@ -736,6 +743,54 @@ func InsertTurnUsage(db *sql.DB, u TurnUsage) error {
 		u.InputTokens, u.OutputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens,
 	)
 	return err
+}
+
+// UpdateToolExecutionTokens embeds turn-level token usage into tool_execution messages
+// that belong to the current turn (seq >= minSeq). This lets the chat history show
+// token counts even after page refresh.
+func UpdateToolExecutionTokens(db *sql.DB, sessID string, minSeq int, u TurnUsage) error {
+	rows, err := db.Query(
+		`SELECT id, content FROM messages WHERE session_id=? AND role='tool_execution' AND seq>=?`,
+		sessID, minSeq,
+	)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id      string
+		content string
+	}
+	var msgs []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.content); err != nil {
+			rows.Close()
+			return err
+		}
+		msgs = append(msgs, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	usageJSON, _ := json.Marshal(map[string]int{
+		"input_tokens":                u.InputTokens,
+		"output_tokens":               u.OutputTokens,
+		"cache_creation_input_tokens": u.CacheCreationInputTokens,
+		"cache_read_input_tokens":     u.CacheReadInputTokens,
+	})
+
+	for _, m := range msgs {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(m.content), &obj); err != nil {
+			continue
+		}
+		obj["usage"] = json.RawMessage(usageJSON)
+		updated, _ := json.Marshal(obj)
+		db.Exec(`UPDATE messages SET content=? WHERE id=?`, string(updated), m.id)
+	}
+	return nil
 }
 
 // DailyUsageRow aggregates token usage grouped by date and model.

@@ -333,7 +333,22 @@ export const useStore = create<AppState>((set, get) => ({
   setActiveProject: async (id) => {
     set({ activeProjectId: id, activeSessionId: null })
     const sessions = await api.listSessions(id)
-    set({ sessions })
+    // Restore persisted context usage from each session
+    const restoredContextUsage: Record<string, ContextUsage> = {}
+    for (const s of sessions) {
+      if (s.context_usage) {
+        try {
+          const cu = JSON.parse(s.context_usage)
+          if (cu && cu.totalTokens != null) {
+            restoredContextUsage[s.id] = { ...cu, session_id: s.id }
+          }
+        } catch { /* ignore malformed */ }
+      }
+    }
+    set(prev => ({
+      sessions,
+      contextUsage: { ...prev.contextUsage, ...restoredContextUsage },
+    }))
   },
 
   setActiveSession: async (id) => {
@@ -941,10 +956,27 @@ export const useStore = create<AppState>((set, get) => ({
       }
 
       case 'turn_usage': {
-        // Server-authoritative token counts — update sessionUsage so the header badge is accurate
+        // Server-authoritative token counts — update sessionUsage so the header badge is accurate.
+        // Also embed tokens into live tool_execution messages so they display without a refresh.
         const tuSessId = event.session_id
+        const tuUsage = {
+          input_tokens: event.input_tokens,
+          output_tokens: event.output_tokens,
+          cache_creation_input_tokens: event.cache_creation_input_tokens,
+          cache_read_input_tokens: event.cache_read_input_tokens,
+        }
         set(s => {
           const prev = s.sessionUsage[tuSessId] ?? { input_tokens: 0, output_tokens: 0 }
+          // Update tool_execution messages that don't yet have usage data
+          const msgs = s.messages[tuSessId] ?? []
+          const updatedMsgs = msgs.map(m => {
+            if (m.role !== 'tool_execution') return m
+            try {
+              const data = JSON.parse(m.content) as Record<string, unknown>
+              if (data.usage) return m // already set
+              return { ...m, content: JSON.stringify({ ...data, usage: tuUsage }) }
+            } catch { return m }
+          })
           return {
             sessionUsage: {
               ...s.sessionUsage,
@@ -955,6 +987,7 @@ export const useStore = create<AppState>((set, get) => ({
                 cache_read_input_tokens: (prev.cache_read_input_tokens ?? 0) + event.cache_read_input_tokens,
               },
             },
+            messages: { ...s.messages, [tuSessId]: updatedMsgs },
           }
         })
         break

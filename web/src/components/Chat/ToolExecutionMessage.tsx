@@ -2,12 +2,20 @@ import { useMemo, useState } from 'react'
 import { IconHourglass, IconCheck, IconChevronDown } from '@tabler/icons-react'
 import './ToolExecutionMessage.css'
 
+interface ToolUsage {
+  input_tokens?: number
+  output_tokens?: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
+}
+
 interface ToolExecutionData {
   tool_name: string
   tool_input: Record<string, unknown>
   tool_response?: Record<string, unknown>
   tool_use_id: string
   timestamp: string
+  usage?: ToolUsage
 }
 
 export function ToolExecutionMessage({ content }: { content: string }) {
@@ -28,9 +36,7 @@ export function ToolExecutionMessage({ content }: { content: string }) {
 
   const isComplete = !!toolData.tool_response
   const toolName = toolData.tool_name
-  const inputTokens = typeof toolData.tool_input?.input_tokens === 'number' ? toolData.tool_input.input_tokens : 0
-  const outputTokens = typeof toolData.tool_response?.output_tokens === 'number' ? toolData.tool_response.output_tokens : 0
-  const totalTokens = inputTokens + outputTokens
+  const usage = toolData.usage
 
   return (
     <div className="tool-execution">
@@ -49,9 +55,6 @@ export function ToolExecutionMessage({ content }: { content: string }) {
           )}
         </div>
         <div className="tool-execution__tool-name">{toolName}</div>
-        {totalTokens > 0 && (
-          <span className="tool-execution__tokens">{totalTokens} tokens</span>
-        )}
         {isComplete && <span className="tool-execution__status">Done</span>}
         <IconChevronDown
           size={16}
@@ -68,8 +71,23 @@ export function ToolExecutionMessage({ content }: { content: string }) {
           )}
         </>
       )}
+      {usage && <ToolUsageBadge usage={usage} />}
     </div>
   )
+}
+
+function fmtTok(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+}
+
+function ToolUsageBadge({ usage }: { usage: ToolUsage }) {
+  const parts: string[] = []
+  if (usage.input_tokens)                parts.push(`↑${fmtTok(usage.input_tokens)}`)
+  if (usage.output_tokens)               parts.push(`↓${fmtTok(usage.output_tokens)}`)
+  if (usage.cache_creation_input_tokens) parts.push(`cache✎${fmtTok(usage.cache_creation_input_tokens)}`)
+  if (usage.cache_read_input_tokens)     parts.push(`cache↩${fmtTok(usage.cache_read_input_tokens)}`)
+  if (parts.length === 0) return null
+  return <div className="tool-execution__usage">{parts.join('  ·  ')}</div>
 }
 
 function ToolInputDisplay({ toolName, input }: { toolName: string; input: Record<string, unknown> }) {

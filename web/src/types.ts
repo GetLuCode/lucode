@@ -26,6 +26,7 @@ export interface Session {
   message_count: number
   created_at: string
   last_active: string
+  context_usage?: string  // JSON-encoded context usage, persisted per session
 }
 
 export interface MessageUsage {

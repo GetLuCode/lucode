@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -215,11 +216,14 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN expires_at    INTEGER NOT NULL DEFAULT 0`)
 
+	// sessions.context_usage — last known context window breakdown per session (idempotent)
+	db.Exec(`ALTER TABLE sessions ADD COLUMN context_usage TEXT NOT NULL DEFAULT ''`)
+
 	// turn_usage — per-turn token consumption for analytics
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS turn_usage (
     id                           TEXT PRIMARY KEY,
-    session_id                   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    session_id                   TEXT NOT NULL DEFAULT '',
     project_id                   TEXT NOT NULL DEFAULT '',
     account_id                   TEXT NOT NULL DEFAULT '',
     model                        TEXT NOT NULL DEFAULT '',
@@ -236,5 +240,51 @@ CREATE INDEX IF NOT EXISTS idx_turn_usage_created   ON turn_usage(created_at);
 		return fmt.Errorf("create turn_usage: %w", err)
 	}
 
+	// Remove ON DELETE CASCADE from turn_usage.session_id so deleting a session
+	// does not wipe its historical metrics. Migrate only if the old schema is present.
+	if err := migrateTurnUsageDropCascade(db); err != nil {
+		return fmt.Errorf("migrate turn_usage cascade: %w", err)
+	}
+
 	return nil
+}
+
+// migrateTurnUsageDropCascade recreates turn_usage without the ON DELETE CASCADE
+// on session_id so that deleting a session preserves its historical metrics.
+// It is a no-op when the table already has the correct schema.
+func migrateTurnUsageDropCascade(db *sql.DB) error {
+	var schema string
+	err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='turn_usage'`,
+	).Scan(&schema)
+	if err != nil {
+		return nil // table doesn't exist yet — nothing to do
+	}
+	if !strings.Contains(schema, "ON DELETE CASCADE") {
+		return nil // already migrated
+	}
+
+	_, err = db.Exec(`
+PRAGMA foreign_keys = OFF;
+CREATE TABLE IF NOT EXISTS turn_usage_new (
+    id                           TEXT PRIMARY KEY,
+    session_id                   TEXT NOT NULL DEFAULT '',
+    project_id                   TEXT NOT NULL DEFAULT '',
+    account_id                   TEXT NOT NULL DEFAULT '',
+    model                        TEXT NOT NULL DEFAULT '',
+    input_tokens                 INTEGER NOT NULL DEFAULT 0,
+    output_tokens                INTEGER NOT NULL DEFAULT 0,
+    cache_creation_input_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_read_input_tokens      INTEGER NOT NULL DEFAULT 0,
+    created_at                   DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO turn_usage_new SELECT * FROM turn_usage;
+DROP TABLE turn_usage;
+ALTER TABLE turn_usage_new RENAME TO turn_usage;
+CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_project ON turn_usage(project_id);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_created ON turn_usage(created_at);
+PRAGMA foreign_keys = ON;
+`)
+	return err
 }

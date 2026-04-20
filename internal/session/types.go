@@ -59,4 +59,7 @@ type TurnOptions struct {
 	AccountClaudeConfigDir string
 	// AccountID is the ID of the claude_account used for this turn (for metrics).
 	AccountID string
+	// TurnStartSeq is the seq of the user message that started this turn.
+	// Used to identify tool_execution messages belonging to this turn.
+	TurnStartSeq int
 }

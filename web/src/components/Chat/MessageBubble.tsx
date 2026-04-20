@@ -207,9 +207,10 @@ function MarkdownContent({ content }: { content: string }) {
 
 function TokenBadge({ usage }: { usage: NonNullable<Message['usage']> }) {
   const parts: string[] = []
-  if (usage.input_tokens)            parts.push(`↑${fmt(usage.input_tokens)}`)
-  if (usage.output_tokens)           parts.push(`↓${fmt(usage.output_tokens)}`)
-  if (usage.cache_read_input_tokens) parts.push(`cache↩${fmt(usage.cache_read_input_tokens)}`)
+  if (usage.input_tokens)                parts.push(`↑${fmt(usage.input_tokens)}`)
+  if (usage.output_tokens)               parts.push(`↓${fmt(usage.output_tokens)}`)
+  if (usage.cache_creation_input_tokens) parts.push(`cache✎${fmt(usage.cache_creation_input_tokens)}`)
+  if (usage.cache_read_input_tokens)     parts.push(`cache↩${fmt(usage.cache_read_input_tokens)}`)
 
   return <div className="msg__tokens">{parts.join('  ·  ')}</div>
 }

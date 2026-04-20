@@ -13,19 +13,32 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+// wsConn wraps a websocket connection with a per-connection write mutex.
+// gorilla/websocket allows only one concurrent writer per connection.
+type wsConn struct {
+	mu sync.Mutex
+	c  *websocket.Conn
+}
+
+func (w *wsConn) write(data []byte) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.c.WriteMessage(websocket.TextMessage, data)
+}
+
 // wsHub manages all connected browser WebSocket clients.
 type wsHub struct {
 	mu      sync.RWMutex
-	clients map[*websocket.Conn]struct{}
+	clients map[*websocket.Conn]*wsConn
 }
 
 var hub = &wsHub{
-	clients: make(map[*websocket.Conn]struct{}),
+	clients: make(map[*websocket.Conn]*wsConn),
 }
 
 func (h *wsHub) add(c *websocket.Conn) {
 	h.mu.Lock()
-	h.clients[c] = struct{}{}
+	h.clients[c] = &wsConn{c: c}
 	h.mu.Unlock()
 }
 
@@ -38,15 +51,18 @@ func (h *wsHub) remove(c *websocket.Conn) {
 func (h *wsHub) broadcast(data []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	for c := range h.clients {
-		c.WriteMessage(websocket.TextMessage, data)
+	for _, wc := range h.clients {
+		wc.write(data)
 	}
 }
 
 func (h *wsHub) send(c *websocket.Conn, data []byte) {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-	c.WriteMessage(websocket.TextMessage, data)
+	wc, ok := h.clients[c]
+	h.mu.RUnlock()
+	if ok {
+		wc.write(data)
+	}
 }
 
 // BroadcastToWS sends an event to all connected browser clients.
