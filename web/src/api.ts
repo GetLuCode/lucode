@@ -62,6 +62,18 @@ export const listSessions = (pid: string) => req<Session[]>('GET', `/api/project
 export const createSession = (pid: string, data: { name?: string; model?: string; provider?: string; account_id?: string }) =>
   req<Session>('POST', `/api/projects/${pid}/sessions`, data)
 export const deleteSession = (id: string) => req<void>('DELETE', `/api/sessions/${id}`)
+
+export async function exportSession(id: string): Promise<Blob> {
+  const token = getAuthToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`/api/sessions/${id}/export`, { headers })
+  if (!res.ok) throw new Error(`export failed: ${res.status}`)
+  return res.blob()
+}
+
+export const importSession = (pid: string, data: unknown) =>
+  req<Session>('POST', `/api/projects/${pid}/sessions/import`, data)
 export const renameSession = (id: string, name: string) =>
   req<void>('PATCH', `/api/sessions/${id}`, { name })
 export const sendTurn = (id: string, message: string, model?: string, provider?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) =>

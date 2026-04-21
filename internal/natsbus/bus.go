@@ -55,7 +55,7 @@ type Bus struct {
 	OnBroadcast      func(data []byte) // sends event to all browser WS clients
 	OnHookRequest    func(sessID, toolUseID, toolName string, toolInput json.RawMessage)
 	OnHookRespond    func(sessID, toolUseID, decision, reason string)
-	OnHookDisconnect func(sessID, toolUseID string) // kept for interface parity; unused with NATS
+	OnHookDisconnect func(sessID, toolUseID string)
 }
 
 // NewBus wraps an existing nats.Conn (the embedded server's internal connection).

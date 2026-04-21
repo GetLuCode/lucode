@@ -1,11 +1,6 @@
 package session
 
-import (
-	"context"
-	"io"
-	"os/exec"
-	"sync"
-)
+import "context"
 
 type Status string
 
@@ -16,22 +11,20 @@ const (
 	StatusError       Status = "error"
 )
 
+// ProcessState tracks an active turn for busy detection and cancellation.
 type ProcessState struct {
 	SessionID string
-	Cmd       *exec.Cmd
 	Done      chan struct{}
 	Cancel    context.CancelFunc
-	StdinPipe io.WriteCloser
-	StdinMu   sync.Mutex
 }
 
 // Provider selects the AI backend for a turn.
 type Provider string
 
 const (
-	ProviderClaude     Provider = "claude"    // claude CLI (default)
-	ProviderOllama     Provider = "ollama"    // local Ollama API
-	ProviderAnthropic  Provider = "anthropic" // direct Messages API via OAuth
+	ProviderClaude    Provider = "claude"    // claude CLI via aiapi
+	ProviderOllama    Provider = "ollama"    // Ollama API via aiapi
+	ProviderAnthropic Provider = "anthropic" // Anthropic Messages API via aiapi
 )
 
 type TurnOptions struct {
@@ -42,24 +35,17 @@ type TurnOptions struct {
 	Name            string
 	WorkDirs        []string
 	ClaudeConfigDir string
-	ClaudeSettings  string // path to --settings file passed to claude CLI
-	Resume          bool   // true → --resume=SessionID
-	ForkFrom        string // non-empty → --fork-session --resume=ForkFrom --session-id=SessionID
-	Effort          string // low|medium|high|max|auto
-	Thinking        string // enabled|disabled|adaptive
-	ImageBase64     string // base64-encoded image
-	ImageMediaType  string // image/jpeg, image/png, etc.
+	ClaudeSettings  string
+	Resume          bool
+	ForkFrom        string
+	Effort          string
+	Thinking        string
+	ImageBase64     string
+	ImageMediaType  string
 
-	// Provider selects the AI backend. Defaults to ProviderClaude when empty.
-	Provider Provider
-	// OllamaHost is the base URL of the Ollama API (default: http://localhost:11434).
-	OllamaHost string
-	// AccountClaudeConfigDir is the resolved claude config dir from a registered account.
-	// Used by ProviderAnthropic to locate .credentials.json.
+	Provider               Provider
+	OllamaHost             string
 	AccountClaudeConfigDir string
-	// AccountID is the ID of the claude_account used for this turn (for metrics).
-	AccountID string
-	// TurnStartSeq is the seq of the user message that started this turn.
-	// Used to identify tool_execution messages belonging to this turn.
-	TurnStartSeq int
+	AccountID              string
+	TurnStartSeq           int
 }

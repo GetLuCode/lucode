@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
-import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout } from '@tabler/icons-react'
+import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout, IconDownload, IconUpload } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 import { SettingsModal } from '../Settings/SettingsModal'
 import { AccountFooter } from './AccountFooter'
@@ -30,7 +30,10 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
   const renameProject = useStore(s => s.renameProject)
   const deleteSession = useStore(s => s.deleteSession)
   const renameSession = useStore(s => s.renameSession)
+  const importSession = useStore(s => s.importSession)
   const sessionStatus = useStore(s => s.sessionStatus)
+  const importRef = useRef<HTMLInputElement>(null)
+  const importingProjectId = useRef<string | null>(null)
 
   const [collapsed, setCollapsed] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
@@ -112,6 +115,43 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
   }
 
   // Sessions are loaded for the active project only
+  const handleExport = async (e: React.MouseEvent, sess: Session) => {
+    e.stopPropagation()
+    setActiveSessionMenu(null)
+    try {
+      const blob = await api.exportSession(sess.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(sess.name || 'session').replace(/[^a-zA-Z0-9_-]/g, '_')}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('export failed', err)
+    }
+  }
+
+  const handleImportClick = (e: React.MouseEvent, projectId: string) => {
+    e.stopPropagation()
+    setActiveProjectMenu(null)
+    importingProjectId.current = projectId
+    importRef.current?.click()
+  }
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    const pid = importingProjectId.current
+    if (!file || !pid) return
+    e.target.value = ''
+    try {
+      const data = JSON.parse(await file.text())
+      const sess = await importSession(pid, data)
+      navigate(`/projects/${pid}/sessions/${sess.id}`)
+    } catch (err) {
+      console.error('import failed', err)
+    }
+  }
+
   const getProjectSessions = (projectId: string): Session[] => {
     if (activeProjectId !== projectId) return []
     return sessions
@@ -185,6 +225,8 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
           onConfirm={handleWorkspacePickerConfirm}
         />
 
+        <input ref={importRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
+
         {/* tree */}
         <ul className="nav-tree">
           {projects.map((p: Project) => {
@@ -246,6 +288,13 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
                           >
                             <IconEdit size={14} />
                             <span>Rename</span>
+                          </button>
+                          <button
+                            className="nav-tree__menu-item"
+                            onClick={e => handleImportClick(e, p.id)}
+                          >
+                            <IconUpload size={14} />
+                            <span>Import session</span>
                           </button>
                           <button
                             className="nav-tree__menu-item nav-tree__menu-item--danger"
@@ -317,6 +366,13 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
                                 >
                                   <IconEdit size={14} />
                                   <span>Rename</span>
+                                </button>
+                                <button
+                                  className="nav-tree__menu-item"
+                                  onClick={e => handleExport(e, s)}
+                                >
+                                  <IconDownload size={14} />
+                                  <span>Export</span>
                                 </button>
                                 <button
                                   className="nav-tree__menu-item nav-tree__menu-item--danger"

@@ -1,0 +1,19 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/authapi ./cmd/authapi"
+  entrypoint = "./tmp/authapi"
+  args_bin = ["--addr=:8092"]
+  include_ext = ["go"]
+  include_dir = ["cmd/authapi", "internal/auth", "internal/authclient", "internal/db"]
+  exclude_dir = ["tmp", "web"]
+  delay = 500
+  stop_on_error = false
+  log = "build-errors.log"
+
+[log]
+  main_only = false
+
+[misc]
+  clean_on_exit = false

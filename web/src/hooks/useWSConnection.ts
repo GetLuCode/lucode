@@ -8,7 +8,7 @@ const handlers = new Set<MessageHandler>()
 
 function getWSUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//localhost:8090/`
+  return `${protocol}//localhost:8090/ws`
 }
 
 export function getWSConnection(): ReconnectingWebSocket {

@@ -1,9 +1,7 @@
 package api
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	authpkg "claude-orchestrator/internal/auth"
+	authclient "claude-orchestrator/internal/authclient"
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
 	sessionpkg "claude-orchestrator/internal/session"
@@ -41,12 +39,13 @@ type Handler struct {
 	manager    *sessionpkg.Manager
 	workingDir string
 	ollamaHost string
+	auth       *authclient.Client
 
-	cacheMu       sync.Mutex
-	profileCache  map[string]cachedEntry // account id → profile (24h TTL)
-	usageCache    map[string]cachedEntry // account id → usage (5min TTL)
-	toolExecMu    sync.RWMutex
-	toolExecMap   map[string]map[string]*toolExecution // sessID → tool_use_id → execution
+	cacheMu      sync.Mutex
+	profileCache map[string]cachedEntry
+	usageCache   map[string]cachedEntry
+	toolExecMu   sync.RWMutex
+	toolExecMap  map[string]map[string]*toolExecution
 }
 
 // toolExecution tracks a tool execution from PreToolUse to PostToolUse
@@ -66,10 +65,15 @@ func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir s
 		manager:      manager,
 		workingDir:   workingDir,
 		ollamaHost:   "http://localhost:11434",
+		auth:         authclient.New("http://localhost:8092"),
 		profileCache: make(map[string]cachedEntry),
 		usageCache:   make(map[string]cachedEntry),
 		toolExecMap:  make(map[string]map[string]*toolExecution),
 	}
+}
+
+func (h *Handler) SetAuthURL(url string) {
+	h.auth = authclient.New(url)
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -88,6 +92,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/fork", h.forkSession)
 
 	mux.HandleFunc("GET /api/sessions/{id}/messages", h.listMessages)
+	mux.HandleFunc("GET /api/sessions/{id}/export", h.exportSession)
+	mux.HandleFunc("POST /api/projects/{pid}/sessions/import", h.importSession)
 	mux.HandleFunc("GET /api/messages/{id}/context", h.getMessageContext)
 	mux.HandleFunc("PATCH /api/messages/{id}/star", h.toggleStarMessage)
 	mux.HandleFunc("GET /api/sessions/{id}/starred", h.listStarredMessages)
@@ -113,16 +119,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/accounts/{id}/usage", h.accountUsage)
 	mux.HandleFunc("GET /api/accounts/{id}/stats", h.accountStats)
 
-	// Auth endpoints
-	mux.HandleFunc("GET /api/auth/status", h.authStatus)
-	mux.HandleFunc("POST /api/auth/signup", h.signup)
-	mux.HandleFunc("POST /api/auth/login", h.login)
-	mux.HandleFunc("POST /api/auth/logout", h.logout)
-
-	// API key endpoints
-	mux.HandleFunc("POST /api/apikeys", h.createAPIKey)
-	mux.HandleFunc("GET /api/apikeys", h.listAPIKeys)
-	mux.HandleFunc("DELETE /api/apikeys/{id}", h.deleteAPIKey)
+	// Auth + API key routes — proxied to authapi
+	authProxy := h.newAuthProxy()
+	mux.Handle("/api/auth/", authProxy)
+	mux.Handle("/api/apikeys", authProxy)
+	mux.Handle("/api/apikeys/", authProxy)
 
 	mux.HandleFunc("GET /api/fs/home-dirs", h.listHomeDirs)
 
@@ -143,7 +144,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/usage/models", h.usageModels)
 	mux.HandleFunc("GET /api/usage/sessions", h.usageSessions)
 
-	mux.HandleFunc("GET /", h.globalWS)
+	mux.HandleFunc("GET /ws", h.globalWS)
 }
 
 // ---- middleware ----
@@ -161,61 +162,66 @@ func cors(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware protects all API routes.
-// Always-public routes (no token needed):
-//   - GET  /api/health
-//   - POST /api/auth/login
-//   - POST /api/auth/signup  — only allowed when no users exist yet (first admin registration)
-//   - POST /api/hooks/*      — called by claude CLI
-//   - non-/api/* paths       — SPA static assets
+// newAuthProxy returns an HTTP handler that reverse-proxies to authapi.
+// It strips the leading /api prefix from the path.
+func (h *Handler) newAuthProxy() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := h.auth.BaseURL() + strings.TrimPrefix(r.URL.Path, "/api")
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+		if err != nil {
+			http.Error(w, "proxy error", http.StatusBadGateway)
+			return
+		}
+		req.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, "auth service unavailable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	})
+}
+
+// authMiddleware protects all API routes except auth/* and hooks/*.
 func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Static assets and SPA routes — always public
 		if !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Always-public API routes
-		if path == "/api/health" || path == "/api/auth/login" || path == "/api/auth/status" {
+		// Auth routes are proxied to authapi — no local auth check needed
+		if strings.HasPrefix(path, "/api/auth/") || path == "/api/apikeys" || strings.HasPrefix(path, "/api/apikeys/") {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Hooks called by claude CLI — always public
-		if strings.HasPrefix(path, "/api/hooks/") {
+		if path == "/api/health" || strings.HasPrefix(path, "/api/hooks/") {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Signup: only allowed when no users exist yet (first-run admin registration)
-		if path == "/api/auth/signup" && r.Method == http.MethodPost {
-			count, _ := dbpkg.CountUsers(h.db)
-			if count == 0 {
-				next.ServeHTTP(w, r)
-				return
-			}
-			http.Error(w, "registration is closed", http.StatusForbidden)
-			return
-		}
-
-		// All other routes require authentication
-		// Try session token first
 		if token := extractBearerToken(r); token != "" {
-			sess, err := dbpkg.GetAuthSession(h.db, token)
-			if err == nil && time.Now().Before(sess.ExpiresAt) {
+			if _, err := h.auth.ValidateToken(token); err == nil {
 				next.ServeHTTP(w, r)
 				return
 			}
 		}
 
-		// Try API key
 		if apiKey := r.Header.Get("X-API-Key"); apiKey != "" {
-			hashBytes := sha256.Sum256([]byte(apiKey))
-			keyHash := base64.StdEncoding.EncodeToString(hashBytes[:])
-			if _, err := dbpkg.GetAPIKeyByHash(h.db, keyHash); err == nil {
+			if _, err := h.auth.ValidateAPIKey(apiKey); err == nil {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -469,6 +475,72 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) exportSession(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.requireAuth(r); err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id := r.PathValue("id")
+	sess, err := dbpkg.GetSession(h.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	messages, err := dbpkg.ListMessages(h.db, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	payload := map[string]any{
+		"version":     1,
+		"session":     sess,
+		"messages":    messages,
+		"exported_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	safe := regexp.MustCompile(`[^a-zA-Z0-9_\-]`).ReplaceAllString(sess.Name, "_")
+	if safe == "" {
+		safe = "session"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.json"`, safe))
+	json.NewEncoder(w).Encode(payload)
+}
+
+func (h *Handler) importSession(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.requireAuth(r); err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	pid := r.PathValue("pid")
+	var payload struct {
+		Session  dbpkg.Session   `json:"session"`
+		Messages []dbpkg.Message `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	newSess := dbpkg.Session{
+		ID:        uuid.New().String(),
+		ProjectID: pid,
+		Name:      payload.Session.Name + " (imported)",
+		Model:     payload.Session.Model,
+		Status:    "idle",
+	}
+	if err := dbpkg.InsertSession(h.db, newSess); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, msg := range payload.Messages {
+		msg.ID = uuid.New().String()
+		msg.SessionID = newSess.ID
+		dbpkg.InsertMessageWithTime(h.db, msg)
+	}
+	// Update message_count in one shot
+	h.db.Exec(`UPDATE sessions SET message_count=? WHERE id=?`, len(payload.Messages), newSess.ID)
+	jsonResp(w, http.StatusCreated, newSess)
 }
 
 func (h *Handler) forkSession(w http.ResponseWriter, r *http.Request) {
@@ -1553,224 +1625,6 @@ func hookPayloadStr(raw json.RawMessage) string {
 // ---- Auth Handlers ----
 
 // authStatus returns whether signup is currently open (only when no users exist).
-func (h *Handler) authStatus(w http.ResponseWriter, r *http.Request) {
-	count, _ := dbpkg.CountUsers(h.db)
-	jsonResp(w, http.StatusOK, map[string]interface{}{
-		"signup_open": count == 0,
-	})
-}
-
-func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
-
-	if body.Username == "" || body.Password == "" {
-		http.Error(w, "username and password required", http.StatusBadRequest)
-		return
-	}
-
-	// Check if user already exists
-	_, err := dbpkg.GetUserByUsername(h.db, body.Username)
-	if err == nil {
-		http.Error(w, "username already taken", http.StatusConflict)
-		return
-	}
-
-	// Hash password
-	hash, err := authpkg.HashPassword(body.Password)
-	if err != nil {
-		http.Error(w, "password hashing failed", http.StatusInternalServerError)
-		return
-	}
-
-	// First user becomes admin
-	count, _ := dbpkg.CountUsers(h.db)
-
-	u := dbpkg.User{
-		ID:           uuid.New().String(),
-		Username:     body.Username,
-		PasswordHash: hash,
-		IsAdmin:      count == 0,
-	}
-	if err := dbpkg.InsertUser(h.db, u); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	jsonResp(w, http.StatusCreated, map[string]interface{}{
-		"user_id":  u.ID,
-		"is_admin": u.IsAdmin,
-	})
-}
-
-func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
-
-	// Get user
-	u, err := dbpkg.GetUserByUsername(h.db, body.Username)
-	if err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-		return
-	}
-
-	// Verify password
-	ok, _ := authpkg.VerifyPassword(body.Password, u.PasswordHash)
-	if !ok {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-		return
-	}
-
-	// Generate session token (48 bytes = 64 base64 chars)
-	token, err := authpkg.GenerateToken(48)
-	if err != nil {
-		http.Error(w, "token generation failed", http.StatusInternalServerError)
-		return
-	}
-
-	// Store session (24h expiry)
-	sess := dbpkg.AuthSession{
-		Token:     token,
-		UserID:    u.ID,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-	}
-	if err := dbpkg.InsertAuthSession(h.db, sess); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	jsonResp(w, http.StatusOK, map[string]interface{}{
-		"token":    token,
-		"user_id":  u.ID,
-		"is_admin": u.IsAdmin,
-	})
-}
-
-func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get token from Authorization header
-	token := extractBearerToken(r)
-	if token == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Delete session
-	if err := dbpkg.DeleteAuthSession(h.db, token); err != nil {
-		log.Printf("logout delete session: %v", err)
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ---- API Key Handlers ----
-
-func (h *Handler) createAPIKey(w http.ResponseWriter, r *http.Request) {
-	userID, err := h.requireAuth(r)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	var body struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
-
-	// Generate key
-	fullKey, keyHash, prefix, err := authpkg.GenerateAPIKey()
-	if err != nil {
-		http.Error(w, "key generation failed", http.StatusInternalServerError)
-		return
-	}
-
-	// Store key
-	k := dbpkg.APIKey{
-		ID:      uuid.New().String(),
-		UserID:  userID,
-		Name:    body.Name,
-		KeyHash: keyHash,
-		Prefix:  prefix,
-	}
-	if err := dbpkg.InsertAPIKey(h.db, k); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Return full key (only shown once)
-	jsonResp(w, http.StatusCreated, map[string]interface{}{
-		"id":      k.ID,
-		"name":    k.Name,
-		"prefix":  k.Prefix,
-		"key":     fullKey,
-		"created_at": k.CreatedAt,
-	})
-}
-
-func (h *Handler) listAPIKeys(w http.ResponseWriter, r *http.Request) {
-	userID, err := h.requireAuth(r)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	keys, err := dbpkg.ListAPIKeys(h.db, userID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if keys == nil {
-		keys = []dbpkg.APIKey{}
-	}
-
-	jsonResp(w, http.StatusOK, keys)
-}
-
-func (h *Handler) deleteAPIKey(w http.ResponseWriter, r *http.Request) {
-	userID, err := h.requireAuth(r)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	id := r.PathValue("id")
-	if err := dbpkg.DeleteAPIKey(h.db, id, userID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // ---- Account Credentials ----
 
 func (h *Handler) updateAccountCredentials(w http.ResponseWriter, r *http.Request) {
@@ -1830,42 +1684,30 @@ func extractBearerToken(r *http.Request) string {
 	return ""
 }
 
-// requireAuth validates session token and returns user ID
+// requireAuth validates session token via authapi and returns user ID.
 func (h *Handler) requireAuth(r *http.Request) (string, error) {
 	token := extractBearerToken(r)
 	if token == "" {
 		return "", fmt.Errorf("missing token")
 	}
-
-	sess, err := dbpkg.GetAuthSession(h.db, token)
+	res, err := h.auth.ValidateToken(token)
 	if err != nil {
-		return "", fmt.Errorf("invalid token")
+		return "", err
 	}
-
-	if time.Now().After(sess.ExpiresAt) {
-		return "", fmt.Errorf("token expired")
-	}
-
-	return sess.UserID, nil
+	return res.UserID, nil
 }
 
-// requireAPIKey validates API key and returns user ID
+// requireAPIKey validates API key via authapi and returns user ID.
 func (h *Handler) requireAPIKey(r *http.Request) (string, error) {
 	apiKey := r.Header.Get("X-API-Key")
 	if apiKey == "" {
 		return "", fmt.Errorf("missing api key")
 	}
-
-	// Hash the provided key and look it up
-	hashBytes := sha256.Sum256([]byte(apiKey))
-	keyHash := base64.StdEncoding.EncodeToString(hashBytes[:])
-
-	key, err := dbpkg.GetAPIKeyByHash(h.db, keyHash)
+	res, err := h.auth.ValidateAPIKey(apiKey)
 	if err != nil {
-		return "", fmt.Errorf("invalid api key")
+		return "", err
 	}
-
-	return key.UserID, nil
+	return res.UserID, nil
 }
 
 // ---- Usage / Metrics ----

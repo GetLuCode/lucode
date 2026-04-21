@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useStore } from '../../store'
+import * as api from '../../api'
 import type { Session } from '../../types'
 
 export function SessionList() {
@@ -10,10 +11,12 @@ export function SessionList() {
   const setPendingSession = useStore(s => s.setPendingSession)
   const deleteSession = useStore(s => s.deleteSession)
   const renameSession = useStore(s => s.renameSession)
+  const importSession = useStore(s => s.importSession)
   const sessionStatus = useStore(s => s.sessionStatus)
   const projects = useStore(s => s.projects)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const importRef = useRef<HTMLInputElement>(null)
 
   if (!activeProjectId) {
     return (
@@ -27,6 +30,36 @@ export function SessionList() {
     const proj = projects.find(p => p.id === activeProjectId)
     const model = proj?.default_model || 'haiku'
     setPendingSession(activeProjectId, model)
+  }
+
+  const handleExport = async (e: React.MouseEvent, sess: Session) => {
+    e.stopPropagation()
+    try {
+      const blob = await api.exportSession(sess.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(sess.name || 'session').replace(/[^a-zA-Z0-9_-]/g, '_')}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('export failed', err)
+    }
+  }
+
+  const handleImportClick = () => importRef.current?.click()
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !activeProjectId) return
+    e.target.value = ''
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      await importSession(activeProjectId, data)
+    } catch (err) {
+      console.error('import failed', err)
+    }
   }
 
   const handleStartEdit = (sess: Session) => {
@@ -64,7 +97,9 @@ export function SessionList() {
     <div className="session-list">
       <div className="session-list__header">
         <span className="session-list__title">Sessions</span>
+        <button className="icon-btn" onClick={handleImportClick} title="Import session">↑</button>
         <button className="icon-btn" onClick={handleCreateNew} title="New session">+</button>
+        <input ref={importRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
       </div>
 
       <ul className="session-list__items">
@@ -105,6 +140,11 @@ export function SessionList() {
                 </>
               )}
             </div>
+            <button
+              className="icon-btn"
+              onClick={e => handleExport(e, s)}
+              title="Export session"
+            >↓</button>
             <button
               className="icon-btn icon-btn--danger"
               onClick={e => { e.stopPropagation(); deleteSession(s.id) }}

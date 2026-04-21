@@ -1,3 +1,6 @@
+# Desktop frontend (populated by build-desktop.sh)
+cmd/desktop/frontend/
+
 # Binaries
 /orchestrator
 /hook

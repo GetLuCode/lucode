@@ -2,13 +2,14 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"strconv"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -26,10 +27,11 @@ type Manager struct {
 	bus            *natspkg.Bus
 	backendNATSURL string
 	claudeSettings string
+	aiAPIURL       string
+	natsCreds      string // path to NATS .creds file, forwarded to hook subprocess
 
-	mu            sync.Mutex
-	procs         map[string]*ProcessState
-	ollamaPending map[string]chan string // tool_use_id → decision channel
+	mu    sync.Mutex
+	procs map[string]*ProcessState
 }
 
 func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings string) *Manager {
@@ -39,7 +41,6 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 		backendNATSURL: backendNATSURL,
 		claudeSettings: claudeSettings,
 		procs:          make(map[string]*ProcessState),
-		ollamaPending:  make(map[string]chan string),
 	}
 	bus.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 		m.onHookRequest(sessID, toolUseID, toolName, toolInput)
@@ -47,16 +48,26 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 	bus.OnHookRespond = func(sessID, toolUseID, decision, reason string) {
 		m.onHookRespond(sessID, toolUseID, decision, reason)
 	}
-	bus.OnHookDisconnect = func(sessID, toolUseID string) {
-		// Not triggered via NATS (stateless hook binary), kept for parity.
-	}
+	bus.OnHookDisconnect = func(sessID, toolUseID string) {}
 	return m
 }
 
-// StartTurn launches an AI turn. Returns immediately; turn runs in a goroutine.
+// SetAIAPIURL configures the URL of the aiapi service.
+func (m *Manager) SetAIAPIURL(url string) {
+	m.aiAPIURL = url
+	log.Printf("[manager] aiapi url — %s", url)
+}
+
+// SetNATSCreds sets the path to the NATS credentials file forwarded to hook subprocesses.
+func (m *Manager) SetNATSCreds(path string) {
+	m.natsCreds = path
+}
+
+// StartTurn launches an AI turn. Returns immediately; the turn runs in a goroutine.
 func (m *Manager) StartTurn(opts TurnOptions) error {
 	m.mu.Lock()
-	if _, active := m.procs[opts.SessionID]; active {
+	_, active := m.procs[opts.SessionID]
+	if active {
 		m.mu.Unlock()
 		return ErrSessionBusy
 	}
@@ -68,7 +79,7 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	seq, _ := dbpkg.NextMessageSeq(m.db, opts.SessionID)
 	content := opts.Message
 	if opts.ImageBase64 != "" {
-		contentBlocks := []map[string]interface{}{
+		blocks := []map[string]interface{}{
 			{"type": "text", "text": opts.Message},
 			{"type": "image", "source": map[string]interface{}{
 				"type":       "base64",
@@ -76,8 +87,8 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 				"data":       opts.ImageBase64,
 			}},
 		}
-		contentJSON, _ := json.Marshal(contentBlocks)
-		content = string(contentJSON)
+		b, _ := json.Marshal(blocks)
+		content = string(b)
 	}
 	opts.TurnStartSeq = seq
 	userMsgID := uuid.New().String()
@@ -89,8 +100,6 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 		Content:   content,
 		Seq:       seq,
 	})
-
-	// Broadcast user message so clients can display it without polling /messages
 	m.bus.Broadcast(opts.SessionID, map[string]any{
 		"type":       "user_message",
 		"session_id": opts.SessionID,
@@ -99,353 +108,202 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 		"seq":        seq,
 		"created_at": now,
 	})
-
 	m.bus.Broadcast(opts.SessionID, map[string]any{
 		"type":       "session_status",
 		"session_id": opts.SessionID,
 		"status":     string(StatusRunning),
 	})
 
+	// Load history (needed for Ollama/Anthropic; harmless for Claude CLI)
+	history, _ := dbpkg.ListMessages(m.db, opts.SessionID)
+	if len(history) > 0 {
+		history = history[:len(history)-1] // exclude the user msg just inserted
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-
-	if opts.Provider == ProviderOllama {
-		history, _ := dbpkg.ListMessages(m.db, opts.SessionID)
-		if len(history) > 0 {
-			history = history[:len(history)-1]
-		}
-		handle, err := startOllamaRun(ctx, opts, history)
-		if err != nil {
-			cancel()
-			dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusError))
-			m.bus.Broadcast(opts.SessionID, map[string]any{
-				"type":       "error",
-				"session_id": opts.SessionID,
-				"message":    err.Error(),
-			})
-			return err
-		}
-		handle.ps.Cancel = cancel
-
-		m.mu.Lock()
-		m.procs[opts.SessionID] = handle.ps
-		m.mu.Unlock()
-
-		go m.streamOllamaOutput(handle)
-		return nil
+	ps := &ProcessState{
+		SessionID: opts.SessionID,
+		Done:      make(chan struct{}),
+		Cancel:    cancel,
 	}
-
-	if opts.Provider == ProviderAnthropic {
-		history, _ := dbpkg.ListMessages(m.db, opts.SessionID)
-		if len(history) > 0 {
-			history = history[:len(history)-1]
-		}
-		handle, err := startAnthropicRun(ctx, opts, history)
-		if err != nil {
-			cancel()
-			dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusError))
-			m.bus.Broadcast(opts.SessionID, map[string]any{
-				"type":       "error",
-				"session_id": opts.SessionID,
-				"message":    err.Error(),
-			})
-			return err
-		}
-		handle.ps.Cancel = cancel
-
-		m.mu.Lock()
-		m.procs[opts.SessionID] = handle.ps
-		m.mu.Unlock()
-
-		go m.streamAnthropicOutput(handle)
-		return nil
-	}
-
-	// Default: claude CLI
-	opts.ClaudeSettings = m.claudeSettings
-	sr, err := spawnClaude(ctx, opts, m.backendNATSURL)
-	if err != nil {
-		cancel()
-		dbpkg.UpdateSessionStatus(m.db, opts.SessionID, string(StatusError))
-		m.bus.Broadcast(opts.SessionID, map[string]any{
-			"type":       "error",
-			"session_id": opts.SessionID,
-			"message":    err.Error(),
-		})
-		return err
-	}
-	sr.ps.Cancel = cancel
-
 	m.mu.Lock()
-	m.procs[opts.SessionID] = sr.ps
+	m.procs[opts.SessionID] = ps
 	m.mu.Unlock()
 
-	go m.streamOutput(sr)
+	go m.runWithAIAPI(ctx, ps, opts, history)
 	return nil
 }
 
-func (m *Manager) streamOllamaOutput(handle *ollamaRunHandle) {
-	ps := handle.ps
+// runWithAIAPI calls the aiapi service via HTTP and streams SSE events
+// to the NATS bus (→ WS clients) while persisting relevant events to DB.
+func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnOptions, history []dbpkg.Message) {
+	sessID := ps.SessionID
 	defer func() {
-		ps.Cancel()
-		m.mu.Lock()
-		delete(m.procs, ps.SessionID)
-		m.mu.Unlock()
-	}()
-
-	seq, _ := dbpkg.NextMessageSeq(m.db, ps.SessionID)
-
-	emit := func(event any) {
-		if data, err := json.Marshal(event); err == nil {
-			log.Printf("[ollama→nats] session=%s %s", ps.SessionID[:8], string(data))
-		}
-		m.bus.Broadcast(ps.SessionID, event)
-	}
-
-	persistText := func(text string) {
-		_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
-			ID:        uuid.New().String(),
-			SessionID: ps.SessionID,
-			Role:      "assistant",
-			Content:   text,
-			Seq:       seq,
-		})
-	}
-
-	askPermission := func(toolUseID, toolName string, toolInput json.RawMessage) string {
-		return m.ollamaToolPermissionRequest(ps.SessionID, toolUseID, toolName, toolInput)
-	}
-
-	streamOllama(handle, ps.SessionID, emit, persistText, askPermission,
-		handle.workDir, handle.host, handle.model, handle.options, handle.messages)
-
-	dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
-	m.bus.Broadcast(ps.SessionID, map[string]any{
-		"type":       "session_status",
-		"session_id": ps.SessionID,
-		"status":     string(StatusIdle),
-	})
-}
-
-func (m *Manager) streamAnthropicOutput(handle *anthropicRunHandle) {
-	ps := handle.ps
-	defer func() {
-		ps.Cancel()
-		m.mu.Lock()
-		delete(m.procs, ps.SessionID)
-		m.mu.Unlock()
-	}()
-
-	seq, _ := dbpkg.NextMessageSeq(m.db, ps.SessionID)
-
-	emit := func(event any) {
-		if data, err := json.Marshal(event); err == nil {
-			log.Printf("[anthropic→nats] session=%s %s", ps.SessionID[:8], string(data))
-		}
-		m.bus.Broadcast(ps.SessionID, event)
-	}
-
-	persistText := func(text string) {
-		_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
-			ID:        uuid.New().String(),
-			SessionID: ps.SessionID,
-			Role:      "assistant",
-			Content:   text,
-			Seq:       seq,
-		})
-	}
-
-	askPermission := func(toolUseID, toolName string, toolInput json.RawMessage) string {
-		return m.ollamaToolPermissionRequest(ps.SessionID, toolUseID, toolName, toolInput)
-	}
-
-	streamAnthropic(handle, ps.SessionID, emit, persistText, askPermission)
-
-	dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
-	m.bus.Broadcast(ps.SessionID, map[string]any{
-		"type":       "session_status",
-		"session_id": ps.SessionID,
-		"status":     string(StatusIdle),
-	})
-}
-
-func (m *Manager) streamOutput(sr *spawnResult) {
-	ps := sr.ps
-	opts := sr.opts
-	defer func() {
-		// Close stdin so the CLI sees EOF and can exit cleanly.
-		ps.StdinMu.Lock()
-		if ps.StdinPipe != nil {
-			ps.StdinPipe.Close()
-			ps.StdinPipe = nil
-		}
-		ps.StdinMu.Unlock()
-
 		ps.Cancel()
 		close(ps.Done)
-		ps.Cmd.Wait()
-		// Only remove our entry — a new turn may have already replaced it.
 		m.mu.Lock()
-		if m.procs[ps.SessionID] == ps {
-			delete(m.procs, ps.SessionID)
+		if m.procs[sessID] == ps {
+			delete(m.procs, sessID)
 		}
 		m.mu.Unlock()
 	}()
 
-	sid8 := ps.SessionID[:8]
-	log.Printf("[stream] session=%s reading stdout", sid8)
+	// Build history payload (user + assistant only)
+	type histMsg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	histMsgs := make([]histMsg, 0, len(history))
+	for _, h := range history {
+		if h.Role != "user" && h.Role != "assistant" {
+			continue
+		}
+		histMsgs = append(histMsgs, histMsg{Role: h.Role, Content: h.Content})
+	}
 
-	scanner := bufio.NewScanner(sr.stdout)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	claudeConfigDir := opts.AccountClaudeConfigDir
+	if claudeConfigDir == "" {
+		claudeConfigDir = opts.ClaudeConfigDir
+	}
 
-	seq, _ := dbpkg.NextMessageSeq(m.db, ps.SessionID)
-	accum := newTurnAccum()
-	turnCompleted := false
+	reqBody := map[string]any{
+		"session_id":        sessID,
+		"message":           opts.Message,
+		"model":             opts.Model,
+		"provider":          string(opts.Provider),
+		"work_dirs":         opts.WorkDirs,
+		"resume":            opts.Resume,
+		"fork_from":         opts.ForkFrom,
+		"name":              opts.Name,
+		"effort":            opts.Effort,
+		"thinking":          opts.Thinking,
+		"claude_config_dir": claudeConfigDir,
+		"claude_settings":   m.claudeSettings,
+		"nats_settings":     m.backendNATSURL,
+		"nats_creds":        m.natsCreds,
+		"ollama_host":       opts.OllamaHost,
+		"image_base64":      opts.ImageBase64,
+		"image_media_type":  opts.ImageMediaType,
+		"history":           histMsgs,
+	}
+	data, _ := json.Marshal(reqBody)
 
+	postResp, err := http.Post(m.aiAPIURL+"/turns", "application/json", bytes.NewReader(data))
+	if err != nil {
+		m.broadcastError(sessID, "aiapi unreachable: "+err.Error())
+		return
+	}
+	defer postResp.Body.Close()
+
+	if postResp.StatusCode != http.StatusAccepted {
+		m.broadcastError(sessID, fmt.Sprintf("aiapi returned %d", postResp.StatusCode))
+		return
+	}
+
+	var turnResp struct {
+		TurnID string `json:"turn_id"`
+	}
+	json.NewDecoder(postResp.Body).Decode(&turnResp)
+	if turnResp.TurnID == "" {
+		m.broadcastError(sessID, "aiapi: empty turn_id")
+		return
+	}
+
+	// Stream SSE from GET /turns/{id}/stream
+	sseReq, _ := http.NewRequestWithContext(ctx, "GET", m.aiAPIURL+"/turns/"+turnResp.TurnID+"/stream", nil)
+	sseResp, err := http.DefaultClient.Do(sseReq)
+	if err != nil {
+		m.broadcastError(sessID, "aiapi stream error: "+err.Error())
+		return
+	}
+	defer sseResp.Body.Close()
+
+	nextSeq, _ := dbpkg.NextMessageSeq(m.db, sessID)
+
+	scanner := bufio.NewScanner(sseResp.Body)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
 	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(line[6:]), &ev); err != nil {
 			continue
 		}
 
-		log.Printf("[stdout] session=%s: %s", sid8, string(line))
-
-		event, isResult, err := ParseLine(ps.SessionID, line)
-		if err != nil {
-			log.Printf("[stream] session=%s parse error: %v", sid8, err)
-			continue
-		}
-		if event.EventType == "" {
-			continue
-		}
-
-		log.Printf("[event] session=%s type=%s partial=%v isResult=%v", sid8, event.EventType, event.Partial, isResult)
-
-		// Handle control_response (e.g. get_context_usage) — don't broadcast raw,
-		// instead parse and re-broadcast as a context_usage event.
-		if event.EventType == "control_response" {
-			if cu, err := parseContextUsage(event.Event); err == nil {
-				payload := map[string]any{
-					"type":        "context_usage",
-					"session_id":  ps.SessionID,
-					"categories":  cu.Categories,
-					"totalTokens": cu.TotalTokens,
-					"maxTokens":   cu.MaxTokens,
-					"percentage":  cu.Percentage,
-					"model":       cu.Model,
+		evType, _ := ev["type"].(string)
+		switch evType {
+		case "message_ready":
+			msg, _ := ev["message"].(map[string]any)
+			if msg != nil {
+				role, _ := msg["role"].(string)
+				content, _ := msg["content"].(string)
+				if role != "" && content != "" {
+					_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
+						ID:        uuid.New().String(),
+						SessionID: sessID,
+						Role:      role,
+						Content:   content,
+						Seq:       nextSeq,
+					})
+					nextSeq++
 				}
-				m.bus.Broadcast(ps.SessionID, payload)
-				// Persist so it survives page refresh
-				if usageJSON, err := json.Marshal(payload); err == nil {
-					if err := dbpkg.UpdateSessionContextUsage(m.db, ps.SessionID, string(usageJSON)); err != nil {
-						log.Printf("[context] persist error session=%s: %v", sid8, err)
-					}
-				}
-			} else {
-				log.Printf("[context] parse error session=%s: %v", sid8, err)
-			}
-			continue
-		}
-
-		// Broadcast immediately (before processing) so frontend sees updates live
-		m.bus.Broadcast(ps.SessionID, event)
-
-		if event.EventType == "stream_event" && event.Event != nil {
-			for _, msg := range accum.process(event.Event, ps.SessionID) {
-				msg.Seq = seq
-				_ = dbpkg.InsertMessage(m.db, msg)
-				seq++
-			}
-		}
-
-		if isResult {
-			log.Printf("[stream] session=%s turn complete: subtype=%s", sid8, event.ResultSubtype)
-
-			// Persist token usage for this turn.
-			if accum.inputTokens > 0 || accum.outputTokens > 0 {
-				tu := dbpkg.TurnUsage{
-					ID:                       uuid.New().String(),
-					SessionID:                ps.SessionID,
-					ProjectID:                opts.ProjectID,
-					AccountID:                opts.AccountID,
-					Model:                    opts.Model,
-					InputTokens:              accum.inputTokens,
-					OutputTokens:             accum.outputTokens,
-					CacheCreationInputTokens: accum.cacheCreationInputTokens,
-					CacheReadInputTokens:     accum.cacheReadInputTokens,
-				}
-				if err := dbpkg.InsertTurnUsage(m.db, tu); err != nil {
-					log.Printf("[usage] insert error session=%s: %v", sid8, err)
-				}
-				// Embed turn-level tokens into this turn's tool_execution messages
-				if err := dbpkg.UpdateToolExecutionTokens(m.db, ps.SessionID, opts.TurnStartSeq, tu); err != nil {
-					log.Printf("[usage] tool_exec tokens error session=%s: %v", sid8, err)
-				}
-				// Broadcast authoritative token counts so the UI header stays accurate.
-				m.bus.Broadcast(ps.SessionID, map[string]any{
-					"type":                        "turn_usage",
-					"session_id":                  ps.SessionID,
-					"input_tokens":                accum.inputTokens,
-					"output_tokens":               accum.outputTokens,
-					"cache_creation_input_tokens": accum.cacheCreationInputTokens,
-					"cache_read_input_tokens":     accum.cacheReadInputTokens,
-					"model":                       opts.Model,
-				})
 			}
 
-			// Remove from procs BEFORE broadcasting idle so new turns can start
-			// immediately without racing against the remaining process teardown
-			// (RequestContextUsage + process exit).
-			m.mu.Lock()
-			if m.procs[ps.SessionID] == ps {
-				delete(m.procs, ps.SessionID)
+		case "session_status":
+			if status, _ := ev["status"].(string); status != "" {
+				dbpkg.UpdateSessionStatus(m.db, sessID, status)
 			}
-			m.mu.Unlock()
-			turnCompleted = true
 
-			dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
-			m.bus.Broadcast(ps.SessionID, map[string]any{
-				"type":       "session_status",
-				"session_id": ps.SessionID,
-				"status":     string(StatusIdle),
-			})
-
-			// Send get_context_usage and keep scanning — the control_response
-			// will arrive as another stdout line and be handled in the next iteration.
-			if err := RequestContextUsage(ps); err != nil {
-				log.Printf("[context] request error session=%s: %v", sid8, err)
-				return
+		case "turn_usage":
+			tu := dbpkg.TurnUsage{
+				ID:        uuid.New().String(),
+				SessionID: sessID,
+				ProjectID: opts.ProjectID,
+				AccountID: opts.AccountID,
+				Model:     opts.Model,
 			}
-			// Don't return yet — wait for the control_response line.
-			// The process will exit after responding, causing scanner.Scan() to return false.
-			continue
+			if v, ok := ev["input_tokens"].(float64); ok {
+				tu.InputTokens = int(v)
+			}
+			if v, ok := ev["output_tokens"].(float64); ok {
+				tu.OutputTokens = int(v)
+			}
+			if v, ok := ev["cache_creation_input_tokens"].(float64); ok {
+				tu.CacheCreationInputTokens = int(v)
+			}
+			if v, ok := ev["cache_read_input_tokens"].(float64); ok {
+				tu.CacheReadInputTokens = int(v)
+			}
+			if err := dbpkg.InsertTurnUsage(m.db, tu); err != nil {
+				log.Printf("[manager] turn_usage insert sess=%s: %v", sessID[:8], err)
+			}
+
+		case "context_usage":
+			if usageJSON, err := json.Marshal(ev); err == nil {
+				_ = dbpkg.UpdateSessionContextUsage(m.db, sessID, string(usageJSON))
+			}
 		}
+
+		// Forward every event to WS clients via NATS bus
+		m.bus.Broadcast(sessID, ev)
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Printf("[stream] session=%s scanner error: %v", sid8, err)
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		log.Printf("[manager] SSE scanner error sess=%s: %v", sessID[:8], err)
 	}
+}
 
-	exitCode := 0
-	if ps.Cmd.ProcessState != nil {
-		exitCode = ps.Cmd.ProcessState.ExitCode()
-	}
-	log.Printf("[stream] session=%s process exited code=%d", sid8, exitCode)
-
-	// If the turn completed normally we already set status to idle and removed
-	// from procs. Don't touch session state here — a new turn may have started.
-	if !turnCompleted {
-		if exitCode != 0 {
-			msg := fmt.Sprintf("claude exited with code %s", strconv.Itoa(exitCode))
-			m.bus.Broadcast(ps.SessionID, map[string]any{
-				"type":       "error",
-				"session_id": ps.SessionID,
-				"message":    msg,
-			})
-			dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusError))
-		} else {
-			dbpkg.UpdateSessionStatus(m.db, ps.SessionID, string(StatusIdle))
-		}
-	}
+func (m *Manager) broadcastError(sessID, msg string) {
+	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusError))
+	m.bus.Broadcast(sessID, map[string]any{
+		"type":       "session_status",
+		"session_id": sessID,
+		"status":     string(StatusError),
+		"error":      msg,
+	})
+	log.Printf("[manager] error sess=%s: %s", sessID[:8], msg)
 }
 
 func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
@@ -461,7 +319,6 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 	})
 	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusWaitingHook))
 
-	// Persist to NATS KV for hook state
 	_ = m.bus.SetHookState(sessID, toolUseID, natspkg.HookState{
 		SessionID: sessID,
 		ToolUseID: toolUseID,
@@ -481,50 +338,7 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 	})
 }
 
-func (m *Manager) ollamaToolPermissionRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) string {
-	ch := make(chan string, 1)
-	m.mu.Lock()
-	m.ollamaPending[toolUseID] = ch
-	m.mu.Unlock()
-
-	createdAt := time.Now().UTC()
-	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusWaitingHook))
-	m.bus.BroadcastToRole(sessID, natspkg.RoleClient, map[string]any{
-		"type":        "hook_pending",
-		"session_id":  sessID,
-		"tool_use_id": toolUseID,
-		"tool_name":   toolName,
-		"tool_input":  toolInput,
-		"created_at":  createdAt.Format(time.RFC3339Nano),
-	})
-
-	decision := <-ch
-
-	m.mu.Lock()
-	delete(m.ollamaPending, toolUseID)
-	m.mu.Unlock()
-
-	dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
-	m.bus.BroadcastToRole(sessID, natspkg.RoleClient, map[string]any{
-		"type":        "hook_resolved",
-		"session_id":  sessID,
-		"tool_use_id": toolUseID,
-		"decision":    decision,
-	})
-
-	return decision
-}
-
 func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
-	// Check if this is an Ollama tool permission request.
-	m.mu.Lock()
-	ch, isOllama := m.ollamaPending[toolUseID]
-	m.mu.Unlock()
-	if isOllama {
-		ch <- decision
-		return
-	}
-
 	hook, err := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
 	if err == nil {
 		content, _ := json.Marshal(map[string]any{
@@ -545,8 +359,6 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 	}
 
 	dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
-
-	// Delete from NATS KV
 	_ = m.bus.DeleteHookState(sessID, toolUseID)
 
 	remaining, _ := dbpkg.CountPendingHooks(m.db, sessID)
@@ -554,7 +366,6 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 		dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
 	}
 
-	// Forward decision to the waiting lucodehook via NATS
 	m.bus.SendHookResponse(sessID, toolUseID, map[string]any{
 		"type":        "hook_response",
 		"tool_use_id": toolUseID,
@@ -584,124 +395,11 @@ func (m *Manager) GetStatus(sessID string) Status {
 	return Status(sess.Status)
 }
 
-// turnAccum accumulates Claude streaming events and emits finalized DB messages.
-type turnAccum struct {
-	text       strings.Builder
-	thinking   strings.Builder
-	blockTypes map[int]string
-
-	// token usage accumulated from the stream
-	inputTokens              int
-	outputTokens             int
-	cacheCreationInputTokens int
-	cacheReadInputTokens     int
-}
-
-func newTurnAccum() *turnAccum {
-	return &turnAccum{blockTypes: make(map[int]string)}
-}
-
-func (a *turnAccum) process(raw json.RawMessage, sessionID string) []dbpkg.Message {
-	var outer struct {
-		Event json.RawMessage `json:"event"`
+func jsonStr(raw json.RawMessage) string {
+	if raw == nil {
+		return ""
 	}
-	if err := json.Unmarshal(raw, &outer); err != nil || outer.Event == nil {
-		return nil
-	}
-
-	var inner map[string]json.RawMessage
-	if err := json.Unmarshal(outer.Event, &inner); err != nil {
-		return nil
-	}
-
-	switch jsonStr(inner["type"]) {
-	case "message_start":
-		// Extract input token counts from the inner event (outer.Event)
-		var msgStart struct {
-			Message struct {
-				Usage struct {
-					InputTokens              int `json:"input_tokens"`
-					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-				} `json:"usage"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal(outer.Event, &msgStart); err == nil {
-			a.inputTokens = msgStart.Message.Usage.InputTokens
-			a.cacheCreationInputTokens = msgStart.Message.Usage.CacheCreationInputTokens
-			a.cacheReadInputTokens = msgStart.Message.Usage.CacheReadInputTokens
-		}
-
-	case "message_delta":
-		// Extract output token count from the inner event
-		var msgDelta struct {
-			Usage struct {
-				OutputTokens int `json:"output_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(outer.Event, &msgDelta); err == nil {
-			a.outputTokens = msgDelta.Usage.OutputTokens
-		}
-
-	case "content_block_start":
-		var idx int
-		json.Unmarshal(inner["index"], &idx)
-		var block struct {
-			Type string `json:"type"`
-		}
-		if cb, ok := inner["content_block"]; ok {
-			json.Unmarshal(cb, &block)
-		}
-		a.blockTypes[idx] = block.Type
-
-	case "content_block_delta":
-		var delta struct {
-			Type     string `json:"type"`
-			Text     string `json:"text"`
-			Thinking string `json:"thinking"`
-		}
-		if d, ok := inner["delta"]; ok {
-			json.Unmarshal(d, &delta)
-		}
-		switch delta.Type {
-		case "text_delta":
-			a.text.WriteString(delta.Text)
-		case "thinking_delta":
-			a.thinking.WriteString(delta.Thinking)
-		}
-
-	case "content_block_stop":
-		var idx int
-		json.Unmarshal(inner["index"], &idx)
-		blockType := a.blockTypes[idx]
-		delete(a.blockTypes, idx)
-
-		if blockType == "thinking" {
-			text := a.thinking.String()
-			a.thinking.Reset()
-			if text != "" {
-				return []dbpkg.Message{{
-					ID:        uuid.New().String(),
-					SessionID: sessionID,
-					Role:      "thinking",
-					Content:   text,
-				}}
-			}
-		}
-
-	case "message_stop":
-		text := a.text.String()
-		a.text.Reset()
-		a.blockTypes = make(map[int]string)
-		if text != "" {
-			return []dbpkg.Message{{
-				ID:        uuid.New().String(),
-				SessionID: sessionID,
-				Role:      "assistant",
-				Content:   text,
-			}}
-		}
-	}
-
-	return nil
+	var s string
+	json.Unmarshal(raw, &s)
+	return s
 }

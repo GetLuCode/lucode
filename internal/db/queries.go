@@ -180,6 +180,17 @@ type Message struct {
 	Starred   bool      `json:"starred"`
 }
 
+// InsertMessageWithTime inserts a message preserving its original created_at.
+// Use this for imports. Does NOT update message_count.
+func InsertMessageWithTime(db *sql.DB, m Message) error {
+	ts := m.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+	_, err := db.Exec(
+		`INSERT INTO messages (id, session_id, role, content, seq, created_at) VALUES (?,?,?,?,?,?)`,
+		m.ID, m.SessionID, m.Role, m.Content, m.Seq, ts,
+	)
+	return err
+}
+
 func InsertMessage(db *sql.DB, m Message) error {
 	_, err := db.Exec(
 		`INSERT INTO messages (id, session_id, role, content, seq) VALUES (?,?,?,?,?)`,

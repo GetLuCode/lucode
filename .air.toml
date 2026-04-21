@@ -4,8 +4,8 @@ tmp_dir = "tmp"
 
 [build]
   cmd = "go build -o ./tmp/lucode ./cmd/lucode && go build -o ./tmp/lucodehook ./cmd/lucodehook"
-  bin = "./tmp/lucode"
-  full_bin = ""
+  entrypoint = "./tmp/lucode"
+  args_bin = ["--port=8090", "--nats-url=nats://127.0.0.1:4222", "--nats-creds=/home/homebox/projects/pusher-clone/server/deploy/creds/platform.creds", "--working-dir=/home/homebox", "--aiapi-url=http://localhost:8091"]
   include_ext = ["go", "tpl", "tmpl", "html"]
   include_dir = ["cmd", "internal", "web/dist"]
   exclude_dir = ["node_modules", "web/node_modules"]

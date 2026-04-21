@@ -40,6 +40,9 @@ func main() {
 
 	port := flag.Int("port", 8090, "HTTP listen port")
 	natsURL := flag.String("nats-url", "nats://127.0.0.1:4222", "External NATS server URL")
+	natsCreds := flag.String("nats-creds", "", "Path to NATS credentials file (.creds)")
+	aiAPIURL  := flag.String("aiapi-url", "http://localhost:8091", "URL of the aiapi service (Claude CLI + Ollama + Anthropic executor)")
+	authURL   := flag.String("auth-url", "http://localhost:8092", "URL of the centralized auth service")
 	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
@@ -57,10 +60,14 @@ func main() {
 	defer db.Close()
 
 	// Connect to external NATS server.
-	nc, err := nats.Connect(*natsURL,
-		nats.Timeout(10*time.Second),
+	natsOpts := []nats.Option{
+		nats.Timeout(10 * time.Second),
 		nats.RetryOnFailedConnect(false),
-	)
+	}
+	if *natsCreds != "" {
+		natsOpts = append(natsOpts, nats.UserCredentials(*natsCreds))
+	}
+	nc, err := nats.Connect(*natsURL, natsOpts...)
 	if err != nil {
 		log.Fatalf("nats connect %s: %v", *natsURL, err)
 	}
@@ -78,12 +85,17 @@ func main() {
 	log.Printf("claude settings: hook=%s settings=%s", *hookBinary, claudeSettingsJSON)
 
 	manager := sessionpkg.NewManager(db, bus, *natsURL, claudeSettingsJSON)
+	manager.SetAIAPIURL(*aiAPIURL)
+	if *natsCreds != "" {
+		manager.SetNATSCreds(*natsCreds)
+	}
 
 	if err := bus.Start(); err != nil {
 		log.Fatalf("nats bus: %v", err)
 	}
 
 	handler := apipkg.New(db, bus, manager, *workingDir)
+	handler.SetAuthURL(*authURL)
 
 	distFS, err := fs.Sub(webui.Dist, "dist")
 	if err != nil {

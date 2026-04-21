@@ -84,6 +84,7 @@ interface AppState {
   setPendingSession: (projectId: string, model: string) => void
   clearPendingSession: () => void
   createSession: (pid: string, data: { name?: string; model?: string; provider?: string; account_id?: string }) => Promise<Session>
+  importSession: (pid: string, data: unknown) => Promise<Session>
   deleteSession: (id: string) => Promise<void>
   sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null, provider?: string, accountId?: string) => void
   respondHook: (sessId: string, decision: 'approve' | 'deny', reason?: string) => void
@@ -385,6 +386,17 @@ export const useStore = create<AppState>((set, get) => ({
       activeSessionId: session.id, // Auto-select the new session so UI receives WS events
       sessionStatus: { ...s.sessionStatus, [session.id]: session.status },
     }))
+    return session
+  },
+
+  importSession: async (pid, data) => {
+    const session = await api.importSession(pid, data)
+    set(s => ({
+      sessions: [session, ...s.sessions],
+      activeSessionId: session.id,
+      sessionStatus: { ...s.sessionStatus, [session.id]: session.status },
+    }))
+    await get().loadMessages(session.id)
     return session
   },
 
