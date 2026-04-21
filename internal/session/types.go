@@ -48,4 +48,7 @@ type TurnOptions struct {
 	AccountClaudeConfigDir string
 	AccountID              string
 	TurnStartSeq           int
+
+	// AIAPIInstanceID, when non-empty, routes this turn to a remote aiapi via NATS.
+	AIAPIInstanceID string
 }

@@ -1,0 +1,61 @@
+.spaces-list {
+  padding: 8px 0 4px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  margin-bottom: 4px;
+}
+
+.spaces-list__header {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted, #666);
+  padding: 0 12px 4px;
+}
+
+.space-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text, #ccc);
+  font-size: 13px;
+  text-align: left;
+  border-radius: 4px;
+  position: relative;
+}
+
+.space-item:hover {
+  background: var(--hover, rgba(255,255,255,0.05));
+}
+
+.space-item--active {
+  color: var(--accent, #7c8cff);
+  background: var(--active-bg, rgba(124,140,255,0.08));
+}
+
+.space-item__icon {
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.space-item__label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-item__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #7c8cff);
+  flex-shrink: 0;
+}

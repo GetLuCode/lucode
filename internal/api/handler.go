@@ -145,12 +145,17 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/usage/sessions", h.usageSessions)
 
 	mux.HandleFunc("GET /ws", h.globalWS)
+
+	// Discovery + remote spaces
+	mux.HandleFunc("GET /api/instances", h.listInstances)
+	mux.HandleFunc("PATCH /api/projects/{id}/aiapi", h.setProjectAIAPI)
 }
 
 // ---- middleware ----
 
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[http] %s %s", r.Method, r.URL.Path)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, PATCH, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
@@ -170,18 +175,22 @@ func (h *Handler) newAuthProxy() http.Handler {
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
 		}
+		log.Printf("[authProxy] %s %s → %s", r.Method, r.URL.Path, target)
 		req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
 		if err != nil {
+			log.Printf("[authProxy] build request error: %v", err)
 			http.Error(w, "proxy error", http.StatusBadGateway)
 			return
 		}
 		req.Header = r.Header.Clone()
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
+			log.Printf("[authProxy] upstream error: %v", err)
 			http.Error(w, "auth service unavailable", http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
+		log.Printf("[authProxy] upstream responded %d", resp.StatusCode)
 		for k, vs := range resp.Header {
 			for _, v := range vs {
 				w.Header().Add(k, v)
@@ -234,7 +243,20 @@ func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 func Wrap(h *Handler) http.Handler {
 	mux := http.NewServeMux()
 	h.Register(mux)
-	return cors(h.authMiddleware(mux))
+	return recoverMiddleware(cors(h.authMiddleware(h.remoteProxy(mux))))
+}
+
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rc := recover(); rc != nil {
+				log.Printf("[http] PANIC %s %s: %v", r.Method, r.URL.Path, rc)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		log.Printf("[http] >> %s %s", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // WrapWithSPA is like Wrap but also serves a Single-Page Application from
@@ -244,7 +266,7 @@ func WrapWithSPA(h *Handler, spaFS fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mux.Handle("/", spaHandler(spaFS))
-	return cors(h.authMiddleware(mux))
+	return recoverMiddleware(cors(h.authMiddleware(h.remoteProxy(mux))))
 }
 
 // spaHandler serves static files from spaFS and falls back to index.html for
@@ -1764,4 +1786,57 @@ func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
 		rows = []dbpkg.SessionUsageRow{}
 	}
 	jsonResp(w, http.StatusOK, rows)
+}
+
+// remoteProxy intercepts requests with X-Lucode-Remote header and forwards
+// them to the target lucode instance via NATS. Other requests pass through.
+func (h *Handler) remoteProxy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetID := r.Header.Get("X-Lucode-Remote")
+		if targetID == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		resp, err := h.bus.RPCRequest(targetID, r)
+		if err != nil {
+			log.Printf("[remoteProxy] rpc %s: %v", targetID, err)
+			http.Error(w, "remote instance unavailable: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	})
+}
+
+// listInstances returns self + all discovered peers (lucode + aiapi).
+func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request) {
+	self := h.bus.SelfInfo()
+	peers := h.bus.Peers()
+	jsonResp(w, http.StatusOK, map[string]any{
+		"self":  self,
+		"peers": peers,
+	})
+}
+
+// setProjectAIAPI updates the aiapi_instance_id for a project.
+func (h *Handler) setProjectAIAPI(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		AIAPIInstanceID string `json:"aiapi_instance_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := dbpkg.UpdateProjectAIAPIInstance(h.db, id, body.AIAPIInstanceID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

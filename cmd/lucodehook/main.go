@@ -102,10 +102,14 @@ func main() {
 	}
 
 	logger.Printf("connecting to NATS %s", natsURL)
-	nc, err := nats.Connect(natsURL,
-		nats.Timeout(10*time.Second),
+	natsOpts := []nats.Option{
+		nats.Timeout(10 * time.Second),
 		nats.RetryOnFailedConnect(false),
-	)
+	}
+	if credsFile := firstEnv("LUCODE_NATS_CREDS"); credsFile != "" {
+		natsOpts = append(natsOpts, nats.UserCredentials(credsFile))
+	}
+	nc, err := nats.Connect(natsURL, natsOpts...)
 	if err != nil {
 		logger.Printf("nats connect error: %v", err)
 		// Cannot reach backend — allow by default so Claude isn't blocked.

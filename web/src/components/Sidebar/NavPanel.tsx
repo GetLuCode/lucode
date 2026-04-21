@@ -4,6 +4,7 @@ import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
 import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout, IconDownload, IconUpload } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
+import { SpacesList } from './SpacesList'
 import { SettingsModal } from '../Settings/SettingsModal'
 import { AccountFooter } from './AccountFooter'
 import { useAuthStore } from '../../store/auth'
@@ -226,6 +227,8 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
         />
 
         <input ref={importRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
+
+        <SpacesList />
 
         {/* tree */}
         <ul className="nav-tree">

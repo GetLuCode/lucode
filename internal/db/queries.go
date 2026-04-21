@@ -15,20 +15,21 @@ type Project struct {
 	WorkDirs        []string  `json:"work_dirs"`
 	ClaudeConfigDir string    `json:"claude_config_dir"`
 	DefaultModel    string    `json:"default_model"`
+	AIAPIInstanceID string    `json:"aiapi_instance_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
 func InsertProject(db *sql.DB, p Project) error {
 	dirs, _ := json.Marshal(p.WorkDirs)
 	_, err := db.Exec(
-		`INSERT INTO projects (id, name, work_dirs, claude_config_dir, default_model) VALUES (?,?,?,?,?)`,
-		p.ID, p.Name, string(dirs), p.ClaudeConfigDir, p.DefaultModel,
+		`INSERT INTO projects (id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id) VALUES (?,?,?,?,?,?)`,
+		p.ID, p.Name, string(dirs), p.ClaudeConfigDir, p.DefaultModel, p.AIAPIInstanceID,
 	)
 	return err
 }
 
 func ListProjects(db *sql.DB) ([]Project, error) {
-	rows, err := db.Query(`SELECT id, name, work_dirs, claude_config_dir, default_model, created_at FROM projects ORDER BY created_at DESC`)
+	rows, err := db.Query(`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, created_at FROM projects ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -36,9 +37,8 @@ func ListProjects(db *sql.DB) ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		var dirsJSON string
-		var createdAt string
-		if err := rows.Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &createdAt); err != nil {
+		var dirsJSON, createdAt string
+		if err := rows.Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &createdAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(dirsJSON), &p.WorkDirs)
@@ -52,8 +52,8 @@ func GetProject(db *sql.DB, id string) (Project, error) {
 	var p Project
 	var dirsJSON, createdAt string
 	err := db.QueryRow(
-		`SELECT id, name, work_dirs, claude_config_dir, default_model, created_at FROM projects WHERE id=?`, id,
-	).Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &createdAt)
+		`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, created_at FROM projects WHERE id=?`, id,
+	).Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &createdAt)
 	if err != nil {
 		return p, err
 	}
@@ -64,6 +64,11 @@ func GetProject(db *sql.DB, id string) (Project, error) {
 
 func DeleteProject(db *sql.DB, id string) error {
 	_, err := db.Exec(`DELETE FROM projects WHERE id=?`, id)
+	return err
+}
+
+func UpdateProjectAIAPIInstance(db *sql.DB, id, aiapiInstanceID string) error {
+	_, err := db.Exec(`UPDATE projects SET aiapi_instance_id=? WHERE id=?`, aiapiInstanceID, id)
 	return err
 }
 

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	natsclient "github.com/nats-io/nats.go"
@@ -19,23 +21,60 @@ import (
 	sessionpkg "claude-orchestrator/internal/session"
 )
 
-const serverPort = 8090
+const defaultLucodePort = 8090
+
+// desktopConfig is read from ~/.lucode/desktop.json on startup.
+type desktopConfig struct {
+	NATSUrl    string `json:"nats_url"`
+	NATSCreds  string `json:"nats_creds"`
+	AuthURL    string `json:"auth_url"`
+	AIAPIURL   string `json:"aiapi_url"`
+	WorkDir    string `json:"working_dir"`
+	LucodePort int    `json:"lucode_port"`
+}
 
 var (
-	flagNATSURL   = flag.String("nats-url", "nats://127.0.0.1:4222", "NATS server URL")
+	flagNATSURL   = flag.String("nats-url", "", "NATS server URL")
 	flagNATSCreds = flag.String("nats-creds", "", "Path to NATS credentials file (.creds)")
-	flagAIAPIURL  = flag.String("aiapi-url", "http://localhost:8091", "URL of the aiapi service")
-	flagAuthURL   = flag.String("auth-url", "http://localhost:8092", "URL of the centralized auth service")
+	flagAIAPIURL  = flag.String("aiapi-url", "", "URL of the aiapi service")
+	flagAuthURL   = flag.String("auth-url", "", "URL of the centralized auth service")
 	flagWorkDir   = flag.String("working-dir", "", "Base directory for workspace picker")
+	flagPort      = flag.Int("port", 0, "Lucode HTTP port (overrides desktop.json lucode_port)")
 )
 
 type App struct {
-	ctx context.Context
+	ctx        context.Context
+	mu         sync.Mutex
+	lucodePort int
+	handler    http.Handler
 }
 
 func NewApp() *App {
 	flag.Parse()
 	return &App{}
+}
+
+// GetLucodePort is a Wails binding — called from JS to get the WS URL port.
+func (a *App) GetLucodePort() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.lucodePort == 0 {
+		return defaultLucodePort
+	}
+	return a.lucodePort
+}
+
+// ServeHTTP forwards API requests from the Wails asset server to the Go handler.
+// This lets the frontend use relative URLs (/api/...) without knowing the port.
+func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	h := a.handler
+	a.mu.Unlock()
+	if h == nil {
+		http.Error(w, "server starting", http.StatusServiceUnavailable)
+		return
+	}
+	h.ServeHTTP(w, r)
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -46,30 +85,53 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(_ context.Context) {}
 
 func (a *App) startServer() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Fatalf("[desktop] PANIC in startServer: %v", r)
+		}
+	}()
+
+	cfg := loadConfig()
+
+	natsURL   := firstNonEmpty(*flagNATSURL, cfg.NATSUrl, "nats://127.0.0.1:4222")
+	natsCreds := firstNonEmpty(*flagNATSCreds, cfg.NATSCreds)
+	authURL   := firstNonEmpty(*flagAuthURL, cfg.AuthURL, "http://localhost:8092")
+	aiAPIURL  := firstNonEmpty(*flagAIAPIURL, cfg.AIAPIURL, "http://localhost:8091")
+	workDir   := firstNonEmpty(*flagWorkDir, cfg.WorkDir)
+
+	lucodePort := defaultLucodePort
+	if *flagPort != 0 {
+		lucodePort = *flagPort
+	} else if cfg.LucodePort != 0 {
+		lucodePort = cfg.LucodePort
+	}
+
+	a.mu.Lock()
+	a.lucodePort = lucodePort
+	a.mu.Unlock()
+
+	log.Printf("[desktop] nats=%s auth=%s aiapi=%s port=%d", natsURL, authURL, aiAPIURL, lucodePort)
+
 	dataDir := defaultDataDir()
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Fatalf("mkdir data: %v", err)
 	}
 
-	dbPath := filepath.Join(dataDir, "lucode.db")
-	db, err := dbpkg.Init(dbPath)
+	db, err := dbpkg.Init(filepath.Join(dataDir, "lucode.db"))
 	if err != nil {
 		log.Fatalf("db init: %v", err)
 	}
-
-	log.Printf("[desktop] os.Args: %v", os.Args)
-	log.Printf("[desktop] nats-url=%s nats-creds=%q", *flagNATSURL, *flagNATSCreds)
 
 	natsOpts := []natsclient.Option{
 		natsclient.Timeout(10 * time.Second),
 		natsclient.RetryOnFailedConnect(false),
 	}
-	if *flagNATSCreds != "" {
-		natsOpts = append(natsOpts, natsclient.UserCredentials(*flagNATSCreds))
+	if natsCreds != "" {
+		natsOpts = append(natsOpts, natsclient.UserCredentials(natsCreds))
 	}
-	nc, err := natsclient.Connect(*flagNATSURL, natsOpts...)
+	nc, err := natsclient.Connect(natsURL, natsOpts...)
 	if err != nil {
-		log.Fatalf("nats connect %s: %v", *flagNATSURL, err)
+		log.Fatalf("nats connect %s: %v", natsURL, err)
 	}
 	defer nc.Drain()
 
@@ -77,30 +139,66 @@ func (a *App) startServer() {
 	bus.OnBroadcast = apipkg.BroadcastToWS
 
 	hookBinary := defaultHookBinary()
-	backendBaseURL := fmt.Sprintf("http://localhost:%d", serverPort)
-	claudeSettingsJSON, err := hookcfg.BuildJSON(hookBinary, backendBaseURL)
+	claudeSettingsJSON, err := hookcfg.BuildJSON(hookBinary, fmt.Sprintf("http://localhost:%d", lucodePort))
 	if err != nil {
 		log.Fatalf("build claude settings: %v", err)
 	}
 
-	manager := sessionpkg.NewManager(db, bus, *flagNATSURL, claudeSettingsJSON)
-	if *flagNATSCreds != "" {
-		manager.SetNATSCreds(*flagNATSCreds)
+	manager := sessionpkg.NewManager(db, bus, natsURL, claudeSettingsJSON)
+	if natsCreds != "" {
+		manager.SetNATSCreds(natsCreds)
 	}
-	manager.SetAIAPIURL(*flagAIAPIURL)
+	manager.SetAIAPIURL(aiAPIURL)
 
 	if err := bus.Start(); err != nil {
 		log.Fatalf("nats bus: %v", err)
 	}
 
-	handler := apipkg.New(db, bus, manager, *flagWorkDir)
-	handler.SetAuthURL(*flagAuthURL)
+	instanceID, _ := natspkg.LoadOrCreateInstanceID(dataDir)
+	if err := bus.StartDiscovery(natspkg.InstanceInfo{
+		ID:   instanceID,
+		Type: "lucode",
+	}); err != nil {
+		log.Printf("[discovery] start error: %v", err)
+	}
 
-	addr := fmt.Sprintf(":%d", serverPort)
+	apiHandler := apipkg.New(db, bus, manager, workDir)
+	apiHandler.SetAuthURL(authURL)
+	wrapped := apipkg.Wrap(apiHandler)
+
+	a.mu.Lock()
+	a.handler = wrapped
+	a.mu.Unlock()
+
+	if err := bus.StartRPCServer(wrapped); err != nil {
+		log.Printf("[rpc] start error: %v", err)
+	}
+
+	addr := fmt.Sprintf(":%d", lucodePort)
 	log.Printf("[desktop] lucode listening on http://localhost%s", addr)
-	if err := http.ListenAndServe(addr, apipkg.Wrap(handler)); err != nil {
+	if err := http.ListenAndServe(addr, wrapped); err != nil {
 		log.Fatalf("http server: %v", err)
 	}
+}
+
+func loadConfig() desktopConfig {
+	path := filepath.Join(defaultDataDir(), "desktop.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return desktopConfig{}
+	}
+	var cfg desktopConfig
+	json.Unmarshal(data, &cfg)
+	return cfg
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func defaultDataDir() string {

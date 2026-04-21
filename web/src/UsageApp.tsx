@@ -4,14 +4,14 @@ import { useStore } from './store'
 import { SpotlightSearch } from './components/Search/SpotlightSearch'
 import { NavRail } from './components/Sidebar/NavRail'
 import { UsagePage } from './components/Usage/UsagePage'
-import { getWSConnection } from './hooks/useWSConnection'
+import { initWSConnection } from './hooks/useWSConnection'
 
 export default function UsageApp() {
   const [searchOpen, setSearchOpen] = useState(false)
   const loadProjects = useStore(s => s.loadProjects)
   const navigate = useNavigate()
 
-  useEffect(() => { getWSConnection() }, [])
+  useEffect(() => { initWSConnection() }, [])
   useEffect(() => { loadProjects() }, [loadProjects])
 
   useEffect(() => {

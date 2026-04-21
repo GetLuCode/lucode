@@ -130,7 +130,11 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	m.procs[opts.SessionID] = ps
 	m.mu.Unlock()
 
-	go m.runWithAIAPI(ctx, ps, opts, history)
+	if opts.AIAPIInstanceID != "" {
+		go m.runWithNATSAIAPI(ctx, ps, opts, history)
+	} else {
+		go m.runWithAIAPI(ctx, ps, opts, history)
+	}
 	return nil
 }
 
@@ -292,6 +296,129 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
 		log.Printf("[manager] SSE scanner error sess=%s: %v", sessID[:8], err)
+	}
+}
+
+// runWithNATSAIAPI executes a turn via a remote aiapi instance over NATS.
+// It reuses the same event processing logic as runWithAIAPI.
+func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts TurnOptions, history []dbpkg.Message) {
+	sessID := ps.SessionID
+	defer func() {
+		ps.Cancel()
+		close(ps.Done)
+		m.mu.Lock()
+		if m.procs[sessID] == ps {
+			delete(m.procs, sessID)
+		}
+		m.mu.Unlock()
+	}()
+
+	type histMsg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	histMsgs := make([]histMsg, 0, len(history))
+	for _, h := range history {
+		if h.Role != "user" && h.Role != "assistant" {
+			continue
+		}
+		histMsgs = append(histMsgs, histMsg{Role: h.Role, Content: h.Content})
+	}
+
+	claudeConfigDir := opts.AccountClaudeConfigDir
+	if claudeConfigDir == "" {
+		claudeConfigDir = opts.ClaudeConfigDir
+	}
+
+	payload := map[string]any{
+		"session_id":        sessID,
+		"message":           opts.Message,
+		"model":             opts.Model,
+		"provider":          string(opts.Provider),
+		"work_dirs":         opts.WorkDirs,
+		"resume":            opts.Resume,
+		"fork_from":         opts.ForkFrom,
+		"name":              opts.Name,
+		"effort":            opts.Effort,
+		"thinking":          opts.Thinking,
+		"claude_config_dir": claudeConfigDir,
+		"claude_settings":   m.claudeSettings,
+		"nats_settings":     m.backendNATSURL,
+		"nats_creds":        m.natsCreds,
+		"ollama_host":       opts.OllamaHost,
+		"image_base64":      opts.ImageBase64,
+		"image_media_type":  opts.ImageMediaType,
+		"history":           histMsgs,
+	}
+	data, _ := json.Marshal(payload)
+
+	nextSeq, _ := dbpkg.NextMessageSeq(m.db, sessID)
+
+	err := m.bus.AIAPIExecute(opts.AIAPIInstanceID, data, func(eventData []byte) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		var ev map[string]any
+		if err := json.Unmarshal(eventData, &ev); err != nil {
+			return true
+		}
+
+		evType, _ := ev["type"].(string)
+		switch evType {
+		case "message_ready":
+			msg, _ := ev["message"].(map[string]any)
+			if msg != nil {
+				role, _ := msg["role"].(string)
+				content, _ := msg["content"].(string)
+				if role != "" && content != "" {
+					_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
+						ID:        uuid.New().String(),
+						SessionID: sessID,
+						Role:      role,
+						Content:   content,
+						Seq:       nextSeq,
+					})
+					nextSeq++
+				}
+			}
+		case "session_status":
+			if status, _ := ev["status"].(string); status != "" {
+				dbpkg.UpdateSessionStatus(m.db, sessID, status)
+			}
+		case "turn_usage":
+			tu := dbpkg.TurnUsage{
+				ID:        uuid.New().String(),
+				SessionID: sessID,
+				ProjectID: opts.ProjectID,
+				AccountID: opts.AccountID,
+				Model:     opts.Model,
+			}
+			if v, ok := ev["input_tokens"].(float64); ok {
+				tu.InputTokens = int(v)
+			}
+			if v, ok := ev["output_tokens"].(float64); ok {
+				tu.OutputTokens = int(v)
+			}
+			if v, ok := ev["cache_creation_input_tokens"].(float64); ok {
+				tu.CacheCreationInputTokens = int(v)
+			}
+			if v, ok := ev["cache_read_input_tokens"].(float64); ok {
+				tu.CacheReadInputTokens = int(v)
+			}
+			dbpkg.InsertTurnUsage(m.db, tu)
+		case "context_usage":
+			if usageJSON, err := json.Marshal(ev); err == nil {
+				dbpkg.UpdateSessionContextUsage(m.db, sessID, string(usageJSON))
+			}
+		}
+
+		m.bus.Broadcast(sessID, ev)
+		return true
+	})
+
+	if err != nil && ctx.Err() == nil {
+		log.Printf("[manager] nats aiapi error sess=%s: %v", sessID[:8], err)
+		m.broadcastError(sessID, "aiapi error: "+err.Error())
 	}
 }
 

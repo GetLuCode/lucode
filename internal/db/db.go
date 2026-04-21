@@ -211,6 +211,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
 		return fmt.Errorf("create api_keys: %w", err)
 	}
 
+	// projects.aiapi_instance_id — which aiapi instance to use for this project (idempotent)
+	db.Exec(`ALTER TABLE projects ADD COLUMN aiapi_instance_id TEXT NOT NULL DEFAULT ''`)
+
 	// claude_accounts: add token columns (idempotent)
 	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN access_token  TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE claude_accounts ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''`)

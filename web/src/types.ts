@@ -13,7 +13,17 @@ export interface Project {
   work_dirs: string[]
   claude_config_dir: string
   default_model: string
+  aiapi_instance_id?: string
   created_at: string
+}
+
+export interface InstanceInfo {
+  id: string
+  type: 'lucode' | 'aiapi'
+  hostname: string
+  os: string
+  started_at: string
+  extra?: Record<string, unknown>
 }
 
 export interface Session {

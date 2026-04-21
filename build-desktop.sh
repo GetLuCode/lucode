@@ -23,10 +23,19 @@ case "$TARGET" in
       echo "    sudo apt install gcc-mingw-w64-x86-64"
       exit 1
     fi
-    echo "→ Building desktop binary for Windows..."
-    CC=x86_64-w64-mingw32-gcc CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
-      go build -tags production -o ./tmp/desktop.exe ./cmd/desktop
+    WIN="CC=x86_64-w64-mingw32-gcc CGO_ENABLED=1 GOOS=windows GOARCH=amd64"
+
+    echo "→ Building desktop.exe..."
+    eval "$WIN go build -tags 'production nativewebview' -o ./tmp/desktop.exe ./cmd/desktop"
     echo "✓ Done: ./tmp/desktop.exe"
+
+    echo "→ Building authapi.exe..."
+    eval "$WIN go build -o ./tmp/authapi.exe ./cmd/authapi"
+    echo "✓ Done: ./tmp/authapi.exe"
+
+    echo "→ Building aiapi.exe..."
+    (cd /home/homebox/projects/aiapi && eval "$WIN go build -o /home/homebox/projects/claude-orchestrator/tmp/aiapi.exe ./cmd/server")
+    echo "✓ Done: ./tmp/aiapi.exe"
     ;;
   *)
     echo "Usage: $0 [linux|windows]"

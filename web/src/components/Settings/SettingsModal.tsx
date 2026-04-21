@@ -3,19 +3,21 @@ import { motion } from 'framer-motion'
 import { useState } from 'react'
 import { AccountsTab } from './AccountsTab'
 import { ToolsTab } from './ToolsTab'
+import { SpacesTab } from './SpacesTab'
 import './SettingsModal.css'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
-  initialTab?: 'accounts' | 'tools'
+  initialTab?: 'accounts' | 'tools' | 'spaces'
 }
 
-type Tab = 'accounts' | 'tools'
+type Tab = 'accounts' | 'tools' | 'spaces'
 
 const TAB_LABELS: Record<Tab, string> = {
   accounts: 'Accounts',
   tools: 'Voice Tools',
+  spaces: 'Spaces',
 }
 
 export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
@@ -62,11 +64,18 @@ export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
           >
             Voice Tools
           </button>
+          <button
+            className={`settings-modal__tab${tab === 'spaces' ? ' settings-modal__tab--active' : ''}`}
+            onClick={() => setTab('spaces')}
+          >
+            Spaces
+          </button>
         </div>
 
         <div className="settings-modal__body">
           {tab === 'accounts' && <AccountsTab />}
           {tab === 'tools' && <ToolsTab />}
+          {tab === 'spaces' && <SpacesTab />}
         </div>
       </motion.div>
     </motion.div>

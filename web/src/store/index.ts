@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Account, Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage } from '../types'
+import type { Account, Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo } from '../types'
 import * as api from '../api'
 
 export interface TokenUsage {
@@ -75,6 +75,13 @@ interface AppState {
   createAccount: (data: { name: string; access_token?: string; refresh_token?: string; expires_at?: number; claude_config_dir?: string }) => Promise<Account>
   deleteAccount: (id: string) => Promise<void>
   setSelectedAccount: (id: string | null) => void
+  // Remote spaces / discovery
+  instances: { self: InstanceInfo | null; peers: InstanceInfo[] }
+  activeRemoteId: string | null
+  loadInstances: () => Promise<void>
+  setActiveRemote: (id: string | null) => void
+  setProjectAIAPI: (projectId: string, aiapiInstanceId: string) => Promise<void>
+
   loadProjects: () => Promise<void>
   createProject: (data: Partial<Project>) => Promise<Project>
   deleteProject: (id: string) => Promise<void>
@@ -234,6 +241,8 @@ function replayStoredMessages(raw: Message[]): Message[] {
 export const useStore = create<AppState>((set, get) => ({
   accounts: [],
   selectedAccountId: null,
+  instances: { self: null, peers: [] },
+  activeRemoteId: null,
   projects: [],
   sessions: [],
   activeProjectId: null,
@@ -303,6 +312,32 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setSelectedAccount: (id) => set({ selectedAccountId: id }),
+
+  loadInstances: async () => {
+    try {
+      const data = await api.getInstances()
+      set({ instances: { self: data.self, peers: data.peers ?? [] } })
+    } catch {}
+  },
+
+  setActiveRemote: (id) => {
+    api.setActiveRemoteId(id)
+    set({ activeRemoteId: id, projects: [], sessions: [], activeProjectId: null, activeSessionId: null })
+    if (id !== null) {
+      api.listProjects().then(projects => set({ projects })).catch(() => {})
+    } else {
+      api.listProjects().then(projects => set({ projects })).catch(() => {})
+    }
+  },
+
+  setProjectAIAPI: async (projectId, aiapiInstanceId) => {
+    await api.setProjectAIAPI(projectId, aiapiInstanceId)
+    set(s => ({
+      projects: s.projects.map(p =>
+        p.id === projectId ? { ...p, aiapi_instance_id: aiapiInstanceId } : p
+      ),
+    }))
+  },
 
   loadProjects: async () => {
     const projects = await api.listProjects()

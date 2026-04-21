@@ -94,8 +94,21 @@ func main() {
 		log.Fatalf("nats bus: %v", err)
 	}
 
+	instanceID, _ := natspkg.LoadOrCreateInstanceID(*dataDir)
+	if err := bus.StartDiscovery(natspkg.InstanceInfo{
+		ID:   instanceID,
+		Type: "lucode",
+	}); err != nil {
+		log.Printf("[discovery] start error: %v", err)
+	}
+
 	handler := apipkg.New(db, bus, manager, *workingDir)
 	handler.SetAuthURL(*authURL)
+
+	// Start RPC server after handler is created so it can serve remote requests
+	if err := bus.StartRPCServer(apipkg.Wrap(handler)); err != nil {
+		log.Printf("[rpc] start error: %v", err)
+	}
 
 	distFS, err := fs.Sub(webui.Dist, "dist")
 	if err != nil {

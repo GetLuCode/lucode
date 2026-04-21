@@ -56,6 +56,12 @@ type Bus struct {
 	OnHookRequest    func(sessID, toolUseID, toolName string, toolInput json.RawMessage)
 	OnHookRespond    func(sessID, toolUseID, decision, reason string)
 	OnHookDisconnect func(sessID, toolUseID string)
+
+	// discovery
+	peersMu       sync.RWMutex
+	selfInfo      InstanceInfo
+	peers         map[string]peerEntry
+	OnPeersChange func([]InstanceInfo)
 }
 
 // NewBus wraps an existing nats.Conn (the embedded server's internal connection).
@@ -63,6 +69,7 @@ func NewBus(nc *nats.Conn) *Bus {
 	return &Bus{
 		nc:           nc,
 		pendingHooks: make(map[string]map[string]*HookState),
+		peers:        make(map[string]peerEntry),
 	}
 }
 

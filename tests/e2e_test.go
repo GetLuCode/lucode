@@ -1,18 +1,13 @@
-// Package tests contains end-to-end tests that spin up a real lucode server
-// (with embedded NATS) and exercise the full API → session → NATS event loop.
+// Package tests contains end-to-end tests for lucode and the runner service.
 //
 // Run:
 //
 //	go test ./tests/... -v -timeout 3m
 //
 // Requirements:
-//   - claude CLI in PATH (for TestClaudeHaiku)
+//   - NATS running on nats://127.0.0.1:4222 (override with NATS_URL env var)
+//   - claude CLI in PATH (for TestClaudeHaiku, TestRunner*)
 //   - Ollama running on localhost:11434 with gemma4:e2b pulled (for TestOllama)
-//
-// Each test can be run individually with -run:
-//
-//	go test ./tests/... -v -run TestClaudeHaiku
-//	go test ./tests/... -v -run TestOllama
 package tests
 
 import (
@@ -46,21 +41,27 @@ type testServer struct {
 func startServer(t *testing.T) *testServer {
 	t.Helper()
 
-	// Pick free ports
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		natsURL = "nats://127.0.0.1:4222"
+	}
+
+	// Verify NATS is reachable.
+	nc, err := nats.Connect(natsURL, nats.Timeout(3*time.Second))
+	if err != nil {
+		t.Skipf("NATS not reachable at %s — skipping (%v)", natsURL, err)
+	}
+
 	httpPort := freePort(t)
-	natsPort := freePort(t)
-	wsPort := freePort(t)
-
 	dataDir := t.TempDir()
-	dbPath := filepath.Join(dataDir, "lucode.db")
 
-	// Build lucode binary
 	bin := filepath.Join(t.TempDir(), "lucode-test")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/lucode")
 	build.Dir = projectRoot(t)
 	build.Stdout = os.Stderr
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
+		nc.Close()
 		t.Fatalf("build lucode: %v", err)
 	}
 
@@ -68,29 +69,19 @@ func startServer(t *testing.T) *testServer {
 
 	srv := exec.CommandContext(ctx, bin,
 		fmt.Sprintf("--port=%d", httpPort),
-		fmt.Sprintf("--nats-port=%d", natsPort),
-		fmt.Sprintf("--nats-ws-port=%d", wsPort),
-		fmt.Sprintf("--data=%s", filepath.Dir(dbPath)),
+		fmt.Sprintf("--nats-url=%s", natsURL),
+		fmt.Sprintf("--data=%s", dataDir),
 	)
 	srv.Stdout = os.Stderr
 	srv.Stderr = os.Stderr
 	if err := srv.Start(); err != nil {
 		cancel()
+		nc.Close()
 		t.Fatalf("start server: %v", err)
 	}
 
 	httpURL := fmt.Sprintf("http://localhost:%d", httpPort)
-	natsURL := fmt.Sprintf("nats://127.0.0.1:%d", natsPort)
-
-	// Wait for HTTP + NATS to be ready
 	waitHTTP(t, httpURL+"/api/health", 15*time.Second)
-	waitNATS(t, natsURL, 10*time.Second)
-
-	nc, err := nats.Connect(natsURL)
-	if err != nil {
-		cancel()
-		t.Fatalf("nats connect: %v", err)
-	}
 
 	return &testServer{
 		httpURL: httpURL,
@@ -139,19 +130,6 @@ func waitHTTP(t *testing.T, url string, timeout time.Duration) {
 	t.Fatalf("server did not become healthy at %s within %s", url, timeout)
 }
 
-func waitNATS(t *testing.T, url string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		nc, err := nats.Connect(url, nats.Timeout(500*time.Millisecond))
-		if err == nil {
-			nc.Close()
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("NATS did not become ready at %s within %s", url, timeout)
-}
 
 func apiPost(t *testing.T, url string, body any) map[string]any {
 	t.Helper()

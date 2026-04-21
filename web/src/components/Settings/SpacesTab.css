@@ -1,0 +1,119 @@
+.spaces-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.spaces-section__title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted, #666);
+  margin: 0 0 10px;
+}
+
+.spaces-hint {
+  font-size: 12px;
+  color: var(--text-muted, #666);
+  margin: -6px 0 10px;
+}
+
+.spaces-instances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.spaces-empty {
+  font-size: 12px;
+  color: var(--text-muted, #666);
+}
+
+.instance-card {
+  background: var(--surface, #1a1a1a);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 8px;
+  padding: 10px 14px;
+  min-width: 150px;
+}
+
+.instance-card__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.instance-card__type {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--accent, #7c8cff);
+  letter-spacing: 0.06em;
+}
+
+.instance-card__badge {
+  font-size: 10px;
+  background: var(--accent, #7c8cff);
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.instance-card__hostname {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text, #ccc);
+  margin-bottom: 2px;
+}
+
+.instance-card__meta {
+  font-size: 11px;
+  color: var(--text-muted, #666);
+  margin-bottom: 4px;
+}
+
+.instance-card__id {
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--text-muted, #555);
+}
+
+.spaces-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spaces-project-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.spaces-project-name {
+  font-size: 13px;
+  color: var(--text, #ccc);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spaces-aiapi-select {
+  background: var(--surface, #1a1a1a);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 5px;
+  color: var(--text, #ccc);
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+  min-width: 160px;
+}
+
+.spaces-aiapi-select:focus {
+  outline: none;
+  border-color: var(--accent, #7c8cff);
+}

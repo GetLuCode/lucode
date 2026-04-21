@@ -21,7 +21,8 @@ func main() {
 		MinWidth:  800,
 		MinHeight: 600,
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Assets:  assets,
+			Handler: app,
 		},
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,

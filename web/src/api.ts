@@ -1,6 +1,10 @@
-import type { Account, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult } from './types'
+import type { Account, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo } from './types'
 
-const BASE = ''
+const BASE = import.meta.env.VITE_API_BASE ?? ''
+
+// Active remote lucode instance — when set, all requests are proxied via NATS.
+let activeRemoteId: string | null = null
+export const setActiveRemoteId = (id: string | null) => { activeRemoteId = id }
 
 function getAuthToken(): string | null {
   try {
@@ -19,6 +23,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
   const token = getAuthToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
+  if (activeRemoteId) headers['X-Lucode-Remote'] = activeRemoteId
 
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -254,3 +259,9 @@ export const executeUserTool = (id: string, args: Record<string, unknown>) =>
   req<ToolExecuteResult>('POST', `/api/tools/${id}/execute`, { arguments: args })
 export const detectCommand = (transcript: string, accountId: string) =>
   req<CommandDetectResult>('POST', '/api/command-detect', { transcript, account_id: accountId })
+
+// Instances (discovery)
+export const getInstances = () =>
+  req<{ self: InstanceInfo; peers: InstanceInfo[] }>('GET', '/api/instances')
+export const setProjectAIAPI = (projectId: string, aiapiInstanceId: string) =>
+  req<void>('PATCH', `/api/projects/${projectId}/aiapi`, { aiapi_instance_id: aiapiInstanceId })
