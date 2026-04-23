@@ -79,6 +79,10 @@ function ChatViewFull() {
   )
   const accounts = useStore(s => s.accounts)
   const selectedAccountId = useStore(s => s.selectedAccountId)
+  const setSelectedAccount = useStore(s => s.setSelectedAccount)
+  const loadAccounts = useStore(s => s.loadAccounts)
+
+  useEffect(() => { if (accounts.length === 0) loadAccounts() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [input, setInput] = useState('')
   const [model, setModelRaw] = useState(() => localStorage.getItem('pref_model') ?? 'haiku')
@@ -576,6 +580,24 @@ function ChatViewFull() {
                         {model === m.value && <IconCheck size={12} className="chat__header-dropdown-check" />}
                       </button>
                     ))}
+
+                    {/* Account picker — only for Claude models */}
+                    {!claudeDisabled && accounts.length > 0 && (
+                      <>
+                        <div className="chat__header-dropdown-divider" />
+                        <div className="chat__header-dropdown-label">Account</div>
+                        {accounts.map(acc => (
+                          <button
+                            key={acc.id}
+                            className={`chat__header-dropdown-item${selectedAccountId === acc.id ? ' chat__header-dropdown-item--active' : ''}`}
+                            onClick={() => { setSelectedAccount(acc.id); setHeaderMenuOpen(false) }}
+                          >
+                            <span>{acc.name}</span>
+                            {selectedAccountId === acc.id && <IconCheck size={12} className="chat__header-dropdown-check" />}
+                          </button>
+                        ))}
+                      </>
+                    )}
 
                     {/* Ollama models — only shown when Ollama is running */}
                     {ollamaModels.length > 0 && (
