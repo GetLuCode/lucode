@@ -104,6 +104,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/messages/{id}/context", h.getMessageContext)
 	mux.HandleFunc("PATCH /api/messages/{id}/star", h.toggleStarMessage)
 	mux.HandleFunc("GET /api/sessions/{id}/starred", h.listStarredMessages)
+	mux.HandleFunc("GET /api/sessions/{id}/raw-events", h.listRawEventsHandler)
 
 	mux.HandleFunc("GET /api/search", h.search)
 
@@ -732,6 +733,21 @@ func (h *Handler) listStarredMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResp(w, http.StatusOK, messages)
+}
+
+func (h *Handler) listRawEventsHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+
+	events, err := dbpkg.ListRawEvents(h.db, sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if events == nil {
+		events = []dbpkg.RawEvent{}
+	}
+
+	jsonResp(w, http.StatusOK, events)
 }
 
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) {

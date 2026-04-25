@@ -10,8 +10,7 @@ export function AccountsTab() {
 
   const [showAddForm, setShowAddForm] = useState(false)
   const [name, setName] = useState('')
-  const [accessToken, setAccessToken] = useState('')
-  const [refreshToken, setRefreshToken] = useState('')
+  const [claudeConfigDir, setClaudeConfigDir] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -19,14 +18,13 @@ export function AccountsTab() {
 
   async function handleCreate() {
     if (!name.trim()) { setError('Name is required'); return }
-    if (!accessToken.trim()) { setError('Access token is required'); return }
+    if (!claudeConfigDir.trim()) { setError('Claude config dir is required'); return }
     setSaving(true)
     setError('')
     try {
       await createAccount({
         name: name.trim(),
-        access_token: accessToken.trim(),
-        refresh_token: refreshToken.trim(),
+        claude_config_dir: claudeConfigDir.trim(),
       })
       resetForm()
     } catch (err) {
@@ -39,8 +37,7 @@ export function AccountsTab() {
   function resetForm() {
     setShowAddForm(false)
     setName('')
-    setAccessToken('')
-    setRefreshToken('')
+    setClaudeConfigDir('')
     setError('')
   }
 
@@ -144,29 +141,18 @@ export function AccountsTab() {
             <div className="accounts-tab__field">
               <label>
                 <IconKey size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-                Access Token
+                Claude Config Dir
               </label>
               <input
-                type="password"
+                type="text"
                 className="input"
-                placeholder="Claude OAuth access token"
-                value={accessToken}
-                onChange={e => setAccessToken(e.target.value)}
+                placeholder="/path/to/.claude (optional)"
+                value={claudeConfigDir}
+                onChange={e => setClaudeConfigDir(e.target.value)}
               />
               <div className="accounts-tab__field-hint">
-                From <code>~/.claude/.credentials.json</code> → <code>claudeAiOauth.accessToken</code>
+                Path to Claude config directory (e.g., <code>~/.claude</code>)
               </div>
-            </div>
-
-            <div className="accounts-tab__field">
-              <label>Refresh Token <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional)</span></label>
-              <input
-                type="password"
-                className="input"
-                placeholder="Claude OAuth refresh token"
-                value={refreshToken}
-                onChange={e => setRefreshToken(e.target.value)}
-              />
             </div>
 
             {error && <div style={{ color: '#f38ba8', fontSize: '0.8rem' }}>{error}</div>}
@@ -176,7 +162,7 @@ export function AccountsTab() {
               <button
                 className="btn btn--primary"
                 onClick={handleCreate}
-                disabled={saving || !name.trim() || !accessToken.trim()}
+                disabled={saving || !name.trim() || !claudeConfigDir.trim()}
               >
                 {saving ? 'Adding…' : 'Add Account'}
               </button>

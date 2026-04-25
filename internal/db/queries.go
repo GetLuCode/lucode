@@ -1150,3 +1150,45 @@ func DeleteUserTool(db *sql.DB, id string) error {
 	return err
 }
 
+// ---- RawEvent ----
+
+type RawEvent struct {
+	ID        string          `json:"id"`
+	SessionID string          `json:"session_id"`
+	TurnIndex int             `json:"turn_index"`
+	Event     json.RawMessage `json:"event"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+func InsertRawEvent(db *sql.DB, e RawEvent) error {
+	_, err := db.Exec(
+		`INSERT INTO raw_events (id, session_id, turn_index, event) VALUES (?,?,?,?)`,
+		e.ID, e.SessionID, e.TurnIndex, string(e.Event),
+	)
+	return err
+}
+
+func ListRawEvents(db *sql.DB, sessionID string) ([]RawEvent, error) {
+	rows, err := db.Query(
+		`SELECT id, session_id, turn_index, event, created_at FROM raw_events WHERE session_id=? ORDER BY created_at ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RawEvent
+	for rows.Next() {
+		var e RawEvent
+		var evStr string
+		var ts string
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.TurnIndex, &evStr, &ts); err != nil {
+			return nil, err
+		}
+		e.Event = json.RawMessage(evStr)
+		e.CreatedAt, _ = time.Parse(time.RFC3339Nano, ts)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+

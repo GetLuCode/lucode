@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Account, Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo } from '../types'
+import type { Account, Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo, RawEventEntry } from '../types'
 import * as api from '../api'
 
 export interface TokenUsage {
@@ -59,6 +59,12 @@ interface AppState {
   // Context window usage per session (updated after each turn via WS)
   contextUsage: Record<string, ContextUsage>
 
+  // Raw event modal state — which session/turn to inspect
+  rawEventsModal: { sessionId: string; turnIndex?: number } | null
+  rawEventsRevision: Record<string, number>
+  openRawEvents: (sessionId: string, turnIndex?: number) => void
+  closeRawEvents: () => void
+
   openFilePreview: (preview: FilePreview) => void
   closeFilePreview: () => void
   toggleStar: (messageId: string, sessionId: string) => Promise<void>
@@ -72,7 +78,8 @@ interface AppState {
   updateUserTool: (id: string, data: Partial<UserTool>) => Promise<UserTool>
   deleteUserTool: (id: string) => Promise<void>
   loadAccounts: () => Promise<void>
-  createAccount: (data: { name: string; access_token?: string; refresh_token?: string; expires_at?: number; claude_config_dir?: string }) => Promise<Account>
+  createAccount: (data: { name: string; claude_config_dir: string }) => Promise<Account>
+  updateAccount: (id: string, data: { name: string; claude_config_dir: string }) => Promise<void>
   deleteAccount: (id: string) => Promise<void>
   setSelectedAccount: (id: string | null) => void
   // Remote spaces / discovery
@@ -107,6 +114,11 @@ interface AppState {
 const pendingUsageMap: Record<string, PendingUsage> = {}
 // sessId → blockIndex → 'text' | 'thinking'
 const blockTypeMap: Record<string, Record<number, string>> = {}
+
+// Raw WS event buffers (exported for RawEventsModal to read directly)
+export const rawEventsBuf: Record<string, RawEventEntry[]> = {}
+export const turnCounterMap: Record<string, number> = {}
+export const messageToTurnMap: Record<string, number> = {} // assistantMsgId → turnIndex
 
 // Helper: truncate message to title
 function toTitle(msg: string): string {
@@ -263,6 +275,11 @@ export const useStore = create<AppState>((set, get) => ({
   jumpToMessageId: null,
   userTools: [],
   contextUsage: {},
+  rawEventsModal: null,
+  rawEventsRevision: {},
+
+  openRawEvents: (sessionId, turnIndex) => set({ rawEventsModal: { sessionId, turnIndex } }),
+  closeRawEvents: () => set({ rawEventsModal: null }),
 
   openFilePreview: (preview) => set({ filePreview: preview }),
   closeFilePreview: () => set({ filePreview: null }),
@@ -301,6 +318,15 @@ export const useStore = create<AppState>((set, get) => ({
     const account = await api.createAccount(data)
     set(s => ({ accounts: [...s.accounts, account] }))
     return account
+  },
+
+  updateAccount: async (id, data) => {
+    await api.updateAccount(id, data)
+    set(s => ({
+      accounts: s.accounts.map(a =>
+        a.id === id ? { ...a, name: data.name, claude_config_dir: data.claude_config_dir } : a
+      ),
+    }))
   },
 
   deleteAccount: async (id) => {
@@ -403,6 +429,29 @@ export const useStore = create<AppState>((set, get) => ({
     } else {
       // Existing session (session not in store yet on direct URL load, or has messages) — load from API
       await get().loadMessages(id)
+
+      // Load raw events historical data for the session
+      try {
+        const stored = await api.listRawEvents(id)
+        rawEventsBuf[id] = stored.map((e: any) => ({
+          id: e.id,
+          turnIndex: e.turn_index,
+          timestamp: e.created_at,
+          event: e.event as WSEvent,
+        }))
+        // Reconstruir turnCounterMap: el turno activo es el max turnIndex + 1
+        if (stored.length > 0) {
+          const maxTurn = Math.max(...stored.map((e: any) => e.turn_index))
+          turnCounterMap[id] = maxTurn + 1
+        }
+        // Disparar re-render si el modal de esta sesión está abierto
+        const state = get()
+        if (state.rawEventsModal?.sessionId === id) {
+          set(s => ({ rawEventsRevision: { ...s.rawEventsRevision, [id]: (s.rawEventsRevision[id] ?? 0) + 1 } }))
+        }
+      } catch {
+        // Silent fail if raw events fail to load (feature)
+      }
     }
   },
 
@@ -443,10 +492,9 @@ export const useStore = create<AppState>((set, get) => ({
     }))
   },
 
-  increaseSessionMessageCount: async (id) => {
-    const currentCount = get().sessions.find(s=>s.id==id)?.message_count||0
+  increaseSessionMessageCount: (id) => {
     set(s => ({
-      sessions: s.sessions.map(s => s.id === id ? { ...s, message_count: currentCount+1} : s),
+      sessions: s.sessions.map(sess => sess.id === id ? { ...sess, message_count: sess.message_count + 1 } : sess),
     }))
   },
 
@@ -606,6 +654,23 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   handleWSEvent: (event: WSEvent) => {
+    // Collect raw event in mutable buffer (no re-render unless modal is open)
+    {
+      const sessId = event.type === 'session_updated'
+        ? event.session.id
+        : ('session_id' in event ? (event as { session_id: string }).session_id : undefined)
+      if (sessId) {
+        const turnIdx = turnCounterMap[sessId] ?? 0
+        if (!rawEventsBuf[sessId]) rawEventsBuf[sessId] = []
+        const buf = rawEventsBuf[sessId]
+        buf.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, turnIndex: turnIdx, timestamp: new Date().toISOString(), event })
+        if (buf.length > 1000) rawEventsBuf[sessId] = buf.slice(-1000)
+        if (get().rawEventsModal?.sessionId === sessId) {
+          set(s => ({ rawEventsRevision: { ...s.rawEventsRevision, [sessId]: (s.rawEventsRevision[sessId] ?? 0) + 1 } }))
+        }
+      }
+    }
+
     switch (event.type) {
       case 'user_message': {
         const sessId = event.session_id
@@ -759,6 +824,8 @@ export const useStore = create<AppState>((set, get) => ({
                 usage,
               }
 
+              messageToTurnMap[finalMsg.id] = turnCounterMap[sessId] ?? 0
+
               set(s => ({
                 messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), finalMsg] },
                 streamingText: { ...s.streamingText, [sessId]: '' },
@@ -871,6 +938,7 @@ export const useStore = create<AppState>((set, get) => ({
 
       case 'turn_complete': {
         const tcSessId = event.session_id
+        turnCounterMap[tcSessId] = (turnCounterMap[tcSessId] ?? 0) + 1
         set(s => {
           const extraMessages: Message[] = (event.result_text && event.result_subtype !== 'success')
             ? [{

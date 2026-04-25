@@ -104,6 +104,7 @@ export const listMessages = (id: string, opts?: { limit?: number; beforeSeq?: nu
 export const getMessageContext = (messageId: string) => req<Message[]>('GET', `/api/messages/${messageId}/context`)
 export const toggleStarMessage = (messageId: string) => req<{ starred: boolean }>('PATCH', `/api/messages/${messageId}/star`)
 export const listStarredMessages = (sessionId: string) => req<Message[]>('GET', `/api/sessions/${sessionId}/starred`)
+export const listRawEvents = (sessionId: string) => req<any[]>('GET', `/api/sessions/${sessionId}/raw-events`)
 
 // Search
 export const search = (q: string) =>

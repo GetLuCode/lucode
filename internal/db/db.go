@@ -249,6 +249,20 @@ CREATE INDEX IF NOT EXISTS idx_turn_usage_created   ON turn_usage(created_at);
 		return fmt.Errorf("migrate turn_usage cascade: %w", err)
 	}
 
+	// raw_events — WS events persisted for debugging/inspection per session per turn
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS raw_events (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_index  INTEGER NOT NULL DEFAULT 0,
+    event       TEXT NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_raw_events_session ON raw_events(session_id);
+`); err != nil {
+		return fmt.Errorf("create raw_events: %w", err)
+	}
+
 	return nil
 }
 

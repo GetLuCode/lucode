@@ -30,8 +30,9 @@ type Manager struct {
 	aiAPIURL       string
 	natsCreds      string // path to NATS .creds file, forwarded to hook subprocess
 
-	mu    sync.Mutex
-	procs map[string]*ProcessState
+	mu           sync.Mutex
+	procs        map[string]*ProcessState
+	turnCounters map[string]int // session_id -> current turn index
 }
 
 func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings string) *Manager {
@@ -41,6 +42,7 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 		backendNATSURL: backendNATSURL,
 		claudeSettings: claudeSettings,
 		procs:          make(map[string]*ProcessState),
+		turnCounters:   make(map[string]int),
 	}
 	bus.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 		m.onHookRequest(sessID, toolUseID, toolName, toolInput)
@@ -61,6 +63,34 @@ func (m *Manager) SetAIAPIURL(url string) {
 // SetNATSCreds sets the path to the NATS credentials file forwarded to hook subprocesses.
 func (m *Manager) SetNATSCreds(path string) {
 	m.natsCreds = path
+}
+
+// broadcastAndPersist sends an event to WS clients and persists it to the raw_events table.
+func (m *Manager) broadcastAndPersist(sessID string, ev map[string]any) {
+	// Get current turn index
+	m.mu.Lock()
+	turnIdx := m.turnCounters[sessID]
+	m.mu.Unlock()
+
+	// Persist to DB asynchronously (non-blocking)
+	evJSON, _ := json.Marshal(ev)
+	go func() {
+		_ = dbpkg.InsertRawEvent(m.db, dbpkg.RawEvent{
+			ID:        uuid.New().String(),
+			SessionID: sessID,
+			TurnIndex: turnIdx,
+			Event:     json.RawMessage(evJSON),
+		})
+	}()
+
+	// Increment turn counter when turn completes
+	if evType, _ := ev["type"].(string); evType == "turn_complete" {
+		m.mu.Lock()
+		m.turnCounters[sessID]++
+		m.mu.Unlock()
+	}
+
+	m.bus.Broadcast(sessID, ev)
 }
 
 // StartTurn launches an AI turn. Returns immediately; the turn runs in a goroutine.
@@ -307,8 +337,8 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 			}
 		}
 
-		// Forward every event to WS clients via NATS bus
-		m.bus.Broadcast(sessID, ev)
+		// Forward every event to WS clients via NATS bus and persist to DB
+		m.broadcastAndPersist(sessID, ev)
 	}
 
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
@@ -431,7 +461,7 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 			}
 		}
 
-		m.bus.Broadcast(sessID, ev)
+		m.broadcastAndPersist(sessID, ev)
 		return true
 	})
 
