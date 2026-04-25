@@ -5,13 +5,18 @@ import type { WSEvent } from '../types'
 
 export function useSessionWS(sessionId: string | null) {
   const handleWSEvent = useStore(s => s.handleWSEvent)
-  const increaseSessionMessageCount = useStore((s)=>s.increaseSessionMessageCount)
+  const increaseSessionMessageCount = useStore(s => s.increaseSessionMessageCount)
   const handleWSEventRef = useRef(handleWSEvent)
+  const increaseCountRef = useRef(increaseSessionMessageCount)
   handleWSEventRef.current = handleWSEvent
+  increaseCountRef.current = increaseSessionMessageCount
 
   useEffect(() => {
     // Ensure WS connection is established
-    getWSConnection()
+    const wsOrPromise = getWSConnection()
+    if (wsOrPromise instanceof Promise) {
+      wsOrPromise.catch(err => console.error('[ws] init error:', err))
+    }
 
     if (!sessionId) return
 
@@ -23,9 +28,9 @@ export function useSessionWS(sessionId: string | null) {
         const event = raw as unknown as WSEvent
         console.log(`[ws] event type=${event.type} sess=${sessionId}`)
         handleWSEventRef.current(event)
-        // Only increment message count for actual message events, not notifications
-        if (event.type === 'user_message' || event.type === 'stream_event' || event.type === 'tool_execution') {
-          increaseSessionMessageCount(sessionId)
+        // Increment count only for complete messages, not streaming chunks
+        if (event.type === 'user_message' || event.type === 'tool_execution') {
+          increaseCountRef.current(sessionId)
         }
       } catch (err) {
         console.error('[ws] parse error:', err, 'raw:', e.data)
