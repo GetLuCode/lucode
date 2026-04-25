@@ -572,6 +572,17 @@ function ChatViewFull() {
                 {starredPanelOpen && <IconCheck size={12} className="chat__header-dropdown-check" />}
               </button>
 
+              {/* Raw events */}
+              <button
+                className="chat__header-dropdown-item"
+                onClick={() => {
+                  setHeaderMenuOpen(false)
+                  if (activeSessionId) openRawEvents(activeSessionId)
+                }}
+              >
+                <span>⚡ Raw events</span>
+              </button>
+
               <div className="chat__header-dropdown-divider" />
 
               {/* Claude models */}
