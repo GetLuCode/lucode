@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -40,6 +41,7 @@ type Handler struct {
 	workingDir string
 	ollamaHost string
 	auth       *authclient.Client
+	aiAPIURL   string
 
 	cacheMu      sync.Mutex
 	profileCache map[string]cachedEntry
@@ -74,6 +76,10 @@ func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir s
 
 func (h *Handler) SetAuthURL(url string) {
 	h.auth = authclient.New(url)
+}
+
+func (h *Handler) SetAIAPIURL(url string) {
+	h.aiAPIURL = url
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -113,8 +119,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/accounts", h.listAccounts)
 	mux.HandleFunc("POST /api/accounts", h.createAccount)
+	mux.HandleFunc("PUT /api/accounts/{id}", h.updateAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", h.deleteAccount)
-	mux.HandleFunc("PUT /api/accounts/{id}/credentials", h.updateAccountCredentials)
+	mux.HandleFunc("POST /api/accounts/validate-dir", h.validateAccountDir)
 	mux.HandleFunc("GET /api/accounts/{id}/profile", h.accountProfile)
 	mux.HandleFunc("GET /api/accounts/{id}/usage", h.accountUsage)
 	mux.HandleFunc("GET /api/accounts/{id}/stats", h.accountStats)
@@ -452,6 +459,7 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
+	log.Printf("[sendTurn] session=%s account_id=%q from db", id, sess.AccountID)
 	proj, err := dbpkg.GetProject(h.db, sess.ProjectID)
 	if err != nil {
 		http.Error(w, "project not found", http.StatusNotFound)
@@ -479,13 +487,12 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		ImageMediaType:  body.Image.MediaType,
 	}
 
-	// If the session has an account, override ClaudeConfigDir and set AccountClaudeConfigDir
+	// If the session has an account, pass it to aiapi (which will resolve it to the claude_config_dir)
 	if sess.AccountID != "" {
-		if acct, err := dbpkg.GetClaudeAccount(h.db, sess.AccountID); err == nil {
-			opts.ClaudeConfigDir = acct.ClaudeConfigDir
-			opts.AccountClaudeConfigDir = acct.ClaudeConfigDir
-			opts.AccountID = sess.AccountID
-		}
+		log.Printf("[sendTurn] session has account_id=%q, passing to aiapi", sess.AccountID)
+		opts.AccountID = sess.AccountID
+	} else {
+		log.Printf("[sendTurn] no account_id in session, using default config")
 	}
 
 	if err := h.manager.StartTurn(opts); err != nil {
@@ -959,30 +966,47 @@ func resolveProvider(providerField, model string) (sessionpkg.Provider, string) 
 }
 
 func (h *Handler) listAccounts(w http.ResponseWriter, r *http.Request) {
-	accounts, err := dbpkg.ListClaudeAccounts(h.db)
+	type accountResp struct {
+		ID              string `json:"id"`
+		Name            string `json:"name"`
+		ClaudeConfigDir string `json:"claude_config_dir,omitempty"`
+		HasToken        bool   `json:"has_token"`
+		CreatedAt       string `json:"created_at"`
+	}
+
+	aiapiURL := h.aiAPIURL
+	if aiapiURL == "" {
+		aiapiURL = "http://localhost:8091"
+	}
+
+	resp, err := http.Get(aiapiURL + "/accounts")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "aiapi accounts error", resp.StatusCode)
 		return
 	}
 
-	type accountResp struct {
-		ID               string `json:"id"`
-		Name             string `json:"name"`
-		ClaudeConfigDir  string `json:"claude_config_dir,omitempty"`
-		HasToken         bool   `json:"has_token"`
-		ExpiresAt        int64  `json:"expires_at,omitempty"`
-		CreatedAt        string `json:"created_at"`
+	var raw []struct {
+		AccountName     string `json:"accountName"`
+		ClaudeConfigDir string `json:"claudeConfigDir"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		http.Error(w, "aiapi decode error: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	out := make([]accountResp, 0, len(accounts))
-	for _, a := range accounts {
+	out := make([]accountResp, 0, len(raw))
+	for _, a := range raw {
 		out = append(out, accountResp{
-			ID:              a.ID,
-			Name:            a.Name,
+			ID:              a.AccountName,
+			Name:            a.AccountName,
 			ClaudeConfigDir: a.ClaudeConfigDir,
-			HasToken:        a.AccessToken != "",
-			ExpiresAt:       a.ExpiresAt,
-			CreatedAt:       a.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			HasToken:        a.ClaudeConfigDir != "",
+			CreatedAt:       "",
 		})
 	}
 	jsonResp(w, http.StatusOK, out)
@@ -991,70 +1015,138 @@ func (h *Handler) listAccounts(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createAccount(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name            string `json:"name"`
-		ClaudeConfigDir string `json:"claude_config_dir"` // optional, for credfeeder compat
-		AccessToken     string `json:"access_token"`
-		RefreshToken    string `json:"refresh_token"`
-		ExpiresAt       int64  `json:"expires_at"`
+		ClaudeConfigDir string `json:"claude_config_dir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+
+	aiapiURL := h.aiAPIURL
+	if aiapiURL == "" {
+		aiapiURL = "http://localhost:8091"
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"accountName":     body.Name,
+		"claudeConfigDir": body.ClaudeConfigDir,
+	})
+	req, _ := http.NewRequest(http.MethodPost, aiapiURL+"/accounts", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	if body.AccessToken == "" && body.ClaudeConfigDir == "" {
-		http.Error(w, "access_token or claude_config_dir is required", http.StatusBadRequest)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(respBody)
 		return
 	}
 
-	a := dbpkg.ClaudeAccount{
-		ID:              uuid.New().String(),
+	jsonResp(w, http.StatusCreated, struct {
+		ID              string `json:"id"`
+		Name            string `json:"name"`
+		ClaudeConfigDir string `json:"claude_config_dir,omitempty"`
+		HasToken        bool   `json:"has_token"`
+		CreatedAt       string `json:"created_at"`
+	}{
+		ID:              body.Name,
 		Name:            body.Name,
 		ClaudeConfigDir: body.ClaudeConfigDir,
-		AccessToken:     body.AccessToken,
-		RefreshToken:    body.RefreshToken,
-		ExpiresAt:       body.ExpiresAt,
+		HasToken:        body.ClaudeConfigDir != "",
+		CreatedAt:       "",
+	})
+}
+
+func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Name            string `json:"name"`
+		ClaudeConfigDir string `json:"claude_config_dir"`
 	}
-	if err := dbpkg.InsertClaudeAccount(h.db, a); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	// Pre-fetch profile (24h cache) and usage (5min cache) in background so they're ready.
-	go func() {
-		if profileBody, err := h.fetchAnthropicRaw(a.ID, "https://api.anthropic.com/api/oauth/profile", false); err == nil {
-			h.cacheMu.Lock()
-			h.profileCache[a.ID] = cachedEntry{body: profileBody, expiresAt: time.Now().Add(24 * time.Hour)}
-			h.cacheMu.Unlock()
-		} else {
-			log.Printf("[accounts] pre-fetch profile for %s: %v", a.ID, err)
-		}
-		if usageBody, err := h.fetchAnthropicRaw(a.ID, "https://api.anthropic.com/api/oauth/usage", true); err == nil {
-			h.cacheMu.Lock()
-			h.usageCache[a.ID] = cachedEntry{body: usageBody, expiresAt: time.Now().Add(5 * time.Minute)}
-			h.cacheMu.Unlock()
-		} else {
-			log.Printf("[accounts] pre-fetch usage for %s: %v", a.ID, err)
-		}
-	}()
-
-	jsonResp(w, http.StatusCreated, a)
+	h.proxyJSONToAIAPI(w, "/accounts/"+id, map[string]string{
+		"accountName":     body.Name,
+		"claudeConfigDir": body.ClaudeConfigDir,
+	}, http.StatusNoContent)
 }
 
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := dbpkg.DeleteClaudeAccount(h.db, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	aiapiURL := h.aiAPIURL
+	if aiapiURL == "" {
+		aiapiURL = "http://localhost:8091"
+	}
+	req, _ := http.NewRequest(http.MethodDelete, aiapiURL+"/accounts/"+id, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	// Evict cache entries
-	h.cacheMu.Lock()
-	delete(h.profileCache, id)
-	delete(h.usageCache, id)
-	h.cacheMu.Unlock()
-	w.WriteHeader(http.StatusNoContent)
+	resp.Body.Close()
+	w.WriteHeader(resp.StatusCode)
+}
+
+// validateAccountDir checks whether {dir}/.credentials.json is accessible on this machine.
+// This endpoint is intentionally NOT proxied to aiapi so that the NATS remote proxy routes
+// it to whichever lucode instance (space/computer) the client is currently targeting.
+func (h *Handler) validateAccountDir(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Dir string `json:"dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Dir == "" {
+		http.Error(w, "dir is required", http.StatusBadRequest)
+		return
+	}
+	credPath := filepath.Join(body.Dir, ".credentials.json")
+	if _, err := os.Stat(credPath); err != nil {
+		if os.IsNotExist(err) {
+			jsonResp(w, http.StatusUnprocessableEntity, map[string]string{
+				"error": fmt.Sprintf(".credentials.json not found in %s", body.Dir),
+			})
+			return
+		}
+		jsonResp(w, http.StatusUnprocessableEntity, map[string]string{
+			"error": fmt.Sprintf("cannot access directory: %v", err),
+		})
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// proxyJSONToAIAPI POSTs/PUTs a JSON body to aiapi and forwards the response.
+func (h *Handler) proxyJSONToAIAPI(w http.ResponseWriter, path string, payload any, successStatus int) {
+	aiapiURL := h.aiAPIURL
+	if aiapiURL == "" {
+		aiapiURL = "http://localhost:8091"
+	}
+	data, _ := json.Marshal(payload)
+	method := http.MethodPost
+	if successStatus == http.StatusNoContent {
+		method = http.MethodPut
+	}
+	req, _ := http.NewRequest(method, aiapiURL+path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
 }
 
 func (h *Handler) listHomeDirs(w http.ResponseWriter, r *http.Request) {
@@ -1118,72 +1210,40 @@ func (h *Handler) listHomeDirs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) accountProfile(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	_, err := dbpkg.GetClaudeAccount(h.db, id)
-	if err != nil {
-		http.Error(w, "account not found", http.StatusNotFound)
-		return
-	}
-
-	// Check 24h cache
-	h.cacheMu.Lock()
-	entry, ok := h.profileCache[id]
-	h.cacheMu.Unlock()
-	if ok && time.Now().Before(entry.expiresAt) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Cache", "HIT")
-		w.Write(entry.body)
-		return
-	}
-
-	body, err := h.fetchAnthropicRaw(id, "https://api.anthropic.com/api/oauth/profile", false)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	h.cacheMu.Lock()
-	h.profileCache[id] = cachedEntry{body: body, expiresAt: time.Now().Add(24 * time.Hour)}
-	h.cacheMu.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(body)
+	h.proxyToAIAPI(w, r, "/accounts/"+r.PathValue("id")+"/profile")
 }
 
 func (h *Handler) accountUsage(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	_, err := dbpkg.GetClaudeAccount(h.db, id)
+	h.proxyToAIAPI(w, r, "/accounts/"+r.PathValue("id")+"/usage"+queryString(r))
+}
+
+// proxyToAIAPI forwards the request to aiapi and streams the response back.
+func (h *Handler) proxyToAIAPI(w http.ResponseWriter, r *http.Request, path string) {
+	aiapiURL := h.aiAPIURL
+	if aiapiURL == "" {
+		aiapiURL = "http://localhost:8091"
+	}
+	resp, err := http.Get(aiapiURL + path)
 	if err != nil {
-		http.Error(w, "account not found", http.StatusNotFound)
+		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-
-	forceRefresh := r.URL.Query().Get("refresh") == "true"
-
-	if !forceRefresh {
-		h.cacheMu.Lock()
-		entry, ok := h.usageCache[id]
-		h.cacheMu.Unlock()
-		if ok && time.Now().Before(entry.expiresAt) {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			w.Write(entry.body)
-			return
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
 		}
 	}
-
-	body, err := h.fetchAnthropicRaw(id, "https://api.anthropic.com/api/oauth/usage", true)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	h.cacheMu.Lock()
-	h.usageCache[id] = cachedEntry{body: body, expiresAt: time.Now().Add(5 * time.Minute)}
-	h.cacheMu.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
+}
+
+func queryString(r *http.Request) string {
+	if q := r.URL.RawQuery; q != "" {
+		return "?" + q
+	}
+	return ""
 }
 
 func (h *Handler) accountStats(w http.ResponseWriter, r *http.Request) {

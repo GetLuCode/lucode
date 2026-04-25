@@ -188,8 +188,10 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		"ollama_host":       opts.OllamaHost,
 		"image_base64":      opts.ImageBase64,
 		"image_media_type":  opts.ImageMediaType,
+		"account":           opts.AccountID,
 		"history":           histMsgs,
 	}
+	log.Printf("[manager] POST /turns: session_id=%s account=%q claude_config_dir=%q", sessID, opts.AccountID, claudeConfigDir)
 	data, _ := json.Marshal(reqBody)
 
 	postResp, err := http.Post(m.aiAPIURL+"/turns", "application/json", bytes.NewReader(data))
@@ -348,8 +350,10 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 		"ollama_host":       opts.OllamaHost,
 		"image_base64":      opts.ImageBase64,
 		"image_media_type":  opts.ImageMediaType,
+		"account":           opts.AccountID,
 		"history":           histMsgs,
 	}
+	log.Printf("[manager] NATS turn: session_id=%s account=%q claude_config_dir=%q", sessID, opts.AccountID, claudeConfigDir)
 	data, _ := json.Marshal(payload)
 
 	nextSeq, _ := dbpkg.NextMessageSeq(m.db, sessID)
