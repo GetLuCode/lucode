@@ -22,6 +22,7 @@ interface Props {
   onThinkingChange: (thinking: string) => void
   onImageSelect: (base64: string, mediaType: string) => void
   onSend: () => void
+  onCancel?: () => void
   isRunning: boolean
   canSend: boolean
   onMicToggle?: () => void
@@ -49,6 +50,7 @@ export function InputControls({
   onThinkingChange,
   onImageSelect,
   onSend,
+  onCancel = () => {},
   isRunning,
   canSend,
   onMicToggle = () => {},
@@ -156,14 +158,24 @@ export function InputControls({
           </div>
         </div>
 
-        <button
-          className="btn btn--send"
-          onClick={onSend}
-          disabled={!canSend || isRunning}
-          title="Send message (Enter)"
-        >
-          ↑
-        </button>
+        {isRunning ? (
+          <button
+            className="btn btn--send btn--cancel"
+            onClick={onCancel}
+            title="Stop (Esc)"
+          >
+            <IconPlayerStop size={18} />
+          </button>
+        ) : (
+          <button
+            className="btn btn--send"
+            onClick={onSend}
+            disabled={!canSend}
+            title="Send message (Enter)"
+          >
+            ↑
+          </button>
+        )}
       </div>
     </div>
   )

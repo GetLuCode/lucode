@@ -1,4 +1,5 @@
 import type { Account, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo } from './types'
+import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
@@ -31,6 +32,9 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
+    if (res.status === 401) {
+      useAuthStore.getState().clearAuth()
+    }
     const text = await res.text()
     throw new Error(`${method} ${path} → ${res.status}: ${text}`)
   }
@@ -83,6 +87,8 @@ export const renameSession = (id: string, name: string) =>
   req<void>('PATCH', `/api/sessions/${id}`, { name })
 export const sendTurn = (id: string, message: string, model?: string, provider?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) =>
   req<void>('POST', `/api/sessions/${id}/turn`, { message, model, provider, effort, thinking, image })
+export const cancelTurn = (id: string) =>
+  req<void>('DELETE', `/api/sessions/${id}/turn`)
 export const forkSession = (id: string, name: string, message?: string) =>
   req<Session>('POST', `/api/sessions/${id}/fork`, { name, message })
 
@@ -114,19 +120,13 @@ export const listDirs = (path: string) =>
 
 // Accounts
 export const listAccounts = () => req<Account[]>('GET', '/api/accounts')
-export const createAccount = (data: {
-  name: string
-  access_token?: string
-  refresh_token?: string
-  expires_at?: number
-  claude_config_dir?: string
-}) => req<Account>('POST', '/api/accounts', data)
+export const createAccount = (data: { name: string; claude_config_dir: string }) =>
+  req<Account>('POST', '/api/accounts', data)
+export const updateAccount = (id: string, data: { name: string; claude_config_dir: string }) =>
+  req<void>('PUT', `/api/accounts/${id}`, data)
 export const deleteAccount = (id: string) => req<void>('DELETE', `/api/accounts/${id}`)
-export const updateAccountCredentials = (id: string, data: {
-  access_token: string
-  refresh_token: string
-  expires_at: number
-}) => req<Account>('PUT', `/api/accounts/${id}/credentials`, data)
+export const validateAccountDir = (dir: string) =>
+  req<{ ok: boolean }>('POST', '/api/accounts/validate-dir', { dir })
 export const listHomeDirs = (path: string) =>
   req<{ path: string; parent: string; root: string; dirs: string[]; has_credentials: boolean }>('GET', `/api/fs/home-dirs?path=${encodeURIComponent(path)}`)
 

@@ -138,6 +138,21 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	return nil
 }
 
+// CancelTurn cancels an active turn for a session, returning the ProcessState if one was active.
+func (m *Manager) CancelTurn(sessionID string) *ProcessState {
+	m.mu.Lock()
+	ps := m.procs[sessionID]
+	m.mu.Unlock()
+
+	if ps == nil {
+		return nil
+	}
+
+	log.Printf("[manager] canceling turn for session=%s", sessionID)
+	ps.Cancel()
+	return ps
+}
+
 // runWithAIAPI calls the aiapi service via HTTP and streams SSE events
 // to the NATS bus (→ WS clients) while persisting relevant events to DB.
 func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnOptions, history []dbpkg.Message) {

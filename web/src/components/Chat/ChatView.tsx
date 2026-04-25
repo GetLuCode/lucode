@@ -8,6 +8,7 @@ import { useCommandDetection } from '../../hooks/useCommandDetection'
 import { tts } from '../../hooks/useTTS'
 import { getVoicePrefs, saveVoicePrefs } from '../../lib/voicePrefs'
 import { MessageBubble } from './MessageBubble'
+import { messageToTurnMap } from '../../store'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { InputControls } from './InputControls'
 import { VoiceSettingsModal } from './VoiceBar'
@@ -16,7 +17,7 @@ import { FilePreviewPanel } from './FilePreviewPanel'
 import { StarredPanel } from './StarredPanel'
 import { ContextBar } from './ContextBar'
 import { fetchIdeas } from '../../lib/ideasStorage'
-import { listOllamaModels } from '../../api'
+import { listOllamaModels, cancelTurn } from '../../api'
 import type { Message } from '../../types'
 
 // Stable references — never inline [] or {} in Zustand selectors,
@@ -72,6 +73,7 @@ function ChatViewFull() {
   const openStarredPanel = useStore(s => s.openStarredPanel)
   const closeStarredPanel = useStore(s => s.closeStarredPanel)
   const toggleStar = useStore(s => s.toggleStar)
+  const openRawEvents = useStore(s => s.openRawEvents)
   const loadStarredMessages = useStore(s => s.loadStarredMessages)
   const loadMessageContext = useStore(s => s.loadMessageContext)
   const starredMessages = useStore(s =>
@@ -203,7 +205,7 @@ function ChatViewFull() {
             const targetId = activeSessionId || 'pending'
             sendMessage(targetId, newInput.trim(), model, effort, thinking, attachedImage,
               providerMode === 'api' ? 'anthropic' : undefined,
-              providerMode === 'api' ? (selectedAccountId ?? undefined) : undefined)
+              selectedAccountId ?? undefined)
             setInput('')
             setAttachedImage(null)
           }
@@ -369,15 +371,28 @@ function ChatViewFull() {
     const targetId = activeSessionId || 'pending'
     sendMessage(targetId, input.trim(), model, effort, thinking, attachedImage,
       providerMode === 'api' ? 'anthropic' : undefined,
-      providerMode === 'api' ? (selectedAccountId ?? undefined) : undefined)
+      selectedAccountId ?? undefined)
     setInput('')
     setAttachedImage(null)
+  }
+
+  const handleCancel = async () => {
+    if (!activeSessionId) return
+    try {
+      await cancelTurn(activeSessionId)
+      console.log('[chat] turn cancelled for session:', activeSessionId)
+    } catch (err) {
+      console.error('[chat] cancel failed:', err)
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
+    } else if (e.key === 'Escape' && isRunning) {
+      e.preventDefault()
+      handleCancel()
     }
   }
 
@@ -681,6 +696,10 @@ function ChatViewFull() {
                 onStopSpeaking={handleStopSpeaking}
                 isStarred={messages[virtualItem.index]?.starred}
                 onStar={handleToggleStar}
+                onViewRawData={activeSessionId ? (msgId) => {
+                  const turnIdx = messageToTurnMap[msgId]
+                  openRawEvents(activeSessionId, turnIdx)
+                } : undefined}
               />
             </div>
           ))}
@@ -775,6 +794,7 @@ function ChatViewFull() {
             onThinkingChange={setThinking}
             onImageSelect={(base64, mediaType) => setAttachedImage({ base64, mediaType })}
             onSend={handleSend}
+            onCancel={handleCancel}
             isRunning={isRunning}
             canSend={input.trim().length > 0}
             onMicToggle={handleMicToggle}

@@ -95,6 +95,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/sessions/{id}", h.updateSessionName)
 
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)
+	mux.HandleFunc("DELETE /api/sessions/{id}/turn", h.cancelTurn)
 	mux.HandleFunc("POST /api/sessions/{id}/fork", h.forkSession)
 
 	mux.HandleFunc("GET /api/sessions/{id}/messages", h.listMessages)
@@ -504,6 +505,19 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) cancelTurn(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	log.Printf("[cancelTurn] session=%s", id)
+
+	ps := h.manager.CancelTurn(id)
+	if ps == nil {
+		http.Error(w, "no active turn", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) exportSession(w http.ResponseWriter, r *http.Request) {
