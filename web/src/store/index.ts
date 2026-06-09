@@ -763,6 +763,19 @@ export const useStore = create<AppState>((set, get) => ({
             }
             void index
 
+          } else if (innerType === 'text_delta') {
+            // Ollama simplified format: { type: 'text_delta', delta: 'text...' }
+            const chunk = typeof inner.delta === 'string' ? inner.delta : ''
+            if (chunk) {
+              if (!blockTypeMap[sessId]) blockTypeMap[sessId] = {}
+              set(s => ({
+                streamingText: {
+                  ...s.streamingText,
+                  [sessId]: (s.streamingText[sessId] ?? '') + chunk,
+                },
+              }))
+            }
+
           } else if (innerType === 'content_block_stop') {
             const index = inner.index as number
             const blockType = blockTypeMap[sessId]?.[index]
@@ -858,6 +871,53 @@ export const useStore = create<AppState>((set, get) => ({
               }))
             }
           }
+        }
+        break
+      }
+
+      case 'message_ready': {
+        // Ollama sends message_ready when the full response is available.
+        // Finalize streaming text (or fall back to event.message.content if streaming was empty).
+        const sessId = event.session_id
+        const ev = event as Record<string, unknown>
+        const fallback = (ev.message as Record<string, unknown>)?.content as string
+          || ev.content as string
+          || ''
+        const text = get().streamingText[sessId] || fallback
+        const pending = pendingUsageMap[sessId]
+        delete pendingUsageMap[sessId]
+        delete blockTypeMap[sessId]
+
+        if (text) {
+          const msgs = get().messages[sessId] ?? []
+          const finalMsg: Message = {
+            id: `ws-${Date.now()}`,
+            session_id: sessId,
+            role: 'assistant',
+            content: text,
+            seq: msgs.length,
+            created_at: new Date().toISOString(),
+            usage: pending?.inputUsage
+              ? {
+                  input_tokens: pending.inputUsage.input_tokens ?? 0,
+                  output_tokens: pending.outputTokens ?? 0,
+                  cache_creation_input_tokens: pending.inputUsage.cache_creation_input_tokens,
+                  cache_read_input_tokens: pending.inputUsage.cache_read_input_tokens,
+                }
+              : undefined,
+          }
+          messageToTurnMap[finalMsg.id] = turnCounterMap[sessId] ?? 0
+          set(s => ({
+            messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), finalMsg] },
+            streamingText: { ...s.streamingText, [sessId]: '' },
+            streamingThinking: { ...s.streamingThinking, [sessId]: '' },
+            liveMessageId: { ...s.liveMessageId, [sessId]: finalMsg.id },
+          }))
+        } else {
+          set(s => ({
+            streamingText: { ...s.streamingText, [sessId]: '' },
+            streamingThinking: { ...s.streamingThinking, [sessId]: '' },
+          }))
         }
         break
       }

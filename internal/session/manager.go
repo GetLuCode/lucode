@@ -67,6 +67,10 @@ func (m *Manager) SetNATSCreds(path string) {
 
 // broadcastAndPersist sends an event to WS clients and persists it to the raw_events table.
 func (m *Manager) broadcastAndPersist(sessID string, ev map[string]any) {
+	// Always inject session_id so the frontend can route the event.
+	if _, ok := ev["session_id"]; !ok {
+		ev["session_id"] = sessID
+	}
 	// Get current turn index
 	m.mu.Lock()
 	turnIdx := m.turnCounters[sessID]

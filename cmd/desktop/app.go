@@ -13,6 +13,7 @@ import (
 	"time"
 
 	natsclient "github.com/nats-io/nats.go"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	apipkg "claude-orchestrator/internal/api"
 	dbpkg "claude-orchestrator/internal/db"
@@ -83,6 +84,18 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {}
+
+// Minimise minimises the window.
+func (a *App) Minimise() { wailsruntime.WindowMinimise(a.ctx) }
+
+// ToggleMaximise toggles between maximised and normal window state.
+func (a *App) ToggleMaximise() { wailsruntime.WindowToggleMaximise(a.ctx) }
+
+// IsMaximised returns whether the window is currently maximised.
+func (a *App) IsMaximised() bool { return wailsruntime.WindowIsMaximised(a.ctx) }
+
+// CloseApp quits the application.
+func (a *App) CloseApp() { wailsruntime.Quit(a.ctx) }
 
 func (a *App) startServer() {
 	defer func() {
@@ -173,6 +186,8 @@ func (a *App) startServer() {
 	if err := bus.StartRPCServer(wrapped); err != nil {
 		log.Printf("[rpc] start error: %v", err)
 	}
+
+	a.startTray(aiAPIURL, authURL, natsURL, lucodePort, nc)
 
 	addr := fmt.Sprintf(":%d", lucodePort)
 	log.Printf("[desktop] lucode listening on http://localhost%s", addr)

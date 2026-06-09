@@ -263,6 +263,64 @@ CREATE INDEX IF NOT EXISTS idx_raw_events_session ON raw_events(session_id);
 		return fmt.Errorf("create raw_events: %w", err)
 	}
 
+	// kanban_lists — ordered columns on the kanban board per project
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS kanban_lists (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    position   INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_kanban_lists_project ON kanban_lists(project_id, position);
+`); err != nil {
+		return fmt.Errorf("create kanban_lists: %w", err)
+	}
+
+	// kanban_cards — cards belonging to a list
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS kanban_cards (
+    id          TEXT PRIMARY KEY,
+    list_id     TEXT NOT NULL REFERENCES kanban_lists(id) ON DELETE CASCADE,
+    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    card_type   TEXT NOT NULL DEFAULT 'task',
+    tags        TEXT NOT NULL DEFAULT '[]',
+    agent_id    TEXT NOT NULL DEFAULT '',
+    depends_on  TEXT NOT NULL DEFAULT '[]',
+    start_date  TEXT NOT NULL DEFAULT '',
+    end_date    TEXT NOT NULL DEFAULT '',
+    position    INTEGER NOT NULL DEFAULT 0,
+    archived    INTEGER NOT NULL DEFAULT 0,
+    parent_id   TEXT NOT NULL DEFAULT '',
+    created_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_kanban_cards_list    ON kanban_cards(list_id, position);
+CREATE INDEX IF NOT EXISTS idx_kanban_cards_project ON kanban_cards(project_id);
+`); err != nil {
+		return fmt.Errorf("create kanban_cards: %w", err)
+	}
+
+	// agents — project-scoped AI agents with personality and tool configuration
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS agents (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    model       TEXT NOT NULL DEFAULT 'sonnet',
+    account_id  TEXT NOT NULL DEFAULT '',
+    personality TEXT NOT NULL DEFAULT '',
+    tools       TEXT NOT NULL DEFAULT '["Bash","Edit","Read","Write"]',
+    created_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
+`); err != nil {
+		return fmt.Errorf("create agents: %w", err)
+	}
+
 	return nil
 }
 

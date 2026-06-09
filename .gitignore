@@ -35,3 +35,7 @@ web/dist/
 NOTES.md
 CLAUDE.md
 /air.log
+# Build artifacts (added 2026-06-09)
+build/
+/desktop
+/desktop.exe

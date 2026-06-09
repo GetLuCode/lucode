@@ -48,7 +48,7 @@ export function SpacesList() {
 
   return (
     <div className="spaces-list">
-      <div className="spaces-list__header">Spaces</div>
+      <div className="spaces-list__header">Workspaces</div>
 
       <SpaceItem
         info={{ ...(self ?? { id: '', type: 'lucode', hostname: 'local', os: 'linux', started_at: '' }), label: selfLabel }}

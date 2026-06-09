@@ -145,6 +145,23 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tools/{id}/execute", h.executeUserTool)
 	mux.HandleFunc("POST /api/command-detect", h.detectCommand)
 
+	// Kanban
+	mux.HandleFunc("GET /api/projects/{pid}/kanban/lists", h.listKanbanLists)
+	mux.HandleFunc("POST /api/projects/{pid}/kanban/lists", h.createKanbanList)
+	mux.HandleFunc("PUT /api/kanban/lists/{id}", h.updateKanbanList)
+	mux.HandleFunc("DELETE /api/kanban/lists/{id}", h.deleteKanbanList)
+	mux.HandleFunc("GET /api/projects/{pid}/kanban/cards", h.listKanbanCards)
+	mux.HandleFunc("POST /api/projects/{pid}/kanban/cards", h.createKanbanCard)
+	mux.HandleFunc("PUT /api/kanban/cards/{id}", h.updateKanbanCard)
+	mux.HandleFunc("DELETE /api/kanban/cards/{id}", h.deleteKanbanCard)
+
+	// Agents
+	mux.HandleFunc("GET /api/projects/{pid}/agents", h.listAgents)
+	mux.HandleFunc("POST /api/projects/{pid}/agents", h.createAgent)
+	mux.HandleFunc("GET /api/agents/{id}", h.getAgent)
+	mux.HandleFunc("PUT /api/agents/{id}", h.updateAgent)
+	mux.HandleFunc("DELETE /api/agents/{id}", h.deleteAgent)
+
 	// HTTP hook endpoint — receives all hook events from Claude Code CLI.
 	mux.HandleFunc("POST /api/hooks/{event}", h.hookEvent)
 
@@ -158,6 +175,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// Discovery + remote spaces
 	mux.HandleFunc("GET /api/instances", h.listInstances)
 	mux.HandleFunc("PATCH /api/projects/{id}/aiapi", h.setProjectAIAPI)
+
+	// Process task manager (proxied to aiapi)
+	mux.HandleFunc("GET /api/processes", h.listProcesses)
+	mux.HandleFunc("POST /api/processes/{id}/kill", h.killProcess)
 }
 
 // ---- middleware ----
@@ -1925,6 +1946,364 @@ func (h *Handler) setProjectAIAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := dbpkg.UpdateProjectAIAPIInstance(h.db, id, body.AIAPIInstanceID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) listProcesses(w http.ResponseWriter, r *http.Request) {
+	aiapiURL := h.aiAPIURL
+	if aiapiURL == "" {
+		aiapiURL = "http://localhost:8091"
+	}
+	resp, err := http.Get(aiapiURL + "/sessions")
+	if err != nil {
+		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
+}
+
+func (h *Handler) killProcess(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	aiapiURL := h.aiAPIURL
+	if aiapiURL == "" {
+		aiapiURL = "http://localhost:8091"
+	}
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		aiapiURL+"/sessions/"+id+"/kill", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.WriteHeader(resp.StatusCode)
+}
+
+// ---- Agents ----
+
+func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	agents, err := dbpkg.ListAgents(h.db, pid)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if agents == nil {
+		agents = []dbpkg.Agent{}
+	}
+	json.NewEncoder(w).Encode(agents)
+}
+
+func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	var body struct {
+		Name        string   `json:"name"`
+		Model       string   `json:"model"`
+		AccountID   string   `json:"account_id"`
+		Personality string   `json:"personality"`
+		Tools       []string `json:"tools"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if body.Model == "" {
+		body.Model = "sonnet"
+	}
+	if len(body.Tools) == 0 {
+		body.Tools = []string{"Bash", "Edit", "Read", "Write"}
+	}
+	a := dbpkg.Agent{
+		ID:          uuid.New().String(),
+		ProjectID:   pid,
+		Name:        body.Name,
+		Model:       body.Model,
+		AccountID:   body.AccountID,
+		Personality: body.Personality,
+		Tools:       body.Tools,
+	}
+	if err := dbpkg.InsertAgent(h.db, a); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	a, _ = dbpkg.GetAgent(h.db, a.ID)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(a)
+}
+
+func (h *Handler) getAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	a, err := dbpkg.GetAgent(h.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	json.NewEncoder(w).Encode(a)
+}
+
+func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	a, err := dbpkg.GetAgent(h.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Name        *string  `json:"name"`
+		Model       *string  `json:"model"`
+		AccountID   *string  `json:"account_id"`
+		Personality *string  `json:"personality"`
+		Tools       []string `json:"tools"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Name != nil {
+		a.Name = *body.Name
+	}
+	if body.Model != nil {
+		a.Model = *body.Model
+	}
+	if body.AccountID != nil {
+		a.AccountID = *body.AccountID
+	}
+	if body.Personality != nil {
+		a.Personality = *body.Personality
+	}
+	if body.Tools != nil {
+		a.Tools = body.Tools
+	}
+	if err := dbpkg.UpdateAgent(h.db, a); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	a, _ = dbpkg.GetAgent(h.db, id)
+	json.NewEncoder(w).Encode(a)
+}
+
+func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := dbpkg.DeleteAgent(h.db, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- Kanban Lists ----
+
+func (h *Handler) listKanbanLists(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	lists, err := dbpkg.ListKanbanLists(h.db, pid)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if lists == nil {
+		lists = []dbpkg.KanbanList{}
+	}
+	json.NewEncoder(w).Encode(lists)
+}
+
+func (h *Handler) createKanbanList(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	var body struct {
+		Name     string `json:"name"`
+		Position int    `json:"position"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	l := dbpkg.KanbanList{
+		ID:        uuid.New().String(),
+		ProjectID: pid,
+		Name:      body.Name,
+		Position:  body.Position,
+	}
+	if err := dbpkg.InsertKanbanList(h.db, l); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	l, _ = dbpkg.GetKanbanList(h.db, l.ID)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(l)
+}
+
+func (h *Handler) updateKanbanList(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	l, err := dbpkg.GetKanbanList(h.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Name     *string `json:"name"`
+		Position *int    `json:"position"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Name != nil {
+		l.Name = *body.Name
+	}
+	if body.Position != nil {
+		l.Position = *body.Position
+	}
+	if err := dbpkg.UpdateKanbanList(h.db, l.ID, l.Name, l.Position); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	l, _ = dbpkg.GetKanbanList(h.db, id)
+	json.NewEncoder(w).Encode(l)
+}
+
+func (h *Handler) deleteKanbanList(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := dbpkg.DeleteKanbanList(h.db, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- Kanban Cards ----
+
+func (h *Handler) listKanbanCards(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	includeArchived := r.URL.Query().Get("archived") == "true"
+	cards, err := dbpkg.ListKanbanCards(h.db, pid, includeArchived)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if cards == nil {
+		cards = []dbpkg.KanbanCard{}
+	}
+	json.NewEncoder(w).Encode(cards)
+}
+
+func (h *Handler) createKanbanCard(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	var body struct {
+		ListID      string   `json:"list_id"`
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		CardType    string   `json:"card_type"`
+		Tags        []string `json:"tags"`
+		AgentID     string   `json:"agent_id"`
+		DependsOn   []string `json:"depends_on"`
+		StartDate   string   `json:"start_date"`
+		EndDate     string   `json:"end_date"`
+		Position    int      `json:"position"`
+		ParentID    string   `json:"parent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Title == "" || body.ListID == "" {
+		http.Error(w, "title and list_id required", http.StatusBadRequest)
+		return
+	}
+	if body.CardType == "" {
+		body.CardType = "task"
+	}
+	c := dbpkg.KanbanCard{
+		ID:          uuid.New().String(),
+		ListID:      body.ListID,
+		ProjectID:   pid,
+		Title:       body.Title,
+		Description: body.Description,
+		CardType:    body.CardType,
+		Tags:        body.Tags,
+		AgentID:     body.AgentID,
+		DependsOn:   body.DependsOn,
+		StartDate:   body.StartDate,
+		EndDate:     body.EndDate,
+		Position:    body.Position,
+		ParentID:    body.ParentID,
+	}
+	if c.Tags == nil {
+		c.Tags = []string{}
+	}
+	if c.DependsOn == nil {
+		c.DependsOn = []string{}
+	}
+	if err := dbpkg.InsertKanbanCard(h.db, c); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	c, _ = dbpkg.GetKanbanCard(h.db, c.ID)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(c)
+}
+
+func (h *Handler) updateKanbanCard(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	c, err := dbpkg.GetKanbanCard(h.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		ListID      *string  `json:"list_id"`
+		Title       *string  `json:"title"`
+		Description *string  `json:"description"`
+		CardType    *string  `json:"card_type"`
+		Tags        []string `json:"tags"`
+		AgentID     *string  `json:"agent_id"`
+		DependsOn   []string `json:"depends_on"`
+		StartDate   *string  `json:"start_date"`
+		EndDate     *string  `json:"end_date"`
+		Position    *int     `json:"position"`
+		Archived    *bool    `json:"archived"`
+		ParentID    *string  `json:"parent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.ListID != nil      { c.ListID = *body.ListID }
+	if body.Title != nil       { c.Title = *body.Title }
+	if body.Description != nil { c.Description = *body.Description }
+	if body.CardType != nil    { c.CardType = *body.CardType }
+	if body.Tags != nil        { c.Tags = body.Tags }
+	if body.AgentID != nil     { c.AgentID = *body.AgentID }
+	if body.DependsOn != nil   { c.DependsOn = body.DependsOn }
+	if body.StartDate != nil   { c.StartDate = *body.StartDate }
+	if body.EndDate != nil     { c.EndDate = *body.EndDate }
+	if body.Position != nil    { c.Position = *body.Position }
+	if body.Archived != nil    { c.Archived = *body.Archived }
+	if body.ParentID != nil    { c.ParentID = *body.ParentID }
+	if err := dbpkg.UpdateKanbanCard(h.db, c); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	c, _ = dbpkg.GetKanbanCard(h.db, id)
+	json.NewEncoder(w).Encode(c)
+}
+
+func (h *Handler) deleteKanbanCard(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := dbpkg.DeleteKanbanCard(h.db, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

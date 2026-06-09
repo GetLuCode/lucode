@@ -18,6 +18,8 @@ export function AppRoutes() {
         <Route path="/" element={<App />} />
         <Route path="/projects/:projectId" element={<App />} />
         <Route path="/projects/:projectId/sessions/:sessionId" element={<App />} />
+        <Route path="/projects/:projectId/agents" element={<App />} />
+        <Route path="/projects/:projectId/kanban" element={<App />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AuthGuard>

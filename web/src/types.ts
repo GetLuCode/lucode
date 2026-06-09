@@ -112,6 +112,7 @@ export type WSEvent =
   | { type: 'info'; session_id: string; message: string }
   | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
   | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
+  | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
 
 // Structured assistant message content
 export interface AssistantMessage {
@@ -166,4 +167,58 @@ export interface ToolExecuteResult {
   success: boolean
   result?: unknown
   error?: string
+}
+
+export interface KanbanList {
+  id: string
+  project_id: string
+  name: string
+  position: number
+  created_at: string
+}
+
+export interface KanbanCard {
+  id: string
+  list_id: string
+  project_id: string
+  title: string
+  description: string
+  card_type: string
+  tags: string[]
+  agent_id: string
+  depends_on: string[]
+  start_date: string
+  end_date: string
+  position: number
+  archived: boolean
+  parent_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Agent {
+  id: string
+  project_id: string
+  name: string
+  model: string
+  account_id: string
+  personality: string
+  tools: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface RawEventEntry {
+  id: string
+  turnIndex: number
+  timestamp: string
+  event: WSEvent
+}
+
+export interface ProcessInfo {
+  id: string
+  started_at: string  // RFC3339
+  pid: number
+  model: string
+  ram_bytes: number   // 0 = unavailable (non-Linux)
 }

@@ -1,4 +1,4 @@
-import type { Account, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo } from './types'
+import type { Account, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, Agent, KanbanList, KanbanCard } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -266,3 +266,36 @@ export const getInstances = () =>
   req<{ self: InstanceInfo; peers: InstanceInfo[] }>('GET', '/api/instances')
 export const setProjectAIAPI = (projectId: string, aiapiInstanceId: string) =>
   req<void>('PATCH', `/api/projects/${projectId}/aiapi`, { aiapi_instance_id: aiapiInstanceId })
+
+// Process task manager
+export const listProcesses = () => req<ProcessInfo[]>('GET', '/api/processes')
+export const killProcess = (id: string) => req<void>('POST', `/api/processes/${id}/kill`)
+
+// Agents
+export const listAgents = (projectId: string) =>
+  req<Agent[]>('GET', `/api/projects/${projectId}/agents`)
+export const createAgent = (projectId: string, data: Omit<Agent, 'id' | 'project_id' | 'created_at' | 'updated_at'>) =>
+  req<Agent>('POST', `/api/projects/${projectId}/agents`, data)
+export const getAgent = (id: string) => req<Agent>('GET', `/api/agents/${id}`)
+export const updateAgent = (id: string, data: Partial<Omit<Agent, 'id' | 'project_id' | 'created_at' | 'updated_at'>>) =>
+  req<Agent>('PUT', `/api/agents/${id}`, data)
+export const deleteAgent = (id: string) => req<void>('DELETE', `/api/agents/${id}`)
+
+// Kanban
+export const listKanbanLists = (projectId: string) =>
+  req<KanbanList[]>('GET', `/api/projects/${projectId}/kanban/lists`)
+export const createKanbanList = (projectId: string, data: { name: string; position: number }) =>
+  req<KanbanList>('POST', `/api/projects/${projectId}/kanban/lists`, data)
+export const updateKanbanList = (id: string, data: { name?: string; position?: number }) =>
+  req<KanbanList>('PUT', `/api/kanban/lists/${id}`, data)
+export const deleteKanbanList = (id: string) =>
+  req<void>('DELETE', `/api/kanban/lists/${id}`)
+
+export const listKanbanCards = (projectId: string, archived = false) =>
+  req<KanbanCard[]>('GET', `/api/projects/${projectId}/kanban/cards${archived ? '?archived=true' : ''}`)
+export const createKanbanCard = (projectId: string, data: Partial<KanbanCard>) =>
+  req<KanbanCard>('POST', `/api/projects/${projectId}/kanban/cards`, data)
+export const updateKanbanCard = (id: string, data: Partial<KanbanCard>) =>
+  req<KanbanCard>('PUT', `/api/kanban/cards/${id}`, data)
+export const deleteKanbanCard = (id: string) =>
+  req<void>('DELETE', `/api/kanban/cards/${id}`)

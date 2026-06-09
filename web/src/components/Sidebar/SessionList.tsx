@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import type { Session } from '../../types'
@@ -14,9 +14,24 @@ export function SessionList() {
   const importSession = useStore(s => s.importSession)
   const sessionStatus = useStore(s => s.sessionStatus)
   const projects = useStore(s => s.projects)
+  const openRawEvents = useStore(s => s.openRawEvents)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const importRef = useRef<HTMLInputElement>(null)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!menuOpenId) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpenId(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpenId])
 
   if (!activeProjectId) {
     return (
@@ -140,16 +155,39 @@ export function SessionList() {
                 </>
               )}
             </div>
-            <button
-              className="icon-btn"
-              onClick={e => handleExport(e, s)}
-              title="Export session"
-            >↓</button>
-            <button
-              className="icon-btn icon-btn--danger"
-              onClick={e => { e.stopPropagation(); deleteSession(s.id) }}
-              title="Delete"
-            >×</button>
+            <div
+              className="session-list__menu"
+              ref={menuOpenId === s.id ? menuRef : undefined}
+            >
+              <button
+                className="icon-btn"
+                title="Options"
+                onClick={e => { e.stopPropagation(); setMenuOpenId(menuOpenId === s.id ? null : s.id) }}
+              >⋯</button>
+              {menuOpenId === s.id && (
+                <div className="session-list__dropdown">
+                  <button
+                    className="session-list__dropdown-item"
+                    onClick={e => { e.stopPropagation(); openRawEvents(s.id); setMenuOpenId(null) }}
+                  >
+                    Raw events
+                  </button>
+                  <div className="session-list__dropdown-divider" />
+                  <button
+                    className="session-list__dropdown-item"
+                    onClick={e => { handleExport(e, s); setMenuOpenId(null) }}
+                  >
+                    Export
+                  </button>
+                  <button
+                    className="session-list__dropdown-item session-list__dropdown-item--danger"
+                    onClick={e => { e.stopPropagation(); deleteSession(s.id); setMenuOpenId(null) }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
           </li>
         ))}
       </ul>

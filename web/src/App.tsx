@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useStore } from './store'
 import { NavPanel } from './components/Sidebar/NavPanel'
 import { ChatView } from './components/Chat/ChatView'
 import { HookToastContainer } from './components/Toast/HookToastContainer'
 import { SpotlightSearch } from './components/Search/SpotlightSearch'
+import { TitleBar } from './components/TitleBar'
+import { RawEventsModal } from './components/RawEvents/RawEventsModal'
 import { initWSConnection } from './hooks/useWSConnection'
+import { AgentsView } from './components/Agents/AgentsView'
+import { KanbanView } from './components/Kanban/KanbanView'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
@@ -14,6 +18,7 @@ export default function App() {
   const setActiveSession = useStore(s => s.setActiveSession)
   const activeProjectId = useStore(s => s.activeProjectId)
   const activeSessionId = useStore(s => s.activeSessionId)
+  const location = useLocation()
 
   const { projectId, sessionId } = useParams<{ projectId?: string; sessionId?: string }>()
   const navigate = useNavigate()
@@ -55,23 +60,31 @@ export default function App() {
     }
   }, [sessionId, setActiveSession]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync store changes to URL
+  // Sync store changes to URL — skip if already on a sub-route like /agents or /kanban
   useEffect(() => {
+    if (location.pathname.includes('/agents') || location.pathname.includes('/kanban')) return
     if (activeProjectId && activeSessionId) {
       navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
     } else if (activeProjectId) {
       navigate(`/projects/${activeProjectId}`, { replace: true })
     }
-  }, [activeProjectId, activeSessionId, navigate])
+  }, [activeProjectId, activeSessionId, navigate, location.pathname])
+
+  const isAgentsRoute = location.pathname.includes('/agents')
+  const isKanbanRoute = location.pathname.includes('/kanban')
 
   return (
     <div className="app">
+      <TitleBar />
       <HookToastContainer />
       <SpotlightSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
-      <NavPanel onOpenSearch={() => setSearchOpen(true)} />
-      <main className="main">
-        <ChatView />
-      </main>
+      <RawEventsModal />
+      <div className="app-content">
+        <NavPanel onOpenSearch={() => setSearchOpen(true)} />
+        <main className="main">
+          {isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : <ChatView />}
+        </main>
+      </div>
     </div>
   )
 }

@@ -104,6 +104,7 @@ func main() {
 
 	handler := apipkg.New(db, bus, manager, *workingDir)
 	handler.SetAuthURL(*authURL)
+	handler.SetAIAPIURL(*aiAPIURL)
 
 	// Start RPC server after handler is created so it can serve remote requests
 	if err := bus.StartRPCServer(apipkg.Wrap(handler)); err != nil {

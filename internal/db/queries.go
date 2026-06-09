@@ -1192,3 +1192,245 @@ func ListRawEvents(db *sql.DB, sessionID string) ([]RawEvent, error) {
 	return out, rows.Err()
 }
 
+// ---- Agent ----
+
+type Agent struct {
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"project_id"`
+	Name        string    `json:"name"`
+	Model       string    `json:"model"`
+	AccountID   string    `json:"account_id"`
+	Personality string    `json:"personality"`
+	Tools       []string  `json:"tools"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func InsertAgent(db *sql.DB, a Agent) error {
+	tools, _ := json.Marshal(a.Tools)
+	_, err := db.Exec(
+		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools) VALUES (?,?,?,?,?,?,?)`,
+		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools),
+	)
+	return err
+}
+
+func ListAgents(db *sql.DB, projectID string) ([]Agent, error) {
+	rows, err := db.Query(
+		`SELECT id, project_id, name, model, account_id, personality, tools, created_at, updated_at FROM agents WHERE project_id=? ORDER BY created_at ASC`,
+		projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Agent
+	for rows.Next() {
+		var a Agent
+		var toolsJSON, createdAt, updatedAt string
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(toolsJSON), &a.Tools)
+		a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func GetAgent(db *sql.DB, id string) (Agent, error) {
+	var a Agent
+	var toolsJSON, createdAt, updatedAt string
+	err := db.QueryRow(
+		`SELECT id, project_id, name, model, account_id, personality, tools, created_at, updated_at FROM agents WHERE id=?`, id,
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &createdAt, &updatedAt)
+	if err != nil {
+		return a, err
+	}
+	json.Unmarshal([]byte(toolsJSON), &a.Tools)
+	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	return a, nil
+}
+
+func UpdateAgent(db *sql.DB, a Agent) error {
+	tools, _ := json.Marshal(a.Tools)
+	_, err := db.Exec(
+		`UPDATE agents SET name=?, model=?, account_id=?, personality=?, tools=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.ID,
+	)
+	return err
+}
+
+func DeleteAgent(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM agents WHERE id=?`, id)
+	return err
+}
+
+
+// ---- KanbanList ----
+
+type KanbanList struct {
+	ID        string    `json:"id"`
+	ProjectID string    `json:"project_id"`
+	Name      string    `json:"name"`
+	Position  int       `json:"position"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func InsertKanbanList(db *sql.DB, l KanbanList) error {
+	_, err := db.Exec(
+		`INSERT INTO kanban_lists (id, project_id, name, position) VALUES (?,?,?,?)`,
+		l.ID, l.ProjectID, l.Name, l.Position,
+	)
+	return err
+}
+
+func ListKanbanLists(db *sql.DB, projectID string) ([]KanbanList, error) {
+	rows, err := db.Query(
+		`SELECT id, project_id, name, position, created_at FROM kanban_lists WHERE project_id=? ORDER BY position ASC`,
+		projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KanbanList
+	for rows.Next() {
+		var l KanbanList
+		var ts string
+		if err := rows.Scan(&l.ID, &l.ProjectID, &l.Name, &l.Position, &ts); err != nil {
+			return nil, err
+		}
+		l.CreatedAt, _ = time.Parse(time.RFC3339Nano, ts)
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+func GetKanbanList(db *sql.DB, id string) (KanbanList, error) {
+	var l KanbanList
+	var ts string
+	err := db.QueryRow(
+		`SELECT id, project_id, name, position, created_at FROM kanban_lists WHERE id=?`, id,
+	).Scan(&l.ID, &l.ProjectID, &l.Name, &l.Position, &ts)
+	if err != nil {
+		return l, err
+	}
+	l.CreatedAt, _ = time.Parse(time.RFC3339Nano, ts)
+	return l, nil
+}
+
+func UpdateKanbanList(db *sql.DB, id, name string, position int) error {
+	_, err := db.Exec(`UPDATE kanban_lists SET name=?, position=? WHERE id=?`, name, position, id)
+	return err
+}
+
+func DeleteKanbanList(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM kanban_lists WHERE id=?`, id)
+	return err
+}
+
+// ---- KanbanCard ----
+
+type KanbanCard struct {
+	ID          string    `json:"id"`
+	ListID      string    `json:"list_id"`
+	ProjectID   string    `json:"project_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	CardType    string    `json:"card_type"`
+	Tags        []string  `json:"tags"`
+	AgentID     string    `json:"agent_id"`
+	DependsOn   []string  `json:"depends_on"`
+	StartDate   string    `json:"start_date"`
+	EndDate     string    `json:"end_date"`
+	Position    int       `json:"position"`
+	Archived    bool      `json:"archived"`
+	ParentID    string    `json:"parent_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func scanKanbanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
+	var c KanbanCard
+	var tagsJSON, dependsJSON, createdAt, updatedAt string
+	var archived int
+	err := row.Scan(
+		&c.ID, &c.ListID, &c.ProjectID, &c.Title, &c.Description,
+		&c.CardType, &tagsJSON, &c.AgentID, &dependsJSON,
+		&c.StartDate, &c.EndDate, &c.Position, &archived,
+		&c.ParentID, &createdAt, &updatedAt,
+	)
+	if err != nil {
+		return c, err
+	}
+	json.Unmarshal([]byte(tagsJSON), &c.Tags)
+	json.Unmarshal([]byte(dependsJSON), &c.DependsOn)
+	c.Archived = archived != 0
+	c.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	c.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	return c, nil
+}
+
+const kanbanCardCols = `id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, position, archived, parent_id, created_at, updated_at`
+
+func InsertKanbanCard(db *sql.DB, c KanbanCard) error {
+	tags, _ := json.Marshal(c.Tags)
+	depends, _ := json.Marshal(c.DependsOn)
+	_, err := db.Exec(
+		`INSERT INTO kanban_cards (id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, position, archived, parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.ListID, c.ProjectID, c.Title, c.Description, c.CardType,
+		string(tags), c.AgentID, string(depends),
+		c.StartDate, c.EndDate, c.Position, boolToInt(c.Archived), c.ParentID,
+	)
+	return err
+}
+
+func ListKanbanCards(db *sql.DB, projectID string, includeArchived bool) ([]KanbanCard, error) {
+	q := `SELECT ` + kanbanCardCols + ` FROM kanban_cards WHERE project_id=?`
+	if !includeArchived {
+		q += ` AND archived=0`
+	}
+	q += ` ORDER BY list_id, position ASC`
+	rows, err := db.Query(q, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KanbanCard
+	for rows.Next() {
+		c, err := scanKanbanCard(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func GetKanbanCard(db *sql.DB, id string) (KanbanCard, error) {
+	row := db.QueryRow(`SELECT `+kanbanCardCols+` FROM kanban_cards WHERE id=?`, id)
+	return scanKanbanCard(row)
+}
+
+func UpdateKanbanCard(db *sql.DB, c KanbanCard) error {
+	tags, _ := json.Marshal(c.Tags)
+	depends, _ := json.Marshal(c.DependsOn)
+	_, err := db.Exec(`UPDATE kanban_cards SET
+		list_id=?, title=?, description=?, card_type=?, tags=?, agent_id=?,
+		depends_on=?, start_date=?, end_date=?, position=?, archived=?, parent_id=?,
+		updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		WHERE id=?`,
+		c.ListID, c.Title, c.Description, c.CardType, string(tags), c.AgentID,
+		string(depends), c.StartDate, c.EndDate, c.Position, boolToInt(c.Archived),
+		c.ParentID, c.ID,
+	)
+	return err
+}
+
+func DeleteKanbanCard(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM kanban_cards WHERE id=?`, id)
+	return err
+}

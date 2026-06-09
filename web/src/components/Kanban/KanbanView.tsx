@@ -1,0 +1,731 @@
+import { useEffect, useRef, useState } from 'react'
+import {
+  IconPlus, IconX, IconTrash, IconArchive,
+  IconArchiveOff, IconRobot, IconCalendar, IconLink,
+  IconTag, IconGripVertical,
+} from '@tabler/icons-react'
+import { useStore } from '../../store'
+import type { Agent, KanbanCard, KanbanList } from '../../types'
+import * as api from '../../api'
+
+// ---- constants ---------------------------------------------------------------
+
+const CARD_TYPES = ['task', 'story', 'epic', 'bug', 'spike', 'chore']
+
+const TYPE_COLORS: Record<string, string> = {
+  task:  '#60a5fa',
+  story: '#4ade80',
+  epic:  '#a78bfa',
+  bug:   '#f87171',
+  spike: '#facc15',
+  chore: '#94a3b8',
+}
+
+// ---- helpers -----------------------------------------------------------------
+
+function typeColor(t: string) {
+  return TYPE_COLORS[t] ?? '#6b7280'
+}
+
+function formatDate(s: string) {
+  if (!s) return ''
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return s
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+// ---- CardModal ---------------------------------------------------------------
+
+interface CardModalProps {
+  card: KanbanCard | null
+  lists: KanbanList[]
+  agents: Agent[]
+  allCards: KanbanCard[]
+  onClose: () => void
+  onSave: (id: string, patch: Partial<KanbanCard>) => Promise<void>
+  onDelete: (id: string) => Promise<void>
+  onArchive: (id: string, archived: boolean) => Promise<void>
+}
+
+function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, onArchive }: CardModalProps) {
+  const [form, setForm] = useState<Partial<KanbanCard>>({})
+  const [tagInput, setTagInput] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [activeTab, setActiveTab] = useState<'details' | 'relations'>('details')
+
+  useEffect(() => {
+    if (card) setForm({ ...card })
+  }, [card?.id])
+
+  if (!card) return null
+
+  function patch<K extends keyof KanbanCard>(k: K, v: KanbanCard[K]) {
+    setForm(f => ({ ...f, [k]: v }))
+  }
+
+  function addTag() {
+    const t = tagInput.trim()
+    if (!t) return
+    const tags = [...(form.tags ?? []), t]
+    patch('tags', tags)
+    setTagInput('')
+  }
+
+  function removeTag(t: string) {
+    patch('tags', (form.tags ?? []).filter(x => x !== t))
+  }
+
+  function toggleDepend(id: string) {
+    const deps = form.depends_on ?? []
+    patch('depends_on', deps.includes(id) ? deps.filter(x => x !== id) : [...deps, id])
+  }
+
+  async function handleSave() {
+    if (!card) return
+    setSaving(true)
+    try { await onSave(card.id, form) } finally { setSaving(false) }
+    onClose()
+  }
+
+  const otherCards = allCards.filter(c => c.id !== card.id && !c.archived)
+  const epicCards = allCards.filter(c => c.card_type === 'epic' && c.id !== card.id)
+
+  return (
+    <div className="kmodal-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="kmodal">
+        {/* header */}
+        <div className="kmodal__header">
+          <div className="kmodal__type-row">
+            <select
+              className="kmodal__type-select"
+              value={form.card_type ?? card.card_type}
+              onChange={e => patch('card_type', e.target.value)}
+              style={{ '--type-color': typeColor(form.card_type ?? card.card_type) } as React.CSSProperties}
+            >
+              {CARD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              {/* allow existing custom type to stay selectable */}
+              {!CARD_TYPES.includes(card.card_type) && (
+                <option value={card.card_type}>{card.card_type}</option>
+              )}
+            </select>
+            <select
+              className="kmodal__list-select"
+              value={form.list_id ?? card.list_id}
+              onChange={e => patch('list_id', e.target.value)}
+            >
+              {lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <div className="kmodal__header-actions">
+            <button
+              className="kmodal__action-btn"
+              title={card.archived ? 'Unarchive' : 'Archive'}
+              onClick={() => { onArchive(card.id, !card.archived); onClose() }}
+            >
+              {card.archived ? <IconArchiveOff size={15} /> : <IconArchive size={15} />}
+            </button>
+            <button
+              className="kmodal__action-btn kmodal__action-btn--danger"
+              title="Delete card"
+              onClick={() => { if (confirm('Delete this card?')) { onDelete(card.id); onClose() } }}
+            >
+              <IconTrash size={15} />
+            </button>
+            <button className="kmodal__action-btn" onClick={onClose} title="Close">
+              <IconX size={15} />
+            </button>
+          </div>
+        </div>
+
+        {/* title */}
+        <input
+          className="kmodal__title-input"
+          value={form.title ?? ''}
+          onChange={e => patch('title', e.target.value)}
+          placeholder="Card title"
+        />
+
+        {/* tabs */}
+        <div className="kmodal__tabs">
+          <button
+            className={`kmodal__tab${activeTab === 'details' ? ' kmodal__tab--active' : ''}`}
+            onClick={() => setActiveTab('details')}
+          >Details</button>
+          <button
+            className={`kmodal__tab${activeTab === 'relations' ? ' kmodal__tab--active' : ''}`}
+            onClick={() => setActiveTab('relations')}
+          >Relations</button>
+        </div>
+
+        <div className="kmodal__body">
+          {activeTab === 'details' && (
+            <>
+              {/* description */}
+              <div className="kmodal__field">
+                <label className="kmodal__label">Description</label>
+                <textarea
+                  className="kmodal__textarea"
+                  rows={4}
+                  value={form.description ?? ''}
+                  onChange={e => patch('description', e.target.value)}
+                  placeholder="Add a description…"
+                />
+              </div>
+
+              {/* dates */}
+              <div className="kmodal__row">
+                <div className="kmodal__field">
+                  <label className="kmodal__label"><IconCalendar size={12} /> Start date</label>
+                  <input
+                    type="date"
+                    className="kmodal__input"
+                    value={form.start_date ?? ''}
+                    onChange={e => patch('start_date', e.target.value)}
+                  />
+                </div>
+                <div className="kmodal__field">
+                  <label className="kmodal__label"><IconCalendar size={12} /> End date</label>
+                  <input
+                    type="date"
+                    className="kmodal__input"
+                    value={form.end_date ?? ''}
+                    onChange={e => patch('end_date', e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* agent */}
+              <div className="kmodal__field">
+                <label className="kmodal__label"><IconRobot size={12} /> Assigned agent</label>
+                <select
+                  className="kmodal__select"
+                  value={form.agent_id ?? ''}
+                  onChange={e => patch('agent_id', e.target.value)}
+                >
+                  <option value="">Unassigned</option>
+                  {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+
+              {/* epic parent */}
+              {(form.card_type ?? card.card_type) !== 'epic' && epicCards.length > 0 && (
+                <div className="kmodal__field">
+                  <label className="kmodal__label">Parent epic</label>
+                  <select
+                    className="kmodal__select"
+                    value={form.parent_id ?? ''}
+                    onChange={e => patch('parent_id', e.target.value)}
+                  >
+                    <option value="">None</option>
+                    {epicCards.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* tags */}
+              <div className="kmodal__field">
+                <label className="kmodal__label"><IconTag size={12} /> Tags</label>
+                <div className="kmodal__tags">
+                  {(form.tags ?? []).map(t => (
+                    <span key={t} className="kmodal__tag">
+                      {t}
+                      <button className="kmodal__tag-remove" onClick={() => removeTag(t)}>×</button>
+                    </span>
+                  ))}
+                </div>
+                <div className="kmodal__tag-input-row">
+                  <input
+                    className="kmodal__input"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
+                    placeholder="Add tag…"
+                  />
+                  <button className="kmodal__add-tag-btn" onClick={addTag} type="button">Add</button>
+                </div>
+              </div>
+
+              {/* custom type */}
+              <div className="kmodal__field">
+                <label className="kmodal__label">Custom type</label>
+                <input
+                  className="kmodal__input"
+                  value={CARD_TYPES.includes(form.card_type ?? '') ? '' : (form.card_type ?? '')}
+                  onChange={e => patch('card_type', e.target.value || 'task')}
+                  placeholder="e.g. spike, chore, research…"
+                />
+              </div>
+            </>
+          )}
+
+          {activeTab === 'relations' && (
+            <>
+              <div className="kmodal__field">
+                <label className="kmodal__label"><IconLink size={12} /> Depends on</label>
+                <div className="kmodal__dep-list">
+                  {otherCards.map(c => (
+                    <label key={c.id} className="kmodal__dep-row">
+                      <input
+                        type="checkbox"
+                        checked={(form.depends_on ?? []).includes(c.id)}
+                        onChange={() => toggleDepend(c.id)}
+                      />
+                      <span
+                        className="kmodal__dep-type"
+                        style={{ color: typeColor(c.card_type) }}
+                      >{c.card_type}</span>
+                      <span className="kmodal__dep-title">{c.title}</span>
+                    </label>
+                  ))}
+                  {otherCards.length === 0 && (
+                    <p className="kmodal__empty-hint">No other cards yet.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* subtasks when this is an epic */}
+              {(form.card_type ?? card.card_type) === 'epic' && (
+                <div className="kmodal__field">
+                  <label className="kmodal__label">Subtasks</label>
+                  <div className="kmodal__dep-list">
+                    {allCards.filter(c => c.parent_id === card.id).map(c => (
+                      <div key={c.id} className="kmodal__dep-row">
+                        <span className="kmodal__dep-type" style={{ color: typeColor(c.card_type) }}>{c.card_type}</span>
+                        <span className="kmodal__dep-title">{c.title}</span>
+                      </div>
+                    ))}
+                    {allCards.filter(c => c.parent_id === card.id).length === 0 && (
+                      <p className="kmodal__empty-hint">No subtasks assigned to this epic.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="kmodal__footer">
+          <button className="kmodal__btn kmodal__btn--cancel" onClick={onClose}>Cancel</button>
+          <button className="kmodal__btn kmodal__btn--save" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---- KanbanCardItem ----------------------------------------------------------
+
+interface CardItemProps {
+  card: KanbanCard
+  agents: Agent[]
+  onClick: () => void
+  onDragStart: (e: React.DragEvent) => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent) => void
+}
+
+function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop }: CardItemProps) {
+  const agent = agents.find(a => a.id === card.agent_id)
+  const hasDates = card.start_date || card.end_date
+  const isOverdue = card.end_date && new Date(card.end_date) < new Date()
+
+  return (
+    <div
+      className="kcard"
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={e => { e.preventDefault(); onDragOver(e) }}
+      onDrop={onDrop}
+      onClick={onClick}
+    >
+      <div className="kcard__top">
+        <span className="kcard__type" style={{ color: typeColor(card.card_type) }}>
+          {card.card_type}
+        </span>
+        <IconGripVertical size={12} className="kcard__grip" />
+      </div>
+      <p className="kcard__title">{card.title}</p>
+      {card.description && (
+        <p className="kcard__desc">{card.description}</p>
+      )}
+      <div className="kcard__meta">
+        {hasDates && (
+          <span className={`kcard__date${isOverdue ? ' kcard__date--overdue' : ''}`}>
+            <IconCalendar size={11} />
+            {card.end_date ? formatDate(card.end_date) : formatDate(card.start_date)}
+          </span>
+        )}
+        {card.tags.slice(0, 3).map(t => (
+          <span key={t} className="kcard__tag">{t}</span>
+        ))}
+        {agent && (
+          <span className="kcard__agent" title={agent.name}>
+            <IconRobot size={11} />
+            {agent.name}
+          </span>
+        )}
+        {card.depends_on.length > 0 && (
+          <span className="kcard__deps" title={`${card.depends_on.length} dependency`}>
+            <IconLink size={11} />{card.depends_on.length}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---- KanbanColumn ------------------------------------------------------------
+
+interface ColumnProps {
+  list: KanbanList
+  cards: KanbanCard[]
+  agents: Agent[]
+  onCardClick: (c: KanbanCard) => void
+  onAddCard: (listId: string, title: string) => void
+  onRenameList: (id: string, name: string) => void
+  onDeleteList: (id: string) => void
+  onCardDragStart: (cardId: string, fromListId: string) => void
+  onCardDrop: (toListId: string, afterCardId?: string) => void
+}
+
+function KanbanColumn({
+  list, cards, agents,
+  onCardClick, onAddCard, onRenameList, onDeleteList,
+  onCardDragStart, onCardDrop,
+}: ColumnProps) {
+  const [addingCard, setAddingCard] = useState(false)
+  const [newCardTitle, setNewCardTitle] = useState('')
+  const [editingName, setEditingName] = useState(false)
+  const [listName, setListName] = useState(list.name)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function handleAddCard() {
+    const t = newCardTitle.trim()
+    if (!t) { setAddingCard(false); return }
+    onAddCard(list.id, t)
+    setNewCardTitle('')
+    setAddingCard(false)
+  }
+
+  function handleRename() {
+    const n = listName.trim()
+    if (n && n !== list.name) onRenameList(list.id, n)
+    setEditingName(false)
+  }
+
+  return (
+    <div
+      className="kcolumn"
+      onDragOver={e => e.preventDefault()}
+      onDrop={() => onCardDrop(list.id)}
+    >
+      {/* column header */}
+      <div className="kcolumn__header">
+        {editingName ? (
+          <input
+            className="kcolumn__name-input"
+            value={listName}
+            onChange={e => setListName(e.target.value)}
+            onBlur={handleRename}
+            onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setEditingName(false) }}
+            autoFocus
+          />
+        ) : (
+          <button className="kcolumn__name" onClick={() => setEditingName(true)} title="Click to rename">
+            {list.name}
+            <span className="kcolumn__count">{cards.length}</span>
+          </button>
+        )}
+        <button
+          className="kcolumn__delete-btn"
+          title="Delete list"
+          onClick={() => { if (confirm(`Delete list "${list.name}"?`)) onDeleteList(list.id) }}
+        >
+          <IconTrash size={12} />
+        </button>
+      </div>
+
+      {/* cards */}
+      <div className="kcolumn__cards">
+        {cards.map(card => (
+          <KanbanCardItem
+            key={card.id}
+            card={card}
+            agents={agents}
+            onClick={() => onCardClick(card)}
+            onDragStart={() => onCardDragStart(card.id, list.id)}
+            onDragOver={e => e.preventDefault()}
+            onDrop={() => onCardDrop(list.id, card.id)}
+          />
+        ))}
+
+        {/* drop zone at bottom */}
+        <div
+          className="kcolumn__drop-zone"
+          onDragOver={e => e.preventDefault()}
+          onDrop={() => onCardDrop(list.id)}
+        />
+      </div>
+
+      {/* add card */}
+      {addingCard ? (
+        <div className="kcolumn__add-form">
+          <input
+            ref={inputRef}
+            className="kcolumn__add-input"
+            value={newCardTitle}
+            onChange={e => setNewCardTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleAddCard(); if (e.key === 'Escape') { setAddingCard(false); setNewCardTitle('') } }}
+            placeholder="Card title…"
+            autoFocus
+          />
+          <div className="kcolumn__add-actions">
+            <button className="kcolumn__add-confirm" onClick={handleAddCard}>Add</button>
+            <button className="kcolumn__add-cancel" onClick={() => { setAddingCard(false); setNewCardTitle('') }}>
+              <IconX size={13} />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="kcolumn__add-btn" onClick={() => setAddingCard(true)}>
+          <IconPlus size={13} /> Add card
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---- KanbanView (main) -------------------------------------------------------
+
+export function KanbanView() {
+  const activeProjectId = useStore(s => s.activeProjectId)
+  const loadAccounts = useStore(s => s.loadAccounts)
+
+  const [lists, setLists] = useState<KanbanList[]>([])
+  const [cards, setCards] = useState<KanbanCard[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [showArchived, setShowArchived] = useState(false)
+  const [selectedCard, setSelectedCard] = useState<KanbanCard | null>(null)
+  const [addingList, setAddingList] = useState(false)
+  const [newListName, setNewListName] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  // drag state
+  const dragCardId = useRef<string | null>(null)
+  const dragFromListId = useRef<string | null>(null)
+
+  useEffect(() => { loadAccounts() }, [loadAccounts])
+
+  useEffect(() => {
+    if (!activeProjectId) return
+    setLoading(true)
+    Promise.all([
+      api.listKanbanLists(activeProjectId),
+      api.listKanbanCards(activeProjectId, showArchived),
+      api.listAgents(activeProjectId),
+    ]).then(([ls, cs, ags]) => {
+      setLists(ls)
+      setCards(cs)
+      setAgents(ags)
+    }).catch(console.error)
+      .finally(() => setLoading(false))
+  }, [activeProjectId, showArchived])
+
+  if (!activeProjectId) {
+    return <div className="kanban-view kanban-view--empty">Select a project to view the board.</div>
+  }
+
+  // ---- list ops ----
+
+  async function handleAddList() {
+    const n = newListName.trim()
+    if (!n) { setAddingList(false); return }
+    const pos = lists.length
+    const l = await api.createKanbanList(activeProjectId!, { name: n, position: pos })
+    setLists(prev => [...prev, l])
+    setNewListName('')
+    setAddingList(false)
+  }
+
+  async function handleRenameList(id: string, name: string) {
+    const l = lists.find(x => x.id === id)
+    if (!l) return
+    const updated = await api.updateKanbanList(id, { name, position: l.position })
+    setLists(prev => prev.map(x => x.id === id ? updated : x))
+  }
+
+  async function handleDeleteList(id: string) {
+    await api.deleteKanbanList(id)
+    setLists(prev => prev.filter(x => x.id !== id))
+    setCards(prev => prev.filter(c => c.list_id !== id))
+  }
+
+  // ---- card ops ----
+
+  async function handleAddCard(listId: string, title: string) {
+    const pos = cards.filter(c => c.list_id === listId).length
+    const c = await api.createKanbanCard(activeProjectId!, {
+      list_id: listId,
+      title,
+      card_type: 'task',
+      tags: [],
+      depends_on: [],
+      position: pos,
+    })
+    setCards(prev => [...prev, c])
+  }
+
+  async function handleSaveCard(id: string, patch: Partial<KanbanCard>) {
+    const updated = await api.updateKanbanCard(id, patch)
+    setCards(prev => prev.map(c => c.id === id ? updated : c))
+    // keep modal in sync
+    setSelectedCard(updated)
+  }
+
+  async function handleDeleteCard(id: string) {
+    await api.deleteKanbanCard(id)
+    setCards(prev => prev.filter(c => c.id !== id))
+  }
+
+  async function handleArchiveCard(id: string, archived: boolean) {
+    const updated = await api.updateKanbanCard(id, { archived })
+    setCards(prev => showArchived ? prev.map(c => c.id === id ? updated : c) : prev.filter(c => c.id !== id))
+  }
+
+  // ---- drag & drop ----
+
+  function handleCardDragStart(cardId: string, fromListId: string) {
+    dragCardId.current = cardId
+    dragFromListId.current = fromListId
+  }
+
+  async function handleCardDrop(toListId: string, afterCardId?: string) {
+    const cid = dragCardId.current
+    if (!cid) return
+    dragCardId.current = null
+    dragFromListId.current = null
+
+    // reorder locally first for snappy feel
+    setCards(prev => {
+      const moving = prev.find(c => c.id === cid)
+      if (!moving) return prev
+      const withoutMoving = prev.filter(c => c.id !== cid)
+      const toList = withoutMoving.filter(c => c.list_id === toListId)
+      const otherLists = withoutMoving.filter(c => c.list_id !== toListId)
+
+      let newToList: KanbanCard[]
+      if (afterCardId) {
+        const idx = toList.findIndex(c => c.id === afterCardId)
+        newToList = [...toList.slice(0, idx + 1), { ...moving, list_id: toListId }, ...toList.slice(idx + 1)]
+      } else {
+        newToList = [...toList, { ...moving, list_id: toListId }]
+      }
+      // assign positions
+      const reordered = newToList.map((c, i) => ({ ...c, position: i }))
+      return [...otherLists, ...reordered]
+    })
+
+    // persist: update list and position for moved card + reorder all in target list
+    const card = cards.find(c => c.id === cid)
+    if (!card) return
+    const newPos = afterCardId
+      ? (cards.filter(c => c.list_id === toListId).findIndex(c => c.id === afterCardId) + 1)
+      : cards.filter(c => c.list_id === toListId).length
+    await api.updateKanbanCard(cid, { list_id: toListId, position: newPos })
+  }
+
+  // ---- render ----
+
+  const visibleCards = showArchived ? cards : cards.filter(c => !c.archived)
+
+  return (
+    <div className="kanban-view">
+      {/* toolbar */}
+      <div className="kanban-view__toolbar">
+        <h2 className="kanban-view__title">Kanban</h2>
+        <div className="kanban-view__toolbar-actions">
+          <button
+            className={`kanban-view__filter-btn${showArchived ? ' kanban-view__filter-btn--active' : ''}`}
+            onClick={() => setShowArchived(v => !v)}
+            title="Toggle archived cards"
+          >
+            <IconArchive size={14} />
+            {showArchived ? 'Hide archived' : 'Show archived'}
+          </button>
+          <button
+            className="kanban-view__add-list-btn"
+            onClick={() => setAddingList(true)}
+          >
+            <IconPlus size={14} />
+            Add list
+          </button>
+        </div>
+      </div>
+
+      {/* board */}
+      <div className="kanban-board">
+        {loading && <div className="kanban-board__loading">Loading…</div>}
+
+        {lists.map(list => (
+          <KanbanColumn
+            key={list.id}
+            list={list}
+            cards={visibleCards.filter(c => c.list_id === list.id).sort((a, b) => a.position - b.position)}
+            agents={agents}
+            onCardClick={setSelectedCard}
+            onAddCard={handleAddCard}
+            onRenameList={handleRenameList}
+            onDeleteList={handleDeleteList}
+            onCardDragStart={handleCardDragStart}
+            onCardDrop={handleCardDrop}
+          />
+        ))}
+
+        {/* add list inline */}
+        {addingList ? (
+          <div className="kcolumn kcolumn--new">
+            <input
+              className="kcolumn__name-input"
+              value={newListName}
+              onChange={e => setNewListName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleAddList(); if (e.key === 'Escape') { setAddingList(false); setNewListName('') } }}
+              placeholder="List name…"
+              autoFocus
+            />
+            <div className="kcolumn__add-actions">
+              <button className="kcolumn__add-confirm" onClick={handleAddList}>Create</button>
+              <button className="kcolumn__add-cancel" onClick={() => { setAddingList(false); setNewListName('') }}>
+                <IconX size={13} />
+              </button>
+            </div>
+          </div>
+        ) : (
+          !loading && lists.length === 0 && (
+            <div className="kanban-board__empty">
+              <p>No lists yet.</p>
+              <button className="kanban-view__add-list-btn" onClick={() => setAddingList(true)}>
+                <IconPlus size={14} /> Add first list
+              </button>
+            </div>
+          )
+        )}
+      </div>
+
+      {/* card modal */}
+      {selectedCard && (
+        <CardModal
+          card={selectedCard}
+          lists={lists}
+          agents={agents}
+          allCards={cards}
+          onClose={() => setSelectedCard(null)}
+          onSave={handleSaveCard}
+          onDelete={handleDeleteCard}
+          onArchive={handleArchiveCard}
+        />
+      )}
+    </div>
+  )
+}

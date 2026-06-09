@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { IconEdit, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
 import * as api from '../../api'
 import type { AccountProfile, AccountUsage } from '../../api'
 import { useStore } from '../../store'
@@ -227,12 +228,85 @@ function UsageRow({ label, pct, resetsAt, isBilling, credits }: {
   )
 }
 
+// ─── AccountForm (add / edit) ─────────────────────────────────────────────────
+
+function AccountForm({ initial, onSave, onCancel }: {
+  initial?: { name: string; claude_config_dir: string }
+  onSave: (name: string, dir: string) => Promise<void>
+  onCancel: () => void
+}) {
+  const [name, setName] = useState(initial?.name ?? '')
+  const [dir, setDir] = useState(initial?.claude_config_dir ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!name.trim() || !dir.trim()) { setError('Both fields are required'); return }
+    setSaving(true)
+    setError('')
+    try {
+      // Validate that .credentials.json exists in the given dir (on the active space)
+      await api.validateAccountDir(dir.trim())
+    } catch (err) {
+      const msg = (err as Error).message
+      // validateAccountDir throws on non-2xx; extract the JSON error if present
+      const match = msg.match(/"error":"([^"]+)"/)
+      setError(match ? match[1] : msg)
+      setSaving(false)
+      return
+    }
+    try {
+      await onSave(name.trim(), dir.trim())
+    } catch (err) {
+      setError((err as Error).message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="af-form" onSubmit={handleSubmit}>
+      <div className="af-form__field">
+        <label className="af-form__label">Account name</label>
+        <input
+          className="af-form__input"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="e.g. personal"
+          autoFocus
+        />
+      </div>
+      <div className="af-form__field">
+        <label className="af-form__label">Claude config dir</label>
+        <input
+          className="af-form__input"
+          value={dir}
+          onChange={e => setDir(e.target.value)}
+          placeholder="e.g. /home/user/.claude"
+        />
+        <div className="af-form__hint">Must contain <code>.credentials.json</code></div>
+      </div>
+      {error && <div className="af-form__error">{error}</div>}
+      <div className="af-form__actions">
+        <button type="button" className="af-form__btn af-form__btn--cancel" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" className="af-form__btn af-form__btn--save" disabled={saving}>
+          {saving ? 'Saving…' : (initial ? 'Save' : 'Add account')}
+        </button>
+      </div>
+    </form>
+  )
+}
+
 // ─── AccountCard (expanded panel) ────────────────────────────────────────────
 
-function AccountCard({ account, isActive, onSelect }: {
+function AccountCard({ account, isActive, onSelect, onEdit, onDelete }: {
   account: Account
   isActive: boolean
   onSelect: () => void
+  onEdit: () => void
+  onDelete: () => void
 }) {
   const [profile, setProfile] = useState<AccountProfile | null>(null)
   const [usage, setUsage] = useState<AccountUsage | null>(null)
@@ -250,18 +324,15 @@ function AccountCard({ account, isActive, onSelect }: {
   const sd = statusEmoji(status)
   const mode = activeMode(usage)
   const email = profile?.account.email ?? ''
-  const initial = email.charAt(0).toUpperCase() || account.name.charAt(0).toUpperCase()
+  const initial = email.charAt(0).toUpperCase() || (account.name ?? '').charAt(0).toUpperCase() || '?'
   const hasExtra = usage?.extra_usage?.is_enabled
 
   return (
-    <div
-      className={`af-card${isActive ? ' af-card--active' : ''}`}
-      onClick={onSelect}
-      role="button"
-      tabIndex={0}
-      onKeyDown={e => { if (e.key === 'Enter') onSelect() }}
-    >
-      <div className="af-card__header">
+    <div className={`af-card${isActive ? ' af-card--active' : ''}`}>
+      <div className="af-card__header" onClick={onSelect} role="button" tabIndex={0}
+        onKeyDown={e => { if (e.key === 'Enter') onSelect() }}
+        style={{ cursor: 'pointer' }}
+      >
         <Avatar email={email} initial={initial} size={28} />
         <div className="af-card__identity">
           <div className="af-card__name-row">
@@ -275,6 +346,14 @@ function AccountCard({ account, isActive, onSelect }: {
           {mode && (
             <span className={`af-card__mode af-card__mode--${status}`}>{mode}</span>
           )}
+        </div>
+        <div className="af-card__actions" onClick={e => e.stopPropagation()}>
+          <button className="af-card__action-btn" title="Edit" onClick={onEdit}>
+            <IconEdit size={13} />
+          </button>
+          <button className="af-card__action-btn af-card__action-btn--danger" title="Delete" onClick={onDelete}>
+            <IconTrash size={13} />
+          </button>
         </div>
       </div>
 
@@ -305,20 +384,26 @@ function AccountCard({ account, isActive, onSelect }: {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+type PanelView = 'list' | 'add' | { edit: Account }
+
 export function AccountFooter({ visible }: { visible: boolean }) {
   const accounts = useStore(s => s.accounts)
   const selectedAccountId = useStore(s => s.selectedAccountId)
   const setSelectedAccount = useStore(s => s.setSelectedAccount)
   const loadAccounts = useStore(s => s.loadAccounts)
+  const createAccount = useStore(s => s.createAccount)
+  const updateAccount = useStore(s => s.updateAccount)
+  const deleteAccount = useStore(s => s.deleteAccount)
 
   const [open, setOpen] = useState(false)
+  const [view, setView] = useState<PanelView>('list')
   const [selectedProfile, setSelectedProfile] = useState<AccountProfile | null>(null)
   const [selectedUsage, setSelectedUsage] = useState<AccountUsage | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const selectedAccount = accounts.find(a => a.id === selectedAccountId) ?? accounts[0]
 
-  useEffect(() => { if (accounts.length === 0) loadAccounts() }, [])
+  useEffect(() => { loadAccounts() }, [])
 
   useEffect(() => {
     if (!selectedAccountId && accounts.length > 0) setSelectedAccount(accounts[0].id)
@@ -333,55 +418,111 @@ export function AccountFooter({ visible }: { visible: boolean }) {
   }, [selectedAccount?.id])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) { setView('list'); return }
     const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setView('list')
+      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  if (!visible || accounts.length === 0) return null
+  if (!visible) return null
 
   const status = getStatus(selectedUsage)
-  const sd = statusEmoji(status)
+  const sd = accounts.length > 0 ? statusEmoji(status) : statusEmoji('available')
   const email = selectedProfile?.account.email ?? ''
-  const initial = email.charAt(0).toUpperCase() || (selectedAccount?.name.charAt(0).toUpperCase() ?? '?')
+  const initial = email.charAt(0).toUpperCase() || (selectedAccount?.name.charAt(0).toUpperCase() ?? '+')
 
-  // 5h reset time for the collapsed bar
   const fiveHourReset = selectedUsage?.five_hour?.resets_at
     ? formatResetsAt(selectedUsage.five_hour.resets_at)
     : null
+
+  async function handleAdd(name: string, dir: string) {
+    await createAccount({ name, claude_config_dir: dir })
+    setView('list')
+  }
+
+  async function handleEdit(account: Account, name: string, dir: string) {
+    await updateAccount(account.id, { name, claude_config_dir: dir })
+    setView('list')
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this account?')) return
+    await deleteAccount(id)
+    setView('list')
+  }
 
   return (
     <div className="account-footer" ref={containerRef}>
       {open && (
         <div className="af-panel">
-          <div className="af-panel__header">Accounts</div>
-          <div className="af-panel__list">
-            {accounts.map(a => (
-              <AccountCard
-                key={a.id}
-                account={a}
-                isActive={a.id === (selectedAccountId ?? accounts[0]?.id)}
-                onSelect={() => { setSelectedAccount(a.id); setOpen(false) }}
-              />
-            ))}
+          <div className="af-panel__header">
+            <span>Accounts</span>
+            <div className="af-panel__header-actions">
+              {view === 'list' && (
+                <button className="af-panel__add-btn" title="Add account" onClick={() => setView('add')}>
+                  <IconPlus size={14} />
+                </button>
+              )}
+              {view !== 'list' && (
+                <button className="af-panel__add-btn" title="Back" onClick={() => setView('list')}>
+                  <IconX size={14} />
+                </button>
+              )}
+            </div>
           </div>
+
+          {view === 'add' && (
+            <AccountForm
+              onSave={handleAdd}
+              onCancel={() => setView('list')}
+            />
+          )}
+
+          {typeof view === 'object' && 'edit' in view && (
+            <AccountForm
+              initial={{ name: view.edit.name, claude_config_dir: view.edit.claude_config_dir ?? '' }}
+              onSave={(name, dir) => handleEdit(view.edit, name, dir)}
+              onCancel={() => setView('list')}
+            />
+          )}
+
+          {view === 'list' && (
+            <div className="af-panel__list">
+              {accounts.length === 0 && (
+                <div className="af-card__no-usage" style={{ padding: '12px 14px' }}>
+                  No accounts. Click + to add one.
+                </div>
+              )}
+              {accounts.map(a => (
+                <AccountCard
+                  key={a.id}
+                  account={a}
+                  isActive={a.id === (selectedAccountId ?? accounts[0]?.id)}
+                  onSelect={() => { setSelectedAccount(a.id); setOpen(false) }}
+                  onEdit={() => setView({ edit: a })}
+                  onDelete={() => handleDelete(a.id)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       <button
         className={`account-footer__bar account-footer__bar--${sd.cls}`}
         onClick={() => setOpen(v => !v)}
-        title={`${selectedAccount?.name ?? 'No account'} · ${sd.label}`}
+        title={selectedAccount ? `${selectedAccount.name} · ${sd.label}` : 'No account configured'}
       >
         <Avatar email={email} initial={initial} size={28} />
         <div className="account-footer__identity">
           <span className="account-footer__name">{selectedAccount?.name ?? 'No account'}</span>
           {email && <span className="account-footer__email">{email}</span>}
         </div>
-        {/* 5h reset time left of status dot */}
         {fiveHourReset && (
           <span className="account-footer__reset" title={fiveHourReset.exact}>
             {fiveHourReset.short}

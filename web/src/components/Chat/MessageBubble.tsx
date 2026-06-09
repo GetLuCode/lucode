@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { marked } from 'marked'
-import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled } from '@tabler/icons-react'
+import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
@@ -18,9 +18,10 @@ interface Props {
   onStopSpeaking?: () => void
   isStarred?: boolean
   onStar?: (messageId: string) => void
+  onViewRawData?: (messageId: string) => void
 }
 
-export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking, isStarred, onStar }: Props) {
+export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking, isStarred, onStar, onViewRawData }: Props) {
   const [copied, setCopied] = useState(false)
 
   const handleSpeak = () => {
@@ -93,6 +94,18 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
                     </button>
                     <div className="tooltip tooltip--up">{isStarred ? 'Starred' : 'Star'}</div>
                   </div>
+                  {message.role === 'assistant' && onViewRawData && (
+                    <div className="tooltip-wrapper">
+                      <button
+                        className="msg__action-btn"
+                        onClick={() => onViewRawData(message.id)}
+                        aria-label="View raw turn data"
+                      >
+                        <IconBraces size={13} />
+                      </button>
+                      <div className="tooltip tooltip--up">Raw turn data</div>
+                    </div>
+                  )}
                 </>
               </div>
             )}
