@@ -49,7 +49,10 @@
 
 .ck-layout {
   display: grid;
-  grid-template-columns: minmax(360px, 420px) 1fr;
+  /* Drawer is narrow (~480px), so stack the list and detail vertically
+     rather than side-by-side. The list scrolls; the detail fills the
+     remaining height. */
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   flex: 1;
   min-height: 0;
