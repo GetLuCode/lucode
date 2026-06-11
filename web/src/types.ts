@@ -1,17 +1,12 @@
-export interface Account {
-  id: string
-  name: string
-  claude_config_dir?: string
-  has_token: boolean
-  expires_at?: number
-  created_at: string
-}
+// Note: the Claude-accounts subsystem was removed in the MiniMax pivot.
+// Account-related types and fields have been dropped; existing rows in the
+// DB still hold legacy data but the UI no longer reads or writes them.
 
 export interface Project {
   id: string
   name: string
   work_dirs: string[]
-  claude_config_dir: string
+  claude_config_dir?: string
   default_model: string
   aiapi_instance_id?: string
   created_at: string
@@ -221,4 +216,72 @@ export interface ProcessInfo {
   pid: number
   model: string
   ram_bytes: number   // 0 = unavailable (non-Linux)
+}
+
+// ── Checkpoints ─────────────────────────────────────────────────────────────
+
+export interface Checkpoint {
+  id: string
+  parent: string
+  tree: string
+  timestamp: string
+  turn_id?: string
+  summary: string
+  ops?: FSOpsForUI[]
+  kind?: 'turn' | 'revert' | string
+  pruned?: boolean
+}
+
+export interface FSOpsForUI {
+  op: 'create' | 'update' | 'delete' | 'rename' | 'copy'
+  path?: string
+  from?: string
+  to?: string
+  old_string?: string
+  new_string?: string
+  replace_all?: boolean
+  occurrence_index?: number
+}
+
+export type ChangeKind = 'added' | 'removed' | 'modified'
+
+export interface CheckpointChange {
+  path: string
+  kind: ChangeKind
+  from_hash?: string
+  to_hash?: string
+}
+
+export interface FileDiff {
+  path: string
+  from_hash?: string
+  to_hash?: string
+  kind: ChangeKind
+  unified_diff: string
+  is_binary: boolean
+  from_content?: string
+  to_content?: string
+  from_lines: number
+  to_lines: number
+}
+
+export interface CheckpointTree {
+  entries: { path: string; hash: string }[]
+}
+
+export interface CheckpointWithTree {
+  checkpoint: Checkpoint
+  tree: CheckpointTree
+}
+
+export interface CheckpointListResponse {
+  work_dir: string
+  head: string
+  checkpoints: Checkpoint[]
+}
+
+export interface DiffResponse {
+  from: string
+  to: string
+  changes: CheckpointChange[]
 }

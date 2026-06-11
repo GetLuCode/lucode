@@ -3,11 +3,10 @@ import type { CSSProperties } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
-import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout, IconDownload, IconUpload, IconCpu, IconRobot, IconLayoutKanban } from '@tabler/icons-react'
+import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout, IconDownload, IconUpload, IconCpu, IconRobot, IconLayoutKanban, IconHistory } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 import { SpacesList } from './SpacesList'
 import { SettingsModal } from '../Settings/SettingsModal'
-import { AccountFooter } from './AccountFooter'
 import { TaskManagerPanel } from '../TaskManager/TaskManagerPanel'
 import { useAuthStore } from '../../store/auth'
 import * as api from '../../api'
@@ -37,8 +36,6 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const projects = useStore(s => s.projects)
-  const activeModel = localStorage.getItem('pref_model') ?? 'haiku'
-  const isClaudeModel = !activeModel.startsWith('ollama:')
   const sessions = useStore(s => s.sessions)
   const activeProjectId = useStore(s => s.activeProjectId)
   const activeSessionId = useStore(s => s.activeSessionId)
@@ -259,7 +256,7 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
         {activeProject && (
           <div className="nav-panel__section-nav">
             <button
-              className={`nav-panel__section-btn${!location.pathname.includes('/agents') ? ' nav-panel__section-btn--active' : ''}`}
+              className={`nav-panel__section-btn${!location.pathname.includes('/agents') && !location.pathname.includes('/kanban') && !location.pathname.includes('/checkpoints') ? ' nav-panel__section-btn--active' : ''}`}
               onClick={() => navigate(`/projects/${activeProject.id}`)}
               title="Sessions"
             >
@@ -280,6 +277,14 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
             >
               <IconLayoutKanban size={12} />
               Kanban
+            </button>
+            <button
+              className={`nav-panel__section-btn${location.pathname.includes('/checkpoints') ? ' nav-panel__section-btn--active' : ''}`}
+              onClick={() => navigate(`/projects/${activeProject.id}/checkpoints`)}
+              title="Checkpoints"
+            >
+              <IconHistory size={12} />
+              Checkpoints
             </button>
           </div>
         )}
@@ -424,7 +429,6 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
           <div className="nav-panel__empty">Select a project</div>
         )}
 
-        <AccountFooter visible={isClaudeModel} />
         <LogoutButton />
       </div>
     </aside>

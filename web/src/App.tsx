@@ -10,6 +10,7 @@ import { RawEventsModal } from './components/RawEvents/RawEventsModal'
 import { initWSConnection } from './hooks/useWSConnection'
 import { AgentsView } from './components/Agents/AgentsView'
 import { KanbanView } from './components/Kanban/KanbanView'
+import { CheckpointsView } from './components/Checkpoints/CheckpointsView'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
@@ -47,6 +48,7 @@ export default function App() {
 
   // Sync URL params to store
   useEffect(() => {
+    console.log('[App] projectId from URL:', projectId)
     if (projectId) {
       setActiveProject(projectId)
     }
@@ -55,6 +57,7 @@ export default function App() {
   useEffect(() => {
     // Only call setActiveSession when sessionId comes from URL navigation (reload/deep link),
     // not when the store itself just changed activeSessionId (which triggered the URL update).
+    console.log('[App] sessionId from URL:', sessionId, 'activeSessionId in store:', activeSessionId)
     if (sessionId && sessionId !== activeSessionId) {
       setActiveSession(sessionId)
     }
@@ -62,7 +65,7 @@ export default function App() {
 
   // Sync store changes to URL — skip if already on a sub-route like /agents or /kanban
   useEffect(() => {
-    if (location.pathname.includes('/agents') || location.pathname.includes('/kanban')) return
+    if (location.pathname.includes('/agents') || location.pathname.includes('/kanban') || location.pathname.includes('/checkpoints')) return
     if (activeProjectId && activeSessionId) {
       navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
     } else if (activeProjectId) {
@@ -72,6 +75,7 @@ export default function App() {
 
   const isAgentsRoute = location.pathname.includes('/agents')
   const isKanbanRoute = location.pathname.includes('/kanban')
+  const isCheckpointsRoute = location.pathname.includes('/checkpoints')
 
   return (
     <div className="app">
@@ -82,7 +86,7 @@ export default function App() {
       <div className="app-content">
         <NavPanel onOpenSearch={() => setSearchOpen(true)} />
         <main className="main">
-          {isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : <ChatView />}
+          {isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isCheckpointsRoute ? <CheckpointsView /> : <ChatView />}
         </main>
       </div>
     </div>
