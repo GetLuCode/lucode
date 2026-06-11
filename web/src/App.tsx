@@ -75,7 +75,7 @@ export default function App() {
 
   const isAgentsRoute = location.pathname.includes('/agents')
   const isKanbanRoute = location.pathname.includes('/kanban')
-  const isCheckpointsRoute = location.pathname.includes('/checkpoints')
+  const isCheckpointsOpen = location.pathname.includes('/checkpoints')
 
   return (
     <div className="app">
@@ -85,9 +85,16 @@ export default function App() {
       <RawEventsModal />
       <div className="app-content">
         <NavPanel onOpenSearch={() => setSearchOpen(true)} />
-        <main className="main">
-          {isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isCheckpointsRoute ? <CheckpointsView /> : <ChatView />}
+        <main className={`main${isCheckpointsOpen ? ' main--with-drawer' : ''}`}>
+          {/* Agents and Kanban still replace the chat (full-page views). */}
+          {isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : <ChatView />}
         </main>
+        <aside
+          className={`checkpoints-drawer${isCheckpointsOpen ? ' checkpoints-drawer--open' : ''}`}
+          aria-hidden={!isCheckpointsOpen}
+        >
+          <CheckpointsView onClose={() => navigate(-1)} />
+        </aside>
       </div>
     </div>
   )

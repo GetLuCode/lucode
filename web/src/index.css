@@ -950,6 +950,43 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   position: relative;
+  transition: margin-right 0.3s ease;
+}
+
+/* When the checkpoints drawer is open, the chat view shrinks to make
+   room for it. The drawer itself is a fixed-position sibling. */
+.main--with-drawer {
+  margin-right: 480px;
+}
+
+@media (max-width: 1100px) {
+  .main--with-drawer { margin-right: 380px; }
+}
+
+.checkpoints-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 480px;
+  max-width: 50vw;
+  height: 100vh;
+  background: var(--bg-primary, #141414);
+  border-left: 1px solid var(--border-primary, #2a2a2a);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.checkpoints-drawer--open {
+  transform: translateX(0);
+}
+
+@media (max-width: 1100px) {
+  .checkpoints-drawer { width: 380px; }
 }
 
 /* ---- Shared buttons ---- */

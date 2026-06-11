@@ -30,7 +30,7 @@ function changeClass(kind: string): string {
 
 // ---- main view ---------------------------------------------------------------
 
-export function CheckpointsView() {
+export function CheckpointsView({ onClose }: { onClose?: () => void } = {}) {
   const activeProject = useStore(s => s.projects.find(p => p.id === s.activeProjectId) ?? null)
   const workDir = activeProject?.work_dirs?.[0] ?? null
 
@@ -99,6 +99,11 @@ export function CheckpointsView() {
       <div className="ck-header">
         <h2><IconHistory size={18} /> Checkpoints</h2>
         <span className="ck-header__sub">workDir: <code>{workDir}</code></span>
+        {onClose && (
+          <button className="ck-header__close" onClick={onClose} title="Close panel" aria-label="Close">
+            ×
+          </button>
+        )}
       </div>
 
       {error && <div className="ck-error"><IconAlertCircle size={14} /> {error}</div>}

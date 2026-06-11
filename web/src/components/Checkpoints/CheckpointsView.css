@@ -341,3 +341,40 @@
   gap: 8px;
   justify-content: flex-end;
 }
+
+/* ---- Drawer chrome ------------------------------------------------------ */
+
+.ck-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ck-header__sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ck-header__close {
+  background: transparent;
+  border: 1px solid var(--border-primary, #2a2a2a);
+  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary, #888);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+
+.ck-header__close:hover {
+  background: var(--bg-tertiary, #2a2a2a);
+  color: var(--text-primary, #e0e0e0);
+}
