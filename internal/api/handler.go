@@ -115,18 +115,24 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/config", h.getConfig)
 	mux.HandleFunc("GET /api/fs/dirs", h.listDirs)
+	mux.HandleFunc("GET /api/fs/list", h.listFiles)
+	mux.HandleFunc("GET /api/fs/file", h.readFile)
 	mux.HandleFunc("PATCH /api/projects/{id}", h.updateProject)
 
 	mux.HandleFunc("GET /api/ollama/models", h.listOllamaModels)
 
-	mux.HandleFunc("GET /api/accounts", h.listAccounts)
-	mux.HandleFunc("POST /api/accounts", h.createAccount)
-	mux.HandleFunc("PUT /api/accounts/{id}", h.updateAccount)
-	mux.HandleFunc("DELETE /api/accounts/{id}", h.deleteAccount)
-	mux.HandleFunc("POST /api/accounts/validate-dir", h.validateAccountDir)
-	mux.HandleFunc("GET /api/accounts/{id}/profile", h.accountProfile)
-	mux.HandleFunc("GET /api/accounts/{id}/usage", h.accountUsage)
-	mux.HandleFunc("GET /api/accounts/{id}/stats", h.accountStats)
+	// Claude accounts: removed in the MiniMax pivot. The endpoints stay
+	// registered so the frontend (which still has the AccountFooter in this
+	// build) gets a clean 410 Gone instead of a confusing 404. The frontend
+	// cleanup happens in a separate step.
+	mux.HandleFunc("GET /api/accounts", h.removedAccounts)
+	mux.HandleFunc("POST /api/accounts", h.removedAccounts)
+	mux.HandleFunc("PUT /api/accounts/{id}", h.removedAccounts)
+	mux.HandleFunc("DELETE /api/accounts/{id}", h.removedAccounts)
+	mux.HandleFunc("POST /api/accounts/validate-dir", h.removedAccounts)
+	mux.HandleFunc("GET /api/accounts/{id}/profile", h.removedAccounts)
+	mux.HandleFunc("GET /api/accounts/{id}/usage", h.removedAccounts)
+	mux.HandleFunc("GET /api/accounts/{id}/stats", h.removedAccounts)
 
 	// Auth + API key routes — proxied to authapi
 	authProxy := h.newAuthProxy()
@@ -380,10 +386,9 @@ func (h *Handler) deleteProject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	var body struct {
-		Name      string `json:"name"`
-		Model     string `json:"model"`
-		Provider  string `json:"provider"`
-		AccountID string `json:"account_id"`
+		Name     string `json:"name"`
+		Model    string `json:"model"`
+		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -411,7 +416,6 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		Name:      body.Name,
 		Model:     storedModel,
 		Status:    string(sessionpkg.StatusIdle),
-		AccountID: body.AccountID,
 	}
 	if err := dbpkg.InsertSession(h.db, sess); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -928,6 +932,182 @@ func (h *Handler) listDirs(w http.ResponseWriter, r *http.Request) {
 		"root":   effectiveRoot,
 		"dirs":   dirs,
 	})
+}
+
+// listFiles returns both subdirectories and files for the file browser drawer.
+// `project_id` (optional): if set, browsing is constrained to the project's
+// first work_dir. Otherwise it falls back to the workingDir / home root, like
+// listDirs.
+func (h *Handler) listFiles(w http.ResponseWriter, r *http.Request) {
+	effectiveRoot, err := h.resolveFsRoot(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	pathParam := r.URL.Query().Get("path")
+	if pathParam == "" {
+		pathParam = effectiveRoot
+	}
+
+	absPath, absRoot, err := h.resolveWithinRoot(pathParam, effectiveRoot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	entries, err := os.ReadDir(absPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	type entry struct {
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		IsDir bool   `json:"isDir"`
+		Size  int64  `json:"size"`
+	}
+	var out []entry
+	for _, e := range entries {
+		// Skip hidden files (.git, .DS_Store, etc) but keep regular files
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		var size int64
+		if !e.IsDir() {
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			size = info.Size()
+		}
+		out = append(out, entry{
+			Name:  e.Name(),
+			Path:  filepath.Join(absPath, e.Name()),
+			IsDir: e.IsDir(),
+			Size:  size,
+		})
+	}
+
+	parent := ""
+	if absPath != absRoot {
+		parent = filepath.Dir(absPath)
+		if parent != absRoot && !strings.HasPrefix(parent, absRoot+string(os.PathSeparator)) {
+			parent = ""
+		}
+	}
+
+	jsonResp(w, http.StatusOK, map[string]any{
+		"path":   absPath,
+		"parent": parent,
+		"root":   absRoot,
+		"entries": out,
+	})
+}
+
+// readFile returns the textual content of a single file (≤1MB) inside the
+// project's work_dir. Returns an error for binary or oversized files —
+// the file browser only previews text, the file preview panel decides how
+// to render.
+func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
+	effectiveRoot, err := h.resolveFsRoot(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	pathParam := r.URL.Query().Get("path")
+	if pathParam == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+
+	absPath, _, err := h.resolveWithinRoot(pathParam, effectiveRoot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if info.IsDir() {
+		http.Error(w, "path is a directory", http.StatusBadRequest)
+		return
+	}
+	if info.Size() > 1<<20 {
+		http.Error(w, "file too large (>1MB)", http.StatusBadRequest)
+		return
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Quick binary sniff: if the first 512 bytes contain a NUL byte, treat
+	// as binary so the frontend doesn't try to render it as text.
+	binary := false
+	head := data
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	for _, b := range head {
+		if b == 0 {
+			binary = true
+			break
+		}
+	}
+
+	jsonResp(w, http.StatusOK, map[string]any{
+		"path":    absPath,
+		"content": string(data),
+		"size":    info.Size(),
+		"binary":  binary,
+	})
+}
+
+// resolveFsRoot determines the directory the file browser is allowed to
+// navigate, preferring the project's work_dir if project_id is provided.
+func (h *Handler) resolveFsRoot(r *http.Request) (string, error) {
+	if pid := r.URL.Query().Get("project_id"); pid != "" && h.db != nil {
+		proj, err := dbpkg.GetProject(h.db, pid)
+		if err != nil {
+			return "", fmt.Errorf("project not found: %w", err)
+		}
+		if len(proj.WorkDirs) == 0 || proj.WorkDirs[0] == "" {
+			return "", fmt.Errorf("project has no working directory")
+		}
+		return proj.WorkDirs[0], nil
+	}
+	if h.workingDir != "" {
+		return h.workingDir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine root: %w", err)
+	}
+	return home, nil
+}
+
+// resolveWithinRoot normalizes a path and ensures it stays inside the root.
+func (h *Handler) resolveWithinRoot(pathParam, root string) (absPath, absRoot string, err error) {
+	absPath, err = filepath.Abs(pathParam)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	absRoot, err = filepath.Abs(root)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid root")
+	}
+	if absPath != absRoot && !strings.HasPrefix(absPath, absRoot+string(os.PathSeparator)) {
+		return "", "", fmt.Errorf("path outside root directory")
+	}
+	return absPath, absRoot, nil
 }
 
 func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
@@ -1953,37 +2133,17 @@ func (h *Handler) setProjectAIAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listProcesses(w http.ResponseWriter, r *http.Request) {
-	aiapiURL := h.aiAPIURL
-	if aiapiURL == "" {
-		aiapiURL = "http://localhost:8091"
-	}
-	resp, err := http.Get(aiapiURL + "/sessions")
-	if err != nil {
-		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	w.Write(body)
+	http.Error(w, "removed: claude process list no longer supported", http.StatusGone)
 }
 
 func (h *Handler) killProcess(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	aiapiURL := h.aiAPIURL
-	if aiapiURL == "" {
-		aiapiURL = "http://localhost:8091"
-	}
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		aiapiURL+"/sessions/"+id+"/kill", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		http.Error(w, "aiapi unavailable: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	w.WriteHeader(resp.StatusCode)
+	http.Error(w, "removed: claude process kill no longer supported", http.StatusGone)
+}
+
+// removedAccounts is the 410 Gone stub wired into every /api/accounts/*
+// route after the Claude → MiniMax pivot.
+func (h *Handler) removedAccounts(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "removed: claude accounts are not supported in the MiniMax build", http.StatusGone)
 }
 
 // ---- Agents ----

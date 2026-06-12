@@ -124,6 +124,28 @@ export const listDirs = (path: string) =>
 export const listHomeDirs = (path: string) =>
   req<{ path: string; parent: string; root: string; dirs: string[]; has_credentials: boolean }>('GET', `/api/fs/home-dirs?path=${encodeURIComponent(path)}`)
 
+// File browser — used by the floating side rail in the chat
+export interface FileEntry {
+  name: string
+  path: string
+  isDir: boolean
+  size: number
+}
+export const listFiles = (path: string, projectId?: string) => {
+  const qs = new URLSearchParams({ path })
+  if (projectId) qs.set('project_id', projectId)
+  return req<{ path: string; parent: string; root: string; entries: FileEntry[] }>(
+    'GET', `/api/fs/list?${qs.toString()}`
+  )
+}
+export const readFile = (path: string, projectId?: string) => {
+  const qs = new URLSearchParams({ path })
+  if (projectId) qs.set('project_id', projectId)
+  return req<{ path: string; content: string; size: number; binary: boolean }>(
+    'GET', `/api/fs/file?${qs.toString()}`
+  )
+}
+
 export interface DailyActivity {
   date: string
   messageCount: number

@@ -14,6 +14,7 @@ import { InputControls } from './InputControls'
 import { VoiceSettingsModal } from './VoiceBar'
 import { IdeasModal } from './IdeasModal'
 import { FilePreviewPanel } from './FilePreviewPanel'
+import { FileBrowser } from './FileBrowser'
 import { ChatSideRail } from './ChatSideRail'
 import { StarredPanel } from './StarredPanel'
 import { ContextBar } from './ContextBar'
@@ -70,6 +71,7 @@ function ChatViewFull() {
   const sendMessage = useStore(s => s.sendMessage)
   const loadMoreMessages = useStore(s => s.loadMoreMessages)
   const filePreview = useStore(s => s.filePreview)
+  const fileBrowserOpen = useStore(s => s.fileBrowserOpen)
   const starredPanelOpen = useStore(s => s.starredPanelOpen)
   const openStarredPanel = useStore(s => s.openStarredPanel)
   const closeStarredPanel = useStore(s => s.closeStarredPanel)
@@ -537,7 +539,7 @@ function ChatViewFull() {
   const headerName = isPending ? 'New session' : (session?.name || 'Session')
 
   return (
-    <div className={`chat${filePreview ? ' chat--preview-open' : ''}`}>
+    <div className={`chat${filePreview ? ' chat--preview-open' : ''}${fileBrowserOpen ? ' chat--file-browser-open' : ''}`}>
       <div className="chat__header">
         <div className="chat__header-menu" ref={headerMenuRef}>
           <button
@@ -854,6 +856,14 @@ function ChatViewFull() {
 
       {/* File preview panel — slides in from right, full chat height */}
       <FilePreviewPanel />
+
+      {/* File browser drawer — slides in from right, hosts FileBrowser */}
+      <aside
+        className={`file-browser-drawer${fileBrowserOpen ? ' file-browser-drawer--open' : ''}`}
+        aria-hidden={!fileBrowserOpen}
+      >
+        {fileBrowserOpen && <FileBrowser />}
+      </aside>
 
       {/* Floating side rail — vertical shortcut icons on the right edge */}
       <ChatSideRail />
