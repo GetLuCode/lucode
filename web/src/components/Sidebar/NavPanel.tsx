@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
-import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout, IconDownload, IconUpload, IconCpu, IconRobot, IconLayoutKanban, IconHistory } from '@tabler/icons-react'
+import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout, IconDownload, IconUpload, IconCpu, IconRobot, IconLayoutKanban, IconMessage } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 import { SpacesList } from './SpacesList'
 import { SettingsModal } from '../Settings/SettingsModal'
@@ -252,39 +252,34 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
 
         <SpacesList />
 
-        {/* section nav — only shown when a project is active */}
+        {/* section nav — only shown when a project is active.
+            Icon-only by design: keeps the row from overflowing the 244px panel
+            body and matches the rail's compact aesthetic. */}
         {activeProject && (
           <div className="nav-panel__section-nav">
             <button
               className={`nav-panel__section-btn${!location.pathname.includes('/agents') && !location.pathname.includes('/kanban') && !location.pathname.includes('/checkpoints') ? ' nav-panel__section-btn--active' : ''}`}
               onClick={() => navigate(`/projects/${activeProject.id}`)}
               title="Sessions"
+              aria-label="Sessions"
             >
-              Sessions
+              <IconMessage size={14} />
             </button>
             <button
               className={`nav-panel__section-btn${location.pathname.includes('/agents') ? ' nav-panel__section-btn--active' : ''}`}
               onClick={() => navigate(`/projects/${activeProject.id}/agents`)}
               title="Agents"
+              aria-label="Agents"
             >
-              <IconRobot size={12} />
-              Agents
+              <IconRobot size={14} />
             </button>
             <button
               className={`nav-panel__section-btn${location.pathname.includes('/kanban') ? ' nav-panel__section-btn--active' : ''}`}
               onClick={() => navigate(`/projects/${activeProject.id}/kanban`)}
               title="Kanban"
+              aria-label="Kanban"
             >
-              <IconLayoutKanban size={12} />
-              Kanban
-            </button>
-            <button
-              className={`nav-panel__section-btn${location.pathname.includes('/checkpoints') ? ' nav-panel__section-btn--active' : ''}`}
-              onClick={() => navigate(`/projects/${activeProject.id}/checkpoints`)}
-              title="Checkpoints"
-            >
-              <IconHistory size={12} />
-              Checkpoints
+              <IconLayoutKanban size={14} />
             </button>
           </div>
         )}
