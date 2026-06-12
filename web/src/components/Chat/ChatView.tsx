@@ -14,6 +14,7 @@ import { InputControls } from './InputControls'
 import { VoiceSettingsModal } from './VoiceBar'
 import { IdeasModal } from './IdeasModal'
 import { FilePreviewPanel } from './FilePreviewPanel'
+import { ChatSideRail } from './ChatSideRail'
 import { StarredPanel } from './StarredPanel'
 import { ContextBar } from './ContextBar'
 import { fetchIdeas } from '../../lib/ideasStorage'
@@ -853,6 +854,9 @@ function ChatViewFull() {
 
       {/* File preview panel — slides in from right, full chat height */}
       <FilePreviewPanel />
+
+      {/* Floating side rail — vertical shortcut icons on the right edge */}
+      <ChatSideRail />
 
       {/* Starred messages panel — slides in from right */}
       <StarredPanel

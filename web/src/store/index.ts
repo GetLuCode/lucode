@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Account, Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo, RawEventEntry } from '../types'
+import type { Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo, RawEventEntry } from '../types'
 import * as api from '../api'
 
 export interface TokenUsage {
@@ -31,8 +31,6 @@ export interface FilePreview {
 }
 
 interface AppState {
-  accounts: Account[]
-  selectedAccountId: string | null
   projects: Project[]
   sessions: Session[]
   activeProjectId: string | null
@@ -67,6 +65,14 @@ interface AppState {
 
   openFilePreview: (preview: FilePreview) => void
   closeFilePreview: () => void
+
+  // File browser drawer (right-side panel listing files in the project's
+  // workDir). Independent of the file preview — the user can browse with
+  // the drawer open and then click a file to slide the preview in on top.
+  fileBrowserOpen: boolean
+  openFileBrowser: () => void
+  closeFileBrowser: () => void
+
   toggleStar: (messageId: string, sessionId: string) => Promise<void>
   loadStarredMessages: (sessionId: string) => Promise<void>
   openStarredPanel: () => void
@@ -77,11 +83,6 @@ interface AppState {
   createUserTool: (data: Partial<UserTool>) => Promise<UserTool>
   updateUserTool: (id: string, data: Partial<UserTool>) => Promise<UserTool>
   deleteUserTool: (id: string) => Promise<void>
-  loadAccounts: () => Promise<void>
-  createAccount: (data: { name: string; claude_config_dir: string }) => Promise<Account>
-  updateAccount: (id: string, data: { name: string; claude_config_dir: string }) => Promise<void>
-  deleteAccount: (id: string) => Promise<void>
-  setSelectedAccount: (id: string | null) => void
   // Remote spaces / discovery
   instances: { self: InstanceInfo | null; peers: InstanceInfo[] }
   activeRemoteId: string | null
@@ -97,10 +98,10 @@ interface AppState {
   setActiveSession: (id: string) => Promise<void>
   setPendingSession: (projectId: string, model: string) => void
   clearPendingSession: () => void
-  createSession: (pid: string, data: { name?: string; model?: string; provider?: string; account_id?: string }) => Promise<Session>
+  createSession: (pid: string, data: { name?: string; model?: string; provider?: string }) => Promise<Session>
   importSession: (pid: string, data: unknown) => Promise<Session>
   deleteSession: (id: string) => Promise<void>
-  sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null, provider?: string, accountId?: string) => void
+  sendMessage: (id: string, msg: string, model?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null, provider?: string) => void
   respondHook: (sessId: string, decision: 'approve' | 'deny', reason?: string) => void
   forkSession: (id: string, name: string) => Promise<Session>
   renameSession: (id: string, name: string) => Promise<void>
@@ -251,8 +252,6 @@ function replayStoredMessages(raw: Message[]): Message[] {
 }
 
 export const useStore = create<AppState>((set, get) => ({
-  accounts: [],
-  selectedAccountId: null,
   instances: { self: null, peers: [] },
   activeRemoteId: null,
   projects: [],
@@ -283,6 +282,10 @@ export const useStore = create<AppState>((set, get) => ({
 
   openFilePreview: (preview) => set({ filePreview: preview }),
   closeFilePreview: () => set({ filePreview: null }),
+
+  fileBrowserOpen: false,
+  openFileBrowser: () => set({ fileBrowserOpen: true }),
+  closeFileBrowser: () => set({ fileBrowserOpen: false }),
   openStarredPanel: () => set({ starredPanelOpen: true }),
   closeStarredPanel: () => set({ starredPanelOpen: false }),
   setJumpToMessage: (id) => set({ jumpToMessageId: id }),
@@ -308,36 +311,6 @@ export const useStore = create<AppState>((set, get) => ({
     await api.deleteUserTool(id)
     set(s => ({ userTools: s.userTools.filter(t => t.id !== id) }))
   },
-
-  loadAccounts: async () => {
-    const accounts = await api.listAccounts()
-    set({ accounts })
-  },
-
-  createAccount: async (data) => {
-    const account = await api.createAccount(data)
-    set(s => ({ accounts: [...s.accounts, account] }))
-    return account
-  },
-
-  updateAccount: async (id, data) => {
-    await api.updateAccount(id, data)
-    set(s => ({
-      accounts: s.accounts.map(a =>
-        a.id === id ? { ...a, name: data.name, claude_config_dir: data.claude_config_dir } : a
-      ),
-    }))
-  },
-
-  deleteAccount: async (id) => {
-    await api.deleteAccount(id)
-    set(s => ({
-      accounts: s.accounts.filter(a => a.id !== id),
-      selectedAccountId: s.selectedAccountId === id ? null : s.selectedAccountId,
-    }))
-  },
-
-  setSelectedAccount: (id) => set({ selectedAccountId: id }),
 
   loadInstances: async () => {
     try {
@@ -414,6 +387,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setActiveSession: async (id) => {
+    console.log('[store] setActiveSession called:', id)
     set({ activeSessionId: id })
     const session = get().sessions.find(s => s.id === id)
 
@@ -498,7 +472,7 @@ export const useStore = create<AppState>((set, get) => ({
     }))
   },
 
-  sendMessage: (id, msg, model, effort, thinking, image, provider, accountId) => {
+  sendMessage: (id, msg, model, effort, thinking, image, provider) => {
     const pending = get().pendingSession
 
     // If sending first message in a pending session: create session first, then send turn
@@ -507,7 +481,6 @@ export const useStore = create<AppState>((set, get) => ({
         name: toTitle(msg),
         model: model || pending.model,
         provider: provider || undefined,
-        account_id: accountId || undefined,
       }).then(session => {
         set(s => ({
           sessions: [session, ...s.sessions],
@@ -562,7 +535,9 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   loadMessages: async (id) => {
+    console.log('[store] loadMessages called for:', id)
     const page = await api.listMessages(id)
+    console.log('[store] loadMessages page:', page)
     const sorted = replayStoredMessages(page.messages).sort((a, b) =>
       new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     )
@@ -1118,7 +1093,7 @@ export const useStore = create<AppState>((set, get) => ({
           contextUsage: {
             ...s.contextUsage,
             [event.session_id]: {
-              categories: event.categories,
+              categories: event.categories ?? [],
               totalTokens: event.totalTokens,
               maxTokens: event.maxTokens,
               percentage: event.percentage,

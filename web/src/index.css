@@ -989,6 +989,72 @@ html, body, #root {
   .checkpoints-drawer { width: 380px; }
 }
 
+/* ---- Chat side rail ----
+   Floating semi-transparent black box pinned to the right edge of the chat,
+   vertically centered. Houses shortcuts to secondary panels (checkpoints,
+   file browser) so they don't crowd the top bar or the section nav. */
+
+.chat-side-rail {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: right 0.28s ease;
+}
+
+.chat-side-rail__btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+  padding: 0;
+  position: relative;
+}
+
+.chat-side-rail__btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.chat-side-rail__btn--active {
+  background: rgba(124, 140, 255, 0.18);
+  color: #c7d0ff;
+}
+
+.chat-side-rail__btn:active {
+  transform: scale(0.94);
+}
+
+/* When the preview is open, dim the rail so it doesn't fight for
+   attention with the file content. The rail still works. */
+.chat-side-rail--dim { opacity: 0.55; }
+.chat-side-rail--dim:hover { opacity: 1; }
+
+/* Shift out of the way when the FilePreviewPanel is open so it doesn't sit
+   on top of the preview's close button. The preview lives at right: 0. */
+.chat--preview-open .chat-side-rail { right: 532px; }
+@media (max-width: 1100px) {
+  .chat--preview-open .chat-side-rail { right: 412px; }
+}
+
 /* ---- Shared buttons ---- */
 
 .btn {
