@@ -1,7 +1,6 @@
 import { IconChevronRight, IconX } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
 import { useState } from 'react'
-import { AccountsTab } from './AccountsTab'
 import { ToolsTab } from './ToolsTab'
 import { SpacesTab } from './SpacesTab'
 import './SettingsModal.css'
@@ -9,19 +8,18 @@ import './SettingsModal.css'
 interface Props {
   isOpen: boolean
   onClose: () => void
-  initialTab?: 'accounts' | 'tools' | 'spaces'
+  initialTab?: 'tools' | 'spaces'
 }
 
-type Tab = 'accounts' | 'tools' | 'spaces'
+type Tab = 'tools' | 'spaces'
 
 const TAB_LABELS: Record<Tab, string> = {
-  accounts: 'Accounts',
   tools: 'Voice Tools',
   spaces: 'Spaces',
 }
 
 export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
-  const [tab, setTab] = useState<Tab>(initialTab ?? 'accounts')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'tools')
 
   if (!isOpen) return null
 
@@ -53,12 +51,6 @@ export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
 
         <div className="settings-modal__tabs">
           <button
-            className={`settings-modal__tab${tab === 'accounts' ? ' settings-modal__tab--active' : ''}`}
-            onClick={() => setTab('accounts')}
-          >
-            Accounts
-          </button>
-          <button
             className={`settings-modal__tab${tab === 'tools' ? ' settings-modal__tab--active' : ''}`}
             onClick={() => setTab('tools')}
           >
@@ -73,7 +65,6 @@ export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
         </div>
 
         <div className="settings-modal__body">
-          {tab === 'accounts' && <AccountsTab />}
           {tab === 'tools' && <ToolsTab />}
           {tab === 'spaces' && <SpacesTab />}
         </div>

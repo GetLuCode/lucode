@@ -29,8 +29,9 @@ export function ContextBar({ sessionId }: ContextBarProps) {
   if (!contextUsage) return null
 
   const { categories, totalTokens, maxTokens, percentage } = contextUsage
-  const usedCategories = categories.filter(c => c.name !== 'Free space' && c.tokens > 0)
-  const freeSpace = categories.find(c => c.name === 'Free space')
+  console.log('[ContextBar] contextUsage:', contextUsage, 'categories:', categories)
+  const usedCategories = (categories ?? []).filter(c => c.name !== 'Free space' && c.tokens > 0)
+  const freeSpace = (categories ?? []).find(c => c.name === 'Free space')
 
   // Color for the used portion bar
   const pctUsed = maxTokens > 0 ? (totalTokens / maxTokens) * 100 : 0

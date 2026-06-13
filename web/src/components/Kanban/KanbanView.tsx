@@ -501,7 +501,6 @@ function KanbanColumn({
 
 export function KanbanView() {
   const activeProjectId = useStore(s => s.activeProjectId)
-  const loadAccounts = useStore(s => s.loadAccounts)
 
   const [lists, setLists] = useState<KanbanList[]>([])
   const [cards, setCards] = useState<KanbanCard[]>([])
@@ -515,8 +514,6 @@ export function KanbanView() {
   // drag state
   const dragCardId = useRef<string | null>(null)
   const dragFromListId = useRef<string | null>(null)
-
-  useEffect(() => { loadAccounts() }, [loadAccounts])
 
   useEffect(() => {
     if (!activeProjectId) return

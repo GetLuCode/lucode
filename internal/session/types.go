@@ -1,6 +1,10 @@
 package session
 
-import "context"
+import (
+	"context"
+
+	dbpkg "claude-orchestrator/internal/db"
+)
 
 type Status string
 
@@ -28,26 +32,29 @@ const (
 )
 
 type TurnOptions struct {
-	SessionID       string
-	ProjectID       string
-	Message         string
-	Model           string
-	Name            string
-	WorkDirs        []string
+	SessionID string
+	ProjectID string
+	Message   string
+	Model     string
+	Name      string
+	WorkDirs  []string
 	ClaudeConfigDir string
-	ClaudeSettings  string
-	Resume          bool
-	ForkFrom        string
-	Effort          string
-	Thinking        string
-	ImageBase64     string
-	ImageMediaType  string
+	Resume    bool
+	ForkFrom  string
+	Effort    string
+	Thinking  string
+	ImageBase64    string
+	ImageMediaType string
 
 	Provider               Provider
 	OllamaHost             string
-	AccountClaudeConfigDir string
-	AccountID              string
-	TurnStartSeq           int
+	AccountClaudeConfigDir string // kept for ABI; ignored by aiapi
+	AccountID              string // kept for ABI; ignored by aiapi
+	TurnStartSeq           int    // kept for ABI; ignored by aiapi
+
+	// History replays the prior conversation. aiapi re-injects these before
+	// the new user message so the model has context.
+	History []dbpkg.Message
 
 	// AIAPIInstanceID, when non-empty, routes this turn to a remote aiapi via NATS.
 	AIAPIInstanceID string

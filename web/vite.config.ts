@@ -24,10 +24,7 @@ export default defineConfig({
       },
 
       // aiapi (8091) — versioning, turns, models
-      '/api/versioning': {
-        target: 'http://localhost:8091',
-        rewrite: (path) => path.replace(/^\/api\//, ''),
-      },
+      '/api/versioning': 'http://localhost:8091',
       '/api/turns': {
         target: 'http://localhost:8091',
         rewrite: (path) => path.replace(/^\/api\//, ''),

@@ -2,8 +2,8 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/authapi ./cmd/authapi"
-  entrypoint = "./tmp/authapi"
+  cmd = "go build -o ./tmp/authapi.exe ./cmd/authapi"
+  entrypoint = "./tmp/authapi.exe"
   args_bin = ["--addr=:8092"]
   include_ext = ["go"]
   include_dir = ["cmd/authapi", "internal/auth", "internal/authclient", "internal/db"]

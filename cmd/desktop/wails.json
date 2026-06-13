@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "LuCode",
+  "outputfilename": "lucode-desktop",
+  "frontend:install": "cmd /c cd /d C:\\projects\\claude-orchestrator\\web && npm install",
+  "frontend:build": "cmd /c cd /d C:\\projects\\claude-orchestrator\\web && npm run build",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "http://localhost:5174",
+  "author": {
+    "name": "Marco Orta",
+    "email": "m4rk@example.com"
+  }
+}

@@ -3,6 +3,7 @@ module claude-orchestrator
 go 1.25.0
 
 require (
+	fyne.io/systray v1.12.0
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
@@ -12,7 +13,6 @@ require (
 )
 
 require (
-	fyne.io/systray v1.12.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/dlclark/regexp2 v1.11.4 // indirect

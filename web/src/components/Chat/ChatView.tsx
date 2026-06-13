@@ -82,13 +82,7 @@ function ChatViewFull() {
   const starredMessages = useStore(s =>
     activeSessionId ? (s.starredMessages[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   )
-  const accounts = useStore(s => s.accounts)
-  const selectedAccountId = useStore(s => s.selectedAccountId)
-  const setSelectedAccount = useStore(s => s.setSelectedAccount)
-  const loadAccounts = useStore(s => s.loadAccounts)
-
-  useEffect(() => { if (accounts.length === 0) loadAccounts() }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
+  
   const [input, setInput] = useState('')
   const [model, setModelRaw] = useState(() => localStorage.getItem('pref_model') ?? 'haiku')
   const [effort, setEffortRaw] = useState(() => localStorage.getItem('pref_effort') ?? 'auto')
@@ -195,7 +189,7 @@ function ChatViewFull() {
   // Command detection pipeline — processes voice through hotword → LLM → tool execution
   const { processTranscript } = useCommandDetection({
     hotword,
-    accountId: selectedAccountId,
+    accountId: null,
     tools: userTools,
     onPassthrough: (text) => {
       // No hotword or no match — inject into input and optionally auto-send
@@ -207,8 +201,7 @@ function ChatViewFull() {
           if (newInput.trim()) {
             const targetId = activeSessionId || 'pending'
             sendMessage(targetId, newInput.trim(), model, effort, thinking, attachedImage,
-              providerMode === 'api' ? 'anthropic' : undefined,
-              selectedAccountId ?? undefined)
+              providerMode === 'api' ? 'anthropic' : undefined)
             setInput('')
             setAttachedImage(null)
           }
@@ -373,8 +366,7 @@ function ChatViewFull() {
     // For pending sessions, we pass a placeholder ID; sendMessage handles the actual creation
     const targetId = activeSessionId || 'pending'
     sendMessage(targetId, input.trim(), model, effort, thinking, attachedImage,
-      providerMode === 'api' ? 'anthropic' : undefined,
-      selectedAccountId ?? undefined)
+      providerMode === 'api' ? 'anthropic' : undefined)
     setInput('')
     setAttachedImage(null)
   }
@@ -610,24 +602,6 @@ function ChatViewFull() {
                       </button>
                     ))}
 
-                    {/* Account picker — only for Claude models */}
-                    {!claudeDisabled && accounts.length > 0 && (
-                      <>
-                        <div className="chat__header-dropdown-divider" />
-                        <div className="chat__header-dropdown-label">Account</div>
-                        {accounts.map(acc => (
-                          <button
-                            key={acc.id}
-                            className={`chat__header-dropdown-item${selectedAccountId === acc.id ? ' chat__header-dropdown-item--active' : ''}`}
-                            onClick={() => { setSelectedAccount(acc.id); setHeaderMenuOpen(false) }}
-                          >
-                            <span>{acc.name}</span>
-                            {selectedAccountId === acc.id && <IconCheck size={12} className="chat__header-dropdown-check" />}
-                          </button>
-                        ))}
-                      </>
-                    )}
-
                     {/* Ollama models — only shown when Ollama is running */}
                     {ollamaModels.length > 0 && (
                       <>
@@ -818,8 +792,7 @@ function ChatViewFull() {
             hasPendingIdeas={pendingIdeasCount > 0}
             isSpeaking={!!speakingMessageId}
             onStopReading={handleStopSpeaking}
-            hasAccounts={accounts.length > 0}
-            providerMode={providerMode}
+                        providerMode={providerMode}
             onProviderModeChange={setProviderMode}
             commandProcessing={commandProcessing}
             hasInterimSpeech={interimText.length > 0}

@@ -24,7 +24,8 @@ export function IdeasModal({ isOpen, projectId, onClose, onPendingChange }: Prop
 
   // Notify parent of pending count whenever ideas change
   useEffect(() => {
-    const pending = ideas.filter(i => !i.done).length
+    console.log('[IdeasModal] ideas:', ideas, 'isOpen:', isOpen)
+    const pending = (ideas ?? []).filter(i => !i.done).length
     onPendingChange(pending)
   }, [ideas, onPendingChange])
 

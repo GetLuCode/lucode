@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { IconPlus, IconTrash, IconEdit, IconRobot, IconX } from '@tabler/icons-react'
 import { useStore } from '../../store'
-import type { Agent, Account } from '../../types'
+import type { Agent } from '../../types'
 import * as api from '../../api'
 
 const MODELS = [
@@ -26,7 +26,7 @@ const DEFAULT_TOOLS = ['Bash', 'Edit', 'Read', 'Write']
 interface AgentFormData {
   name: string
   model: string
-  account_id: string
+  account_id: string  // legacy field — no longer drives anything, kept for ABI
   personality: string
   tools: string[]
 }
@@ -41,12 +41,10 @@ const EMPTY_FORM: AgentFormData = {
 
 function AgentForm({
   initial,
-  accounts,
   onSave,
   onCancel,
 }: {
   initial?: AgentFormData
-  accounts: Account[]
   onSave: (data: AgentFormData) => Promise<void>
   onCancel: () => void
 }) {
@@ -119,20 +117,6 @@ function AgentForm({
               >
                 {MODELS.map(m => (
                   <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="agent-form__field">
-              <label className="agent-form__label">Account</label>
-              <select
-                className="agent-form__select"
-                value={form.account_id}
-                onChange={e => setField('account_id', e.target.value)}
-              >
-                <option value="">Default account</option>
-                {accounts.map(a => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
             </div>
@@ -239,15 +223,11 @@ type ViewState = 'list' | 'create' | { edit: Agent }
 
 export function AgentsView() {
   const activeProjectId = useStore(s => s.activeProjectId)
-  const accounts = useStore(s => s.accounts)
-  const loadAccounts = useStore(s => s.loadAccounts)
 
   const [agents, setAgents] = useState<Agent[]>([])
   const [view, setView] = useState<ViewState>('list')
   const [loading, setLoading] = useState(false)
   const [_deleted, setDeleted] = useState<string | null>(null)
-
-  useEffect(() => { loadAccounts() }, [loadAccounts])
 
   useEffect(() => {
     if (!activeProjectId) return
@@ -313,7 +293,6 @@ export function AgentsView() {
 
       {view === 'create' && (
         <AgentForm
-          accounts={accounts}
           onSave={handleCreate}
           onCancel={() => setView('list')}
         />
@@ -328,7 +307,6 @@ export function AgentsView() {
             personality: view.edit.personality,
             tools: view.edit.tools,
           }}
-          accounts={accounts}
           onSave={data => handleUpdate(view.edit.id, data)}
           onCancel={() => setView('list')}
         />

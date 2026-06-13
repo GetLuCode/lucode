@@ -1,4 +1,4 @@
-import { IconApi, IconGauge, IconMicrophone, IconMicrophoneOff, IconNotes, IconPlayerStop, IconTerminal } from '@tabler/icons-react'
+import { IconGauge, IconMicrophone, IconMicrophoneOff, IconNotes, IconPlayerStop } from '@tabler/icons-react'
 import { AttachmentButton } from './AttachmentButton'
 import { ThinkingToggle } from './ThinkingToggle'
 import { SettingsMenu } from './SettingsMenu'
@@ -32,10 +32,6 @@ interface Props {
   hasPendingIdeas?: boolean
   isSpeaking?: boolean
   onStopReading?: () => void
-  /** Whether accounts exist — only show CLI/API switch when true */
-  hasAccounts?: boolean
-  providerMode?: 'cli' | 'api'
-  onProviderModeChange?: (mode: 'cli' | 'api') => void
   /** Voice command is being processed */
   commandProcessing?: boolean
   /** Whether interim (partial) speech has been detected */
@@ -60,9 +56,6 @@ export function InputControls({
   hasPendingIdeas = false,
   isSpeaking = false,
   onStopReading = () => {},
-  hasAccounts = false,
-  providerMode = 'cli',
-  onProviderModeChange = () => {},
   commandProcessing = false,
   hasInterimSpeech = false,
 }: Props) {
@@ -108,21 +101,6 @@ export function InputControls({
           </button>
           <div className="tooltip">{hasPendingIdeas ? 'Notes — pending items' : 'Notes'}</div>
         </div>
-
-        {/* CLI / API provider switch — only when accounts exist */}
-        {hasAccounts && (
-          <div className="tooltip-wrapper">
-            <button
-              className={`thinking-toggle provider-toggle${providerMode === 'api' ? ' provider-toggle--api' : ''}`}
-              onClick={() => onProviderModeChange(providerMode === 'cli' ? 'api' : 'cli')}
-              disabled={isRunning}
-              title={providerMode === 'cli' ? 'Using CLI — click to switch to API' : 'Using API — click to switch to CLI'}
-            >
-              {providerMode === 'api' ? <IconApi size={16} /> : <IconTerminal size={16} />}
-            </button>
-            <div className="tooltip">{providerMode === 'api' ? 'Direct API' : 'Claude CLI'}</div>
-          </div>
-        )}
 
         {/* Settings menu */}
         <SettingsMenu onVoiceSettingsClick={onSettingsClick} disabled={isRunning} />

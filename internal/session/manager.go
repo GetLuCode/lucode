@@ -214,35 +214,34 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		histMsgs = append(histMsgs, histMsg{Role: h.Role, Content: h.Content})
 	}
 
-	claudeConfigDir := opts.AccountClaudeConfigDir
-	if claudeConfigDir == "" {
-		claudeConfigDir = opts.ClaudeConfigDir
-	}
-
 	reqBody := map[string]any{
-		"session_id":        sessID,
-		"message":           opts.Message,
-		"model":             opts.Model,
-		"provider":          string(opts.Provider),
-		"work_dirs":         opts.WorkDirs,
-		"resume":            opts.Resume,
-		"fork_from":         opts.ForkFrom,
-		"name":              opts.Name,
-		"effort":            opts.Effort,
-		"thinking":          opts.Thinking,
-		"claude_config_dir": claudeConfigDir,
-		"claude_settings":   m.claudeSettings,
-		"nats_settings":     m.backendNATSURL,
-		"nats_creds":        m.natsCreds,
-		"ollama_host":       opts.OllamaHost,
-		"image_base64":      opts.ImageBase64,
-		"image_media_type":  opts.ImageMediaType,
-		"account":           opts.AccountID,
-		"history":           histMsgs,
+		"session_id":       sessID,
+		"message":          opts.Message,
+		"model":            opts.Model,
+		"work_dirs":        opts.WorkDirs,
+		"resume":           opts.Resume,
+		"fork_from":        opts.ForkFrom,
+		"name":             opts.Name,
+		"image_base64":     opts.ImageBase64,
+		"image_media_type": opts.ImageMediaType,
 	}
-	log.Printf("[manager] POST /turns: session_id=%s account=%q claude_config_dir=%q", sessID, opts.AccountID, claudeConfigDir)
-	data, _ := json.Marshal(reqBody)
+	_ = m.claudeSettings // field kept on the struct for ABI compat with peers
+	_ = m.backendNATSURL
+	_ = m.natsCreds
+	_ = opts.OllamaHost
+	_ = opts.Effort
+	_ = opts.Thinking
 
+	if len(opts.History) > 0 {
+		histMsgs := make([]map[string]any, 0, len(opts.History))
+		for _, hm := range opts.History {
+			histMsgs = append(histMsgs, map[string]any{"role": hm.Role, "content": hm.Content})
+		}
+		reqBody["history"] = histMsgs
+	}
+
+	data, _ := json.Marshal(reqBody)
+	log.Printf("[manager] POST /turns: session_id=%s", sessID)
 	postResp, err := http.Post(m.aiAPIURL+"/turns", "application/json", bytes.NewReader(data))
 	if err != nil {
 		m.broadcastError(sessID, "aiapi unreachable: "+err.Error())

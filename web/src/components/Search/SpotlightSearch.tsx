@@ -41,7 +41,8 @@ export const SpotlightSearch: React.FC<Props> = ({ isOpen, onClose }) => {
     const timer = setTimeout(async () => {
       try {
         const { results: searchResults } = await api.search(query)
-        setResults(searchResults)
+        console.log('[search] results:', searchResults)
+        setResults(searchResults ?? [])
         setSelectedIndex(0)
       } catch (err) {
         console.error('Search error:', err)
@@ -86,9 +87,11 @@ export const SpotlightSearch: React.FC<Props> = ({ isOpen, onClose }) => {
   if (!isOpen) return null
 
   // Group results by type
-  const projects = results.filter(r => r.type === 'project')
-  const sessions = results.filter(r => r.type === 'session')
-  const messages = results.filter(r => r.type === 'message')
+  const resultsArr = results ?? []
+  console.log('[search] grouping results:', resultsArr)
+  const projects = resultsArr.filter(r => r.type === 'project')
+  const sessions = resultsArr.filter(r => r.type === 'session')
+  const messages = resultsArr.filter(r => r.type === 'message')
 
   let flatResults: SearchResult[] = []
   if (projects.length > 0) flatResults = flatResults.concat(projects)
