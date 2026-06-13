@@ -258,24 +258,24 @@ export const updateKanbanCard = (id: string, data: Partial<KanbanCard>) =>
 export const deleteKanbanCard = (id: string) =>
   req<void>('DELETE', `/api/kanban/cards/${id}`)
 
-// ── Checkpoints ─────────────────────────────────────────────────────────────
+// ── Checkpoints / Versioning (aiapi:8091) ────────────────────────────────
 
 export const listCheckpoints = (workDir: string) =>
-  req<CheckpointListResponse>('GET', `/api/checkpoints?work_dir=${encodeURIComponent(workDir)}`)
+  req<CheckpointListResponse>('GET', `/api/versioning/checkpoints?work_dir=${encodeURIComponent(workDir)}`)
 
 export const getCheckpoint = (id: string, workDir: string) =>
-  req<CheckpointWithTree>('GET', `/api/checkpoints/${encodeURIComponent(id)}?work_dir=${encodeURIComponent(workDir)}`)
+  req<CheckpointWithTree>('GET', `/api/versioning/checkpoints/${encodeURIComponent(id)}?work_dir=${encodeURIComponent(workDir)}`)
 
 export const diffCheckpoints = (from: string, workDir: string, to?: string) => {
   const qs = new URLSearchParams({ work_dir: workDir, from })
   if (to) qs.set('to', to)
-  return req<DiffResponse>('GET', `/api/diff?${qs.toString()}`)
+  return req<DiffResponse>('GET', `/api/versioning/diff?${qs.toString()}`)
 }
 
 export const diffFile = (path: string, workDir: string, from: string, to: string) => {
   const qs = new URLSearchParams({ work_dir: workDir, path, from, to })
-  return req<FileDiff>('GET', `/api/diff/file?${qs.toString()}`)
+  return req<FileDiff>('GET', `/api/versioning/diff/file?${qs.toString()}`)
 }
 
 export const revertToCheckpoint = (id: string, workDir: string) =>
-  req<{ checkpoint: Checkpoint }>('POST', `/api/revert/${encodeURIComponent(id)}?work_dir=${encodeURIComponent(workDir)}`)
+  req<{ checkpoint: Checkpoint }>('POST', `/api/versioning/revert/${encodeURIComponent(id)}?work_dir=${encodeURIComponent(workDir)}`)

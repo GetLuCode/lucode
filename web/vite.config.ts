@@ -3,21 +3,43 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 //
-// The frontend talks to two backends in dev:
-//   - lucode (orchestrator) on :8090 — sessions, projects, turns, ws
-//   - aiapi (executor)     on :8091 — checkpoints, diff, revert, blob
+// The frontend talks to three backends in dev:
+//   - lucode  (orchestrator) on :8090 — projects, sessions, messages, tools, agents, kanban, usage, ws, etc.
+//   - aiapi   (executor)     on :8091 — checkpoints, diff, revert, blob, turns, models
+//   - authapi (auth service) on :8092 — auth/signup/login/logout, apikeys
 //
-// The Vite proxy uses the first matching prefix, so we list the
-// aiapi routes first; the catch-all /api falls through to lucode.
+// Vite proxy matches by string prefix — list specific routes first, catch-all last.
 export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api/checkpoints': 'http://localhost:8091',
-      '/api/diff':       'http://localhost:8091',
-      '/api/revert':     'http://localhost:8091',
-      '/api/blob':       'http://localhost:8091',
-      '/api':            'http://localhost:8090',
+      // authapi (8092) — strip /api prefix
+      '/api/auth': {
+        target: 'http://localhost:8092',
+        rewrite: (path) => path.replace(/^\/api\//, ''),
+      },
+      '/api/apikeys': {
+        target: 'http://localhost:8092',
+        rewrite: (path) => path.replace(/^\/api\//, ''),
+      },
+
+      // aiapi (8091) — versioning, turns, models
+      '/api/versioning': {
+        target: 'http://localhost:8091',
+        rewrite: (path) => path.replace(/^\/api\//, ''),
+      },
+      '/api/turns': {
+        target: 'http://localhost:8091',
+        rewrite: (path) => path.replace(/^\/api\//, ''),
+      },
+      '/api/models': {
+        target: 'http://localhost:8091',
+        rewrite: (path) => path.replace(/^\/api\//, ''),
+      },
+
+      // lucode (8090) — catch-all for everything else
+      '/api': 'http://localhost:8090',
+      '/ws':  'http://localhost:8090',
     },
   },
 })
