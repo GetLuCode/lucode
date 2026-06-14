@@ -201,7 +201,9 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		m.mu.Unlock()
 	}()
 
-	// Build history payload (user + assistant only)
+	// Build history payload (user + assistant only) and include it in the
+	// request body. aiapi is stateless — it needs the prior turns on every
+	// call to keep the model in context. This mirrors runWithNATSAIAPI.
 	type histMsg struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -224,20 +226,7 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		"name":             opts.Name,
 		"image_base64":     opts.ImageBase64,
 		"image_media_type": opts.ImageMediaType,
-	}
-	_ = m.claudeSettings // field kept on the struct for ABI compat with peers
-	_ = m.backendNATSURL
-	_ = m.natsCreds
-	_ = opts.OllamaHost
-	_ = opts.Effort
-	_ = opts.Thinking
-
-	if len(opts.History) > 0 {
-		histMsgs := make([]map[string]any, 0, len(opts.History))
-		for _, hm := range opts.History {
-			histMsgs = append(histMsgs, map[string]any{"role": hm.Role, "content": hm.Content})
-		}
-		reqBody["history"] = histMsgs
+		"history":          histMsgs,
 	}
 
 	data, _ := json.Marshal(reqBody)
@@ -294,6 +283,7 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 				role, _ := msg["role"].(string)
 				content, _ := msg["content"].(string)
 				thinking, _ := msg["thinking"].(string)
+				log.Printf("[manager] message_ready sess=%s role=%q content_len=%d thinking_len=%d nextSeq=%d", sessID[:8], role, len(content), len(thinking), nextSeq)
 				// Persist the thinking block as its own message so it's restored
 				// after a page refresh (the streaming text is volatile).
 				if role == "assistant" && thinking != "" {
@@ -304,8 +294,9 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 						Content:   thinking,
 						Seq:       nextSeq,
 					}); err != nil {
-						log.Printf("[manager] thinking insert sess=%s: %v", sessID[:8], err)
+						log.Printf("[manager] THINKING INSERT FAILED sess=%s seq=%d role=thinking err=%v", sessID[:8], nextSeq, err)
 					} else {
+						log.Printf("[manager] inserted thinking sess=%s seq=%d len=%d", sessID[:8], nextSeq, len(thinking))
 						nextSeq++
 					}
 				}
@@ -317,8 +308,9 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 						Content:   content,
 						Seq:       nextSeq,
 					}); err != nil {
-						log.Printf("[manager] message_ready insert sess=%s: %v", sessID[:8], err)
+						log.Printf("[manager] ASSISTANT INSERT FAILED sess=%s seq=%d role=%s err=%v", sessID[:8], nextSeq, role, err)
 					} else {
+						log.Printf("[manager] inserted assistant sess=%s seq=%d role=%s len=%d", sessID[:8], nextSeq, role, len(content))
 						nextSeq++
 					}
 				}
@@ -442,6 +434,7 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 				role, _ := msg["role"].(string)
 				content, _ := msg["content"].(string)
 				thinking, _ := msg["thinking"].(string)
+				log.Printf("[manager] nats message_ready sess=%s role=%q content_len=%d thinking_len=%d nextSeq=%d", sessID[:8], role, len(content), len(thinking), nextSeq)
 				// Persist thinking as its own message so it survives refresh.
 				if role == "assistant" && thinking != "" {
 					if err := dbpkg.InsertMessage(m.db, dbpkg.Message{
@@ -451,8 +444,9 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 						Content:   thinking,
 						Seq:       nextSeq,
 					}); err != nil {
-						log.Printf("[manager] nats thinking insert sess=%s: %v", sessID[:8], err)
+						log.Printf("[manager] NATS THINKING INSERT FAILED sess=%s seq=%d err=%v", sessID[:8], nextSeq, err)
 					} else {
+						log.Printf("[manager] nats inserted thinking sess=%s seq=%d len=%d", sessID[:8], nextSeq, len(thinking))
 						nextSeq++
 					}
 				}
@@ -464,8 +458,9 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 						Content:   content,
 						Seq:       nextSeq,
 					}); err != nil {
-						log.Printf("[manager] nats message_ready insert sess=%s: %v", sessID[:8], err)
+						log.Printf("[manager] NATS ASSISTANT INSERT FAILED sess=%s seq=%d role=%s err=%v", sessID[:8], nextSeq, role, err)
 					} else {
+						log.Printf("[manager] nats inserted assistant sess=%s seq=%d role=%s len=%d", sessID[:8], nextSeq, role, len(content))
 						nextSeq++
 					}
 				}
