@@ -293,15 +293,34 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 			if msg != nil {
 				role, _ := msg["role"].(string)
 				content, _ := msg["content"].(string)
+				thinking, _ := msg["thinking"].(string)
+				// Persist the thinking block as its own message so it's restored
+				// after a page refresh (the streaming text is volatile).
+				if role == "assistant" && thinking != "" {
+					if err := dbpkg.InsertMessage(m.db, dbpkg.Message{
+						ID:        uuid.New().String(),
+						SessionID: sessID,
+						Role:      "thinking",
+						Content:   thinking,
+						Seq:       nextSeq,
+					}); err != nil {
+						log.Printf("[manager] thinking insert sess=%s: %v", sessID[:8], err)
+					} else {
+						nextSeq++
+					}
+				}
 				if role != "" && content != "" {
-					_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
+					if err := dbpkg.InsertMessage(m.db, dbpkg.Message{
 						ID:        uuid.New().String(),
 						SessionID: sessID,
 						Role:      role,
 						Content:   content,
 						Seq:       nextSeq,
-					})
-					nextSeq++
+					}); err != nil {
+						log.Printf("[manager] message_ready insert sess=%s: %v", sessID[:8], err)
+					} else {
+						nextSeq++
+					}
 				}
 			}
 
@@ -422,15 +441,33 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 			if msg != nil {
 				role, _ := msg["role"].(string)
 				content, _ := msg["content"].(string)
+				thinking, _ := msg["thinking"].(string)
+				// Persist thinking as its own message so it survives refresh.
+				if role == "assistant" && thinking != "" {
+					if err := dbpkg.InsertMessage(m.db, dbpkg.Message{
+						ID:        uuid.New().String(),
+						SessionID: sessID,
+						Role:      "thinking",
+						Content:   thinking,
+						Seq:       nextSeq,
+					}); err != nil {
+						log.Printf("[manager] nats thinking insert sess=%s: %v", sessID[:8], err)
+					} else {
+						nextSeq++
+					}
+				}
 				if role != "" && content != "" {
-					_ = dbpkg.InsertMessage(m.db, dbpkg.Message{
+					if err := dbpkg.InsertMessage(m.db, dbpkg.Message{
 						ID:        uuid.New().String(),
 						SessionID: sessID,
 						Role:      role,
 						Content:   content,
 						Seq:       nextSeq,
-					})
-					nextSeq++
+					}); err != nil {
+						log.Printf("[manager] nats message_ready insert sess=%s: %v", sessID[:8], err)
+					} else {
+						nextSeq++
+					}
 				}
 			}
 		case "session_status":

@@ -855,22 +855,45 @@ export const useStore = create<AppState>((set, get) => ({
         // Finalize streaming text (or fall back to event.message.content if streaming was empty).
         const sessId = event.session_id
         const ev = event as Record<string, unknown>
-        const fallback = (ev.message as Record<string, unknown>)?.content as string
+        const evMessage = ev.message as Record<string, unknown> | undefined
+        const fallback = evMessage?.content as string
           || ev.content as string
           || ''
+        const fallbackThinking = evMessage?.thinking as string
+          || ev.thinking as string
+          || ''
         const text = get().streamingText[sessId] || fallback
+        const thinking = get().streamingThinking[sessId] || fallbackThinking
         const pending = pendingUsageMap[sessId]
         delete pendingUsageMap[sessId]
         delete blockTypeMap[sessId]
 
+        const msgs = get().messages[sessId] ?? []
+        const appended: Message[] = []
+
+        // Persist the thinking block as its own message so it survives a
+        // page refresh. The streaming view already shows it inline, but
+        // the final Message list needs an explicit entry.
+        if (thinking) {
+          const thinkMsg: Message = {
+            id: `think-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            session_id: sessId,
+            role: 'thinking',
+            content: thinking,
+            seq: msgs.length + appended.length,
+            created_at: new Date().toISOString(),
+          }
+          messageToTurnMap[thinkMsg.id] = turnCounterMap[sessId] ?? 0
+          appended.push(thinkMsg)
+        }
+
         if (text) {
-          const msgs = get().messages[sessId] ?? []
           const finalMsg: Message = {
             id: `ws-${Date.now()}`,
             session_id: sessId,
             role: 'assistant',
             content: text,
-            seq: msgs.length,
+            seq: msgs.length + appended.length,
             created_at: new Date().toISOString(),
             usage: pending?.inputUsage
               ? {
@@ -882,11 +905,15 @@ export const useStore = create<AppState>((set, get) => ({
               : undefined,
           }
           messageToTurnMap[finalMsg.id] = turnCounterMap[sessId] ?? 0
+          appended.push(finalMsg)
+        }
+
+        if (appended.length > 0) {
           set(s => ({
-            messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), finalMsg] },
+            messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), ...appended] },
             streamingText: { ...s.streamingText, [sessId]: '' },
             streamingThinking: { ...s.streamingThinking, [sessId]: '' },
-            liveMessageId: { ...s.liveMessageId, [sessId]: finalMsg.id },
+            liveMessageId: { ...s.liveMessageId, [sessId]: appended[appended.length - 1].id },
           }))
         } else {
           set(s => ({
