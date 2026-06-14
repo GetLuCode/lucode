@@ -84,7 +84,7 @@ function ChatViewFull() {
   )
   
   const [input, setInput] = useState('')
-  const [model, setModelRaw] = useState(() => localStorage.getItem('pref_model') ?? 'haiku')
+  const [model, setModelRaw] = useState(() => localStorage.getItem('pref_model') ?? 'MiniMax-M2.7')
   const [effort, setEffortRaw] = useState(() => localStorage.getItem('pref_effort') ?? 'auto')
   const [thinking, setThinkingRaw] = useState(() => localStorage.getItem('pref_thinking') ?? 'adaptive')
   const setModel = (v: string) => { localStorage.setItem('pref_model', v); setModelRaw(v) }
@@ -100,7 +100,7 @@ function ChatViewFull() {
   // Load Ollama models once on mount (silently ignored if Ollama is not running)
   useEffect(() => {
     listOllamaModels()
-      .then(data => setOllamaModels(data.models ?? []))
+      .then(data => setOllamaModels(data.models ?? ['MiniMax-M2.7']))
       .catch(() => setOllamaModels([]))
   }, [])
 
