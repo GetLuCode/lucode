@@ -115,6 +115,10 @@ interface AppState {
 const pendingUsageMap: Record<string, PendingUsage> = {}
 // sessId → blockIndex → 'text' | 'thinking'
 const blockTypeMap: Record<string, Record<number, string>> = {}
+// Per-session flag: when Claude CLI / aiapi send both message_ready and
+// turn_usage, only one path should add to sessionUsage. The first path
+// to commit flips this to true; the other becomes a no-op.
+const sessionUsageSettled: Record<string, boolean> = {}
 
 // Raw WS event buffers (exported for RawEventsModal to read directly)
 export const rawEventsBuf: Record<string, RawEventEntry[]> = {}
@@ -701,6 +705,8 @@ export const useStore = create<AppState>((set, get) => ({
             const msg = inner.message as Record<string, unknown> | undefined
             pendingUsageMap[sessId] = { inputUsage: msg?.usage as TokenUsage | undefined }
             blockTypeMap[sessId] = {}
+            // New turn: usage accounting for the previous turn is settled.
+            delete sessionUsageSettled[sessId]
             set(s => ({
               streamingText: { ...s.streamingText, [sessId]: '' },
               streamingThinking: { ...s.streamingThinking, [sessId]: '' },
@@ -756,25 +762,14 @@ export const useStore = create<AppState>((set, get) => ({
             const blockType = blockTypeMap[sessId]?.[index]
 
             if (blockType === 'thinking') {
-              // Finalize thinking block → add to messages list
-              const thinkingText = get().streamingThinking[sessId] ?? ''
-              if (thinkingText) {
-                const msgs = get().messages[sessId] ?? []
-                set(s => ({
-                  messages: {
-                    ...s.messages,
-                    [sessId]: [...(s.messages[sessId] ?? []), {
-                      id: `think-${Date.now()}`,
-                      session_id: sessId,
-                      role: 'thinking' as const,
-                      content: thinkingText,
-                      seq: msgs.length,
-                      created_at: new Date().toISOString(),
-                    }],
-                  },
-                  streamingThinking: { ...s.streamingThinking, [sessId]: '' },
-                }))
-              }
+              // The thinking bubble was rendered live from streamingThinking;
+              // on stop we just clear it. The persisted thinking message is
+              // appended by the message_ready handler (which carries the
+              // authoritative text from the server). Creating it here too
+              // caused a duplicate thinking bubble.
+              set(s => ({
+                streamingThinking: { ...s.streamingThinking, [sessId]: '' },
+              }))
             }
             if (blockTypeMap[sessId]) delete blockTypeMap[sessId][index]
 
@@ -785,66 +780,18 @@ export const useStore = create<AppState>((set, get) => ({
             }
 
           } else if (innerType === 'message_stop') {
-            // Finalize: move streaming text to messages list
-            const text = get().streamingText[sessId] ?? ''
-            const pending = pendingUsageMap[sessId]
+            // The streaming bubble was rendered live from streamingText/thinking;
+            // on stop we just clear them so the bubble disappears. The
+            // authoritative final message is appended by the message_ready
+            // handler (which carries the persisted text + id from the server).
+            // Avoid creating a second bubble here — that caused the visible
+            // duplicate after every turn.
             delete pendingUsageMap[sessId]
             delete blockTypeMap[sessId]
-
-            if (text) {
-              const msgs = get().messages[sessId] ?? []
-              const usage: Message['usage'] = pending?.inputUsage
-                ? {
-                    input_tokens: pending.inputUsage.input_tokens ?? 0,
-                    output_tokens: pending.outputTokens ?? 0,
-                    cache_creation_input_tokens: pending.inputUsage.cache_creation_input_tokens,
-                    cache_read_input_tokens: pending.inputUsage.cache_read_input_tokens,
-                  }
-                : undefined
-
-              const finalMsg: Message = {
-                id: `ws-${Date.now()}`,
-                session_id: sessId,
-                role: 'assistant',
-                content: text,
-                seq: msgs.length,
-                created_at: new Date().toISOString(),
-                usage,
-              }
-
-              messageToTurnMap[finalMsg.id] = turnCounterMap[sessId] ?? 0
-
-              set(s => ({
-                messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), finalMsg] },
-                streamingText: { ...s.streamingText, [sessId]: '' },
-                streamingThinking: { ...s.streamingThinking, [sessId]: '' },
-                liveMessageId: { ...s.liveMessageId, [sessId]: finalMsg.id },
-              }))
-
-              if (usage) {
-                set(s => {
-                  const prev = s.sessionUsage[sessId] ?? { input_tokens: 0, output_tokens: 0 }
-                  return {
-                    sessionUsage: {
-                      ...s.sessionUsage,
-                      [sessId]: {
-                        input_tokens: prev.input_tokens + usage.input_tokens,
-                        output_tokens: prev.output_tokens + usage.output_tokens,
-                        cache_creation_input_tokens:
-                          (prev.cache_creation_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
-                        cache_read_input_tokens:
-                          (prev.cache_read_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0),
-                      },
-                    },
-                  }
-                })
-              }
-            } else {
-              set(s => ({
-                streamingText: { ...s.streamingText, [sessId]: '' },
-                streamingThinking: { ...s.streamingThinking, [sessId]: '' },
-              }))
-            }
+            set(s => ({
+              streamingText: { ...s.streamingText, [sessId]: '' },
+              streamingThinking: { ...s.streamingThinking, [sessId]: '' },
+            }))
           }
         }
         break
@@ -909,11 +856,36 @@ export const useStore = create<AppState>((set, get) => ({
         }
 
         if (appended.length > 0) {
+          // Accumulate usage from the finalized assistant message so the
+          // header token badge stays accurate. Only count it here if the
+          // server hasn't also sent a turn_usage event for the same turn
+          // (Claude CLI / aiapi do both; Ollama only sends message_ready).
+          const finalMsg = appended.find(m => m.role === 'assistant')
+          const usage = finalMsg?.usage
+          const shouldCountUsage = !!usage && !sessionUsageSettled[sessId]
+          if (shouldCountUsage) sessionUsageSettled[sessId] = true
           set(s => ({
             messages: { ...s.messages, [sessId]: [...(s.messages[sessId] ?? []), ...appended] },
             streamingText: { ...s.streamingText, [sessId]: '' },
             streamingThinking: { ...s.streamingThinking, [sessId]: '' },
             liveMessageId: { ...s.liveMessageId, [sessId]: appended[appended.length - 1].id },
+            ...(shouldCountUsage
+              ? {
+                  sessionUsage: {
+                    ...s.sessionUsage,
+                    [sessId]: {
+                      input_tokens: (s.sessionUsage[sessId]?.input_tokens ?? 0) + usage!.input_tokens,
+                      output_tokens: (s.sessionUsage[sessId]?.output_tokens ?? 0) + usage!.output_tokens,
+                      cache_creation_input_tokens:
+                        (s.sessionUsage[sessId]?.cache_creation_input_tokens ?? 0) +
+                        (usage!.cache_creation_input_tokens ?? 0),
+                      cache_read_input_tokens:
+                        (s.sessionUsage[sessId]?.cache_read_input_tokens ?? 0) +
+                        (usage!.cache_read_input_tokens ?? 0),
+                    },
+                  },
+                }
+              : {}),
           }))
         } else {
           set(s => ({
@@ -1135,6 +1107,8 @@ export const useStore = create<AppState>((set, get) => ({
       case 'turn_usage': {
         // Server-authoritative token counts — update sessionUsage so the header badge is accurate.
         // Also embed tokens into live tool_execution messages so they display without a refresh.
+        // If message_ready already counted this turn's usage, skip the
+        // sessionUsage update to avoid double-counting.
         const tuSessId = event.session_id
         const tuUsage = {
           input_tokens: event.input_tokens,
@@ -1142,8 +1116,9 @@ export const useStore = create<AppState>((set, get) => ({
           cache_creation_input_tokens: event.cache_creation_input_tokens,
           cache_read_input_tokens: event.cache_read_input_tokens,
         }
+        const alreadySettled = sessionUsageSettled[tuSessId]
+        if (!alreadySettled) sessionUsageSettled[tuSessId] = true
         set(s => {
-          const prev = s.sessionUsage[tuSessId] ?? { input_tokens: 0, output_tokens: 0 }
           // Update tool_execution messages that don't yet have usage data
           const msgs = s.messages[tuSessId] ?? []
           const updatedMsgs = msgs.map(m => {
@@ -1154,6 +1129,13 @@ export const useStore = create<AppState>((set, get) => ({
               return { ...m, content: JSON.stringify({ ...data, usage: tuUsage }) }
             } catch { return m }
           })
+          if (alreadySettled) {
+            // Still update the per-message usage on tool_execution bubbles
+            // so they reflect server-authoritative counts, just don't
+            // re-add to sessionUsage.
+            return { messages: { ...s.messages, [tuSessId]: updatedMsgs } }
+          }
+          const prev = s.sessionUsage[tuSessId] ?? { input_tokens: 0, output_tokens: 0 }
           return {
             sessionUsage: {
               ...s.sessionUsage,
