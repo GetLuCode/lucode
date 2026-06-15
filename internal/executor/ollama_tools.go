@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -81,11 +82,19 @@ var lucodeTools = []ollamaTool{
 		Type: "function",
 		Function: ollamaToolFunc{
 			Name:        "run_command",
-			Description: "Run a shell command in the working directory and return stdout+stderr.",
+			Description: "Run a shell command in the working directory and return stdout+stderr. Use the 'runtime' parameter to select the shell.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"command": map[string]interface{}{"type": "string", "description": "Shell command to execute (runs via sh -c)."},
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "Shell command to execute.",
+					},
+					"runtime": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"sh", "cmd", "pwsh", "git-bash"},
+						"description": "Shell to use. 'sh' = POSIX sh (or Git Bash sh on Windows), 'cmd' = Windows cmd /C, 'pwsh' = PowerShell 7+, 'git-bash' = Git for Windows bash. Defaults to 'cmd' on Windows and 'sh' elsewhere.",
+					},
 				},
 				"required": []string{"command"},
 			},
@@ -180,7 +189,18 @@ func executeTool(name string, argsJSON json.RawMessage, workDir string) string {
 
 	case "run_command":
 		command := str("command")
-		cmd := exec.Command("sh", "-c", command)
+		rt := str("runtime")
+		if rt == "" {
+			if runtime.GOOS == "windows" {
+				rt = "cmd"
+			} else {
+				rt = "sh"
+			}
+		}
+		cmd, err := shellCommand(rt, command)
+		if err != nil {
+			return fmt.Sprintf("error: %v", err)
+		}
 		cmd.Dir = workDir
 		out, err := cmd.CombinedOutput()
 		result := string(out)
@@ -247,4 +267,64 @@ func executeTool(name string, argsJSON json.RawMessage, workDir string) string {
 	default:
 		return fmt.Sprintf("error: unknown tool %q", name)
 	}
+}
+
+// shellCommand builds an exec.Cmd for the requested runtime.
+// Supported values: "sh", "cmd", "pwsh", "git-bash".
+func shellCommand(rt, command string) (*exec.Cmd, error) {
+	switch rt {
+	case "sh":
+		sh, err := findSh()
+		if err != nil {
+			return nil, err
+		}
+		return exec.Command(sh, "-c", command), nil
+	case "cmd":
+		return exec.Command("cmd", "/C", command), nil
+	case "pwsh":
+		pwsh, err := exec.LookPath("pwsh")
+		if err != nil {
+			// fall back to Windows PowerShell 5
+			pwsh, err = exec.LookPath("powershell")
+			if err != nil {
+				return nil, fmt.Errorf("pwsh / powershell not found in PATH")
+			}
+		}
+		return exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", command), nil
+	case "git-bash":
+		bash, err := findGitBash()
+		if err != nil {
+			return nil, err
+		}
+		return exec.Command(bash, "-c", command), nil
+	default:
+		return nil, fmt.Errorf("unknown runtime %q; valid values: sh, cmd, pwsh, git-bash", rt)
+	}
+}
+
+// findSh locates a POSIX-compatible sh. On Windows it prefers the sh that
+// ships with Git for Windows; on other platforms it just returns "sh".
+func findSh() (string, error) {
+	if runtime.GOOS != "windows" {
+		return "sh", nil
+	}
+	return findGitBash() // Git Bash's sh is at the same install root
+}
+
+// findGitBash locates bash from Git for Windows by checking PATH first and
+// then a set of well-known installation directories.
+func findGitBash() (string, error) {
+	if p, err := exec.LookPath("bash"); err == nil {
+		return p, nil
+	}
+	candidates := []string{
+		`C:\Program Files\Git\bin\bash.exe`,
+		`C:\Program Files (x86)\Git\bin\bash.exe`,
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("git-bash not found; install Git for Windows or add bash.exe to PATH")
 }
