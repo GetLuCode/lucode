@@ -6,13 +6,13 @@ import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
 import { ToolExecutionMessage } from './ToolExecutionMessage'
-import type { Message } from '../../types'
+import type { Message, ToolInputField } from '../../types'
 
 marked.use({ gfm: true, breaks: false })
 
 interface Props {
   message: Message
-  sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => void
+  sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always', reason?: string, rule?: { tool: string; input_regex?: Record<string, string> }) => void
   isBeingRead?: boolean
   onSpeak?: (messageId: string, content: string) => void
   onStopSpeaking?: () => void
@@ -115,7 +115,7 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
   )
 }
 
-function BubbleContent({ message, sendHookRespond }: { message: Message; sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => void }) {
+function BubbleContent({ message, sendHookRespond }: { message: Message; sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always', reason?: string, rule?: { tool: string; input_regex?: Record<string, string> }) => void }) {
   switch (message.role) {
     case 'user':
       return <UserContent content={message.content} />
@@ -145,6 +145,7 @@ function BubbleContent({ message, sendHookRespond }: { message: Message; sendHoo
         tool_input: unknown
         decision: 'pending' | 'approve' | 'deny' | 'timeout'
         tool_use_id?: string
+        tool_input_schema?: ToolInputField[] | null
       }
       return (
         <HookMessage
@@ -248,6 +249,7 @@ interface HookData {
   tool_input: unknown
   decision: 'pending' | 'approve' | 'deny' | 'timeout'
   tool_use_id?: string
+  tool_input_schema?: ToolInputField[] | null
 }
 
 const DECISION_ICON: Record<string, string> = {
@@ -262,20 +264,59 @@ function HookMessage({
   sendHookRespond,
 }: {
   hookData: HookData
-  sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => void
+  sendHookRespond?: (
+    toolUseId: string,
+    decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always',
+    reason?: string,
+    rule?: { tool: string; input_regex?: Record<string, string> }
+  ) => void
 }) {
   const isPending = hookData.decision === 'pending'
+  const [editOpen, setEditOpen] = useState(false)
+  const [regexByField, setRegexByField] = useState<Record<string, string>>({})
+
+  const schema: ToolInputField[] = useMemo(() => {
+    if (hookData.tool_input_schema && hookData.tool_input_schema.length > 0) {
+      return hookData.tool_input_schema
+    }
+    // Fall back to inferring from the input object keys.
+    if (hookData.tool_input && typeof hookData.tool_input === 'object') {
+      return Object.keys(hookData.tool_input as Record<string, unknown>).map((k) => ({
+        name: k,
+        type: 'string',
+      }))
+    }
+    return []
+  }, [hookData.tool_input_schema, hookData.tool_input])
 
   const handleApprove = () => {
     if (hookData.tool_use_id && sendHookRespond) {
       sendHookRespond(hookData.tool_use_id, 'approve')
     }
   }
-
+  const handleAllowAlways = () => {
+    if (hookData.tool_use_id && sendHookRespond) {
+      sendHookRespond(hookData.tool_use_id, 'allow_always')
+    }
+  }
   const handleDeny = () => {
     if (hookData.tool_use_id && sendHookRespond) {
       sendHookRespond(hookData.tool_use_id, 'deny')
     }
+  }
+  const handleSubmitRule = () => {
+    if (!hookData.tool_use_id || !sendHookRespond) return
+    // Build input_regex from the modal state — only include fields
+    // the user actually filled in.
+    const input_regex: Record<string, string> = {}
+    for (const [k, v] of Object.entries(regexByField)) {
+      if (v.trim() !== '') input_regex[k] = v.trim()
+    }
+    sendHookRespond(hookData.tool_use_id, 'allow_with_rule', '', {
+      tool: hookData.tool_name,
+      input_regex,
+    })
+    setEditOpen(false)
   }
 
   return (
@@ -299,6 +340,42 @@ function HookMessage({
           <button className="btn btn--approve" onClick={handleApprove}>
             Approve
           </button>
+          <button className="btn btn--approve" onClick={handleAllowAlways}>
+            Allow always
+          </button>
+          <button className="btn" onClick={() => setEditOpen((v) => !v)}>
+            Edit permission…
+          </button>
+        </div>
+      )}
+      {editOpen && isPending && (
+        <div className="msg__hook-edit">
+          <div className="msg__hook-edit-title">Allow {hookData.tool_name} only when input matches these regexes:</div>
+          {schema.length === 0 ? (
+            <div className="msg__hook-edit-empty">No known input fields for this tool.</div>
+          ) : (
+            schema.map((field) => (
+              <label key={field.name} className="msg__hook-edit-row">
+                <span className="msg__hook-edit-label">{field.name}{field.required ? ' *' : ''}</span>
+                <input
+                  type="text"
+                  placeholder="regex, e.g. ^\\./src/.*"
+                  value={regexByField[field.name] ?? ''}
+                  onChange={(e) =>
+                    setRegexByField((prev) => ({ ...prev, [field.name]: e.target.value }))
+                  }
+                />
+              </label>
+            ))
+          )}
+          <div className="msg__hook-edit-actions">
+            <button className="btn" onClick={() => setEditOpen(false)}>
+              Cancel
+            </button>
+            <button className="btn btn--approve" onClick={handleSubmitRule}>
+              Allow with rule
+            </button>
+          </div>
         </div>
       )}
     </div>

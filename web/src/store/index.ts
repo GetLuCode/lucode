@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo, RawEventEntry } from '../types'
+import type { Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo, RawEventEntry, ToolInputField } from '../types'
 import * as api from '../api'
 
 export interface TokenUsage {
@@ -41,6 +41,7 @@ interface AppState {
   // Queue of pending hooks per session — supports concurrent parallel tool calls
   pendingHooks: Record<string, PendingHook[]>
   sessionStatus: Record<string, string>
+  sessionError: Record<string, string>
   // Plain strings — Zustand Object.is comparison on strings is reliable
   streamingText: Record<string, string>
   streamingThinking: Record<string, string>
@@ -267,6 +268,7 @@ export const useStore = create<AppState>((set, get) => ({
   messagePagination: {},
   pendingHooks: {},
   sessionStatus: {},
+  sessionError: {},
   streamingText: {},
   streamingThinking: {},
   sessionUsage: {},
@@ -672,14 +674,17 @@ export const useStore = create<AppState>((set, get) => ({
         break
       }
 
-      case 'session_status':
+      case 'session_status': {
+        const errMsg = event.status === 'error' ? (event.error ?? '') : ''
         set(s => ({
           sessionStatus: { ...s.sessionStatus, [event.session_id]: event.status },
+          sessionError: { ...s.sessionError, [event.session_id]: errMsg },
           sessions: s.sessions.map(sess =>
             sess.id === event.session_id ? { ...sess, status: event.status as Session['status'] } : sess
           ),
         }))
         break
+      }
 
       case 'stream_event': {
         const sessId = event.session_id
@@ -919,6 +924,7 @@ export const useStore = create<AppState>((set, get) => ({
               tool_use_id: event.tool_use_id,
               tool_name: event.tool_name,
               tool_input: event.tool_input,
+              tool_input_schema: (event as { tool_input_schema?: ToolInputField[] | null }).tool_input_schema ?? null,
               decision: 'pending',
             }),
             seq: (s.messages[event.session_id]?.length ?? 0),

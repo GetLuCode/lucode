@@ -114,6 +114,7 @@ func (h *Handler) globalWS(w http.ResponseWriter, r *http.Request) {
 			ToolUseID string `json:"tool_use_id"`
 			Decision  string `json:"decision"`
 			Reason    string `json:"reason"`
+			Rule      string `json:"rule,omitempty"`
 		}
 		if err := json.Unmarshal(data, &cmd); err != nil {
 			continue
@@ -122,7 +123,7 @@ func (h *Handler) globalWS(w http.ResponseWriter, r *http.Request) {
 		case "hook_respond":
 			if h.bus.OnHookRespond != nil {
 				log.Printf("[ws] hook_respond sess=%s tool=%s decision=%s", cmd.SessionID, cmd.ToolUseID, cmd.Decision)
-				h.bus.OnHookRespond(cmd.SessionID, cmd.ToolUseID, cmd.Decision, cmd.Reason)
+				h.bus.OnHookRespond(cmd.SessionID, cmd.ToolUseID, cmd.Decision, cmd.Reason, cmd.Rule)
 			}
 		default:
 			log.Printf("[ws] unknown cmd type=%s", cmd.Type)

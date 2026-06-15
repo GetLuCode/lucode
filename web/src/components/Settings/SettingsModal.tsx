@@ -3,19 +3,21 @@ import { motion } from 'framer-motion'
 import { useState } from 'react'
 import { ToolsTab } from './ToolsTab'
 import { SpacesTab } from './SpacesTab'
+import { PermissionsTab } from './PermissionsTab'
 import './SettingsModal.css'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
-  initialTab?: 'tools' | 'spaces'
+  initialTab?: 'tools' | 'spaces' | 'permissions'
 }
 
-type Tab = 'tools' | 'spaces'
+type Tab = 'tools' | 'spaces' | 'permissions'
 
 const TAB_LABELS: Record<Tab, string> = {
   tools: 'Voice Tools',
   spaces: 'Spaces',
+  permissions: 'Permissions',
 }
 
 export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
@@ -62,11 +64,18 @@ export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
           >
             Spaces
           </button>
+          <button
+            className={`settings-modal__tab${tab === 'permissions' ? ' settings-modal__tab--active' : ''}`}
+            onClick={() => setTab('permissions')}
+          >
+            Permissions
+          </button>
         </div>
 
         <div className="settings-modal__body">
           {tab === 'tools' && <ToolsTab />}
           {tab === 'spaces' && <SpacesTab />}
+          {tab === 'permissions' && <PermissionsTab />}
         </div>
       </motion.div>
     </motion.div>

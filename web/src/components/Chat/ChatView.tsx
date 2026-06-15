@@ -63,6 +63,9 @@ function ChatViewFull() {
   const sessionStatus = useStore(s =>
     activeSessionId ? (s.sessionStatus[activeSessionId] ?? 'idle') : 'idle'
   )
+  const sessionError = useStore(s =>
+    activeSessionId ? (s.sessionError[activeSessionId] ?? '') : ''
+  )
   const sessionUsage = useStore(s => activeSessionId ? s.sessionUsage[activeSessionId] : undefined)
   const liveMessageId = useStore(s => activeSessionId ? s.liveMessageId[activeSessionId] : undefined)
   const isSending = useStore(s => activeSessionId ? (s.pendingSend[activeSessionId] ?? false) : false)
@@ -92,10 +95,9 @@ function ChatViewFull() {
   const setThinking = (v: string) => { localStorage.setItem('pref_thinking', v); setThinkingRaw(v) }
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mediaType: string } | null>(null)
   const [ollamaModels, setOllamaModels] = useState<{ name: string; label: string }[]>([])
-  const [providerMode, setProviderModeRaw] = useState<'cli' | 'api'>(
+  const [providerMode] = useState<'cli' | 'api'>(
     () => (localStorage.getItem('pref_provider') as 'cli' | 'api') ?? 'cli'
   )
-  const setProviderMode = (v: 'cli' | 'api') => { localStorage.setItem('pref_provider', v); setProviderModeRaw(v) }
 
   // Load Ollama models once on mount (silently ignored if Ollama is not running)
   useEffect(() => {
@@ -726,6 +728,11 @@ function ChatViewFull() {
         )}
 
         {isRunning && !hasStreamingText && !hasStreamingThinking && <ThinkingIndicator />}
+
+        {sessionStatus === 'error' && sessionError && (
+          <SessionErrorBanner error={sessionError} />
+        )}
+
         <div ref={bottomRef} />
       </div>
 
@@ -792,8 +799,6 @@ function ChatViewFull() {
             hasPendingIdeas={pendingIdeasCount > 0}
             isSpeaking={!!speakingMessageId}
             onStopReading={handleStopSpeaking}
-                        providerMode={providerMode}
-            onProviderModeChange={setProviderMode}
             commandProcessing={commandProcessing}
             hasInterimSpeech={interimText.length > 0}
           />
@@ -862,6 +867,41 @@ export function ChatView() {
   }
 
   return <ChatViewFull />
+}
+
+function parseSessionError(raw: string): string {
+  // Extract the human-readable message from Anthropic API error strings like:
+  // "anthropic status 429: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"...\"},...}"
+  const jsonStart = raw.indexOf('{')
+  if (jsonStart !== -1) {
+    try {
+      const parsed = JSON.parse(raw.slice(jsonStart)) as Record<string, unknown>
+      const inner = parsed.error as Record<string, unknown> | undefined
+      if (typeof inner?.message === 'string') return inner.message
+    } catch { /* fall through */ }
+  }
+  return raw
+}
+
+function SessionErrorBanner({ error }: { error: string }) {
+  const message = parseSessionError(error)
+  const isRateLimit = error.includes('rate_limit') || error.includes('429')
+  return (
+    <div className="chat__error-banner">
+      <div className="chat__error-banner-icon">⚠</div>
+      <div className="chat__error-banner-body">
+        <div className="chat__error-banner-title">
+          {isRateLimit ? 'Límite de tokens alcanzado' : 'Error de sesión'}
+        </div>
+        <div className="chat__error-banner-message">{message}</div>
+        {isRateLimit && (
+          <div className="chat__error-banner-hint">
+            La ventana de contexto de 5 horas se ha agotado. Puedes continuar enviando un nuevo mensaje.
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function fmt(n: number): string {

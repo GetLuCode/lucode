@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../../store'
+import { getMinimaxTokenPlan } from '../../api'
 
 // Maps Claude's internal color names to CSS colors
 const COLOR_MAP: Record<string, string> = {
@@ -18,6 +19,82 @@ function fmtTokens(n: number): string {
   return String(n)
 }
 
+function fmtTimeUntil(dateStr: string): string {
+  const resetAt = new Date(dateStr).getTime()
+  const now = Date.now()
+  const diff = resetAt - now
+  if (diff <= 0) return 'ahora'
+  const h = Math.floor(diff / 3_600_000)
+  const m = Math.floor((diff % 3_600_000) / 60_000)
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
+}
+
+interface TokenPlan {
+  remaining_tokens?: number
+  total_tokens?: number
+  reset_at?: string
+  [key: string]: unknown
+}
+
+const TOKEN_PLAN_POLL_MS = 2 * 60 * 1000 // every 2 minutes
+
+function TokenPlanBadge() {
+  const [plan, setPlan] = useState<TokenPlan | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const fetchPlan = async () => {
+    try {
+      const data = await getMinimaxTokenPlan()
+      setPlan(data as TokenPlan)
+    } catch {
+      // Not configured or unreachable — stay hidden
+    }
+  }
+
+  useEffect(() => {
+    fetchPlan()
+    const pollId = setInterval(fetchPlan, TOKEN_PLAN_POLL_MS)
+    // Update the displayed countdown every minute
+    timerRef.current = setInterval(() => setNow(Date.now()), 60_000)
+    return () => {
+      clearInterval(pollId)
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [])
+
+  if (!plan) return null
+
+  const remaining = typeof plan.remaining_tokens === 'number' ? plan.remaining_tokens : null
+  const total = typeof plan.total_tokens === 'number' ? plan.total_tokens : null
+  const resetAt = typeof plan.reset_at === 'string' ? plan.reset_at : null
+
+  if (remaining === null && resetAt === null) return null
+
+  const pct = remaining !== null && total !== null && total > 0
+    ? Math.round((remaining / total) * 100)
+    : null
+  const level = pct !== null ? (pct <= 5 ? 'danger' : pct <= 20 ? 'warning' : 'normal') : 'normal'
+
+  void now // keep linter happy — used for countdown reactivity
+
+  return (
+    <div className={`token-plan-badge token-plan-badge--${level}`} title="MiniMax token plan">
+      {remaining !== null && (
+        <span className="token-plan-badge__remaining">
+          ⚡ {fmtTokens(remaining)}{total !== null ? ` / ${fmtTokens(total)}` : ''}
+        </span>
+      )}
+      {resetAt && (
+        <span className="token-plan-badge__reset">
+          ↺ {fmtTimeUntil(resetAt)}
+        </span>
+      )}
+    </div>
+  )
+}
+
 interface ContextBarProps {
   sessionId: string
 }
@@ -26,7 +103,7 @@ export function ContextBar({ sessionId }: ContextBarProps) {
   const contextUsage = useStore(s => s.contextUsage[sessionId])
   const [tooltip, setTooltip] = useState<{ name: string; tokens: number; pct: number; x: number } | null>(null)
 
-  if (!contextUsage) return null
+  if (!contextUsage) return <TokenPlanBadge />
 
   const { categories, totalTokens, maxTokens, percentage } = contextUsage
   console.log('[ContextBar] contextUsage:', contextUsage, 'categories:', categories)
@@ -102,6 +179,8 @@ export function ContextBar({ sessionId }: ContextBarProps) {
           {fmtTokens(totalTokens)} / {fmtTokens(maxTokens)}
         </span>
       </div>
+
+      <TokenPlanBadge />
     </div>
   )
 }

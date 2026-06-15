@@ -17,7 +17,6 @@ import (
 
 	apipkg "claude-orchestrator/internal/api"
 	dbpkg "claude-orchestrator/internal/db"
-	hookcfg "claude-orchestrator/internal/hookconfig"
 	natspkg "claude-orchestrator/internal/natsbus"
 	sessionpkg "claude-orchestrator/internal/session"
 )
@@ -26,12 +25,13 @@ const defaultLucodePort = 8090
 
 // desktopConfig is read from ~/.lucode/desktop.json on startup.
 type desktopConfig struct {
-	NATSUrl    string `json:"nats_url"`
-	NATSCreds  string `json:"nats_creds"`
-	AuthURL    string `json:"auth_url"`
-	AIAPIURL   string `json:"aiapi_url"`
-	WorkDir    string `json:"working_dir"`
-	LucodePort int    `json:"lucode_port"`
+	NATSUrl               string `json:"nats_url"`
+	NATSCreds             string `json:"nats_creds"`
+	AuthURL               string `json:"auth_url"`
+	AIAPIURL              string `json:"aiapi_url"`
+	WorkDir               string `json:"working_dir"`
+	LucodePort            int    `json:"lucode_port"`
+	MinimaxSubscriptionKey string `json:"minimax_subscription_key"`
 }
 
 var (
@@ -152,12 +152,9 @@ func (a *App) startServer() {
 	bus.OnBroadcast = apipkg.BroadcastToWS
 
 	hookBinary := defaultHookBinary()
-	claudeSettingsJSON, err := hookcfg.BuildJSON(hookBinary, fmt.Sprintf("http://localhost:%d", lucodePort))
-	if err != nil {
-		log.Fatalf("build claude settings: %v", err)
-	}
+	_ = hookBinary // legacy: claude-CLI hook path removed; permission gate is now NATS-based
 
-	manager := sessionpkg.NewManager(db, bus, natsURL, claudeSettingsJSON)
+	manager := sessionpkg.NewManager(db, bus, natsURL, "")
 	if natsCreds != "" {
 		manager.SetNATSCreds(natsCreds)
 	}
@@ -177,6 +174,9 @@ func (a *App) startServer() {
 
 	apiHandler := apipkg.New(db, bus, manager, workDir)
 	apiHandler.SetAuthURL(authURL)
+	if cfg.MinimaxSubscriptionKey != "" {
+		apiHandler.SetMinimaxSubscriptionKey(cfg.MinimaxSubscriptionKey)
+	}
 	wrapped := apipkg.Wrap(apiHandler)
 
 	a.mu.Lock()

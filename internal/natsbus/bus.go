@@ -7,6 +7,7 @@ package natsbus
 //   sess.{sessId}.events                server      → browser  (all session events)
 //   sess.{sessId}.cmd                   browser     → server  (hook_respond, etc.)
 //   hook.events.{sessId}                server      → browser  (hook_pending, hook_resolved via JetStream)
+//   lucode.permissions.{sessId}         aiapi       → server  (permission request, request/reply)
 
 import (
 	"encoding/json"
@@ -54,8 +55,15 @@ type Bus struct {
 
 	OnBroadcast      func(data []byte) // sends event to all browser WS clients
 	OnHookRequest    func(sessID, toolUseID, toolName string, toolInput json.RawMessage)
-	OnHookRespond    func(sessID, toolUseID, decision, reason string)
+	OnHookRespond    func(sessID, toolUseID, decision, reason string, ruleJSON string)
 	OnHookDisconnect func(sessID, toolUseID string)
+
+	// OnPermissionRequest is invoked when aiapi asks for permission
+	// before executing a tool. The callback MUST block until it has a
+	// decision (allow/deny) and return it as the (decision, reason)
+	// pair. The orchestrator's manager wires this to its store + UI
+	// prompt path.
+	OnPermissionRequest func(sessID, toolUseID, toolName string, toolInput json.RawMessage) (decision, reason string)
 
 	// discovery
 	peersMu       sync.RWMutex
@@ -81,7 +89,16 @@ func (b *Bus) Start() error {
 	if _, err := b.nc.Subscribe("sess.*.cmd", b.handleSessionCmd); err != nil {
 		return fmt.Errorf("subscribe sess.*.cmd: %w", err)
 	}
+	if _, err := b.nc.Subscribe("lucode.permissions.>", b.handlePermissionRequest); err != nil {
+		return fmt.Errorf("subscribe lucode.permissions.>: %w", err)
+	}
 	return nil
+}
+
+// PermissionSubject is the subject aiapi uses to request a permission
+// decision from the orchestrator (NATS request/reply).
+func PermissionSubject(sessID string) string {
+	return fmt.Sprintf("lucode.permissions.%s", sessID)
 }
 
 // Broadcast sends a session event to all browser WS clients.
@@ -192,6 +209,7 @@ func (b *Bus) handleSessionCmd(msg *nats.Msg) {
 		ToolUseID string `json:"tool_use_id"`
 		Decision  string `json:"decision"`
 		Reason    string `json:"reason"`
+		Rule      string `json:"rule,omitempty"`
 	}
 	if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 		log.Printf("[natsbus] session cmd parse error: %v", err)
@@ -201,11 +219,76 @@ func (b *Bus) handleSessionCmd(msg *nats.Msg) {
 	case "hook_respond":
 		if b.OnHookRespond != nil {
 			log.Printf("[natsbus] hook_respond sess=%s tool=%s decision=%s", cmd.SessionID, cmd.ToolUseID, cmd.Decision)
-			b.OnHookRespond(cmd.SessionID, cmd.ToolUseID, cmd.Decision, cmd.Reason)
+			b.OnHookRespond(cmd.SessionID, cmd.ToolUseID, cmd.Decision, cmd.Reason, cmd.Rule)
 		}
 	default:
 		log.Printf("[natsbus] unknown cmd type=%s", cmd.Type)
 	}
+}
+
+// handlePermissionRequest is the aiapi→orchestrator permission gate.
+// It runs the OnPermissionRequest callback (which blocks until the
+// orchestrator's manager has a decision) and replies on the request's
+// inbox subject. Fail-closed: any error path replies with deny.
+func (b *Bus) handlePermissionRequest(msg *nats.Msg) {
+	var req struct {
+		ToolUseID string          `json:"tool_use_id"`
+		ToolName  string          `json:"tool_name"`
+		ToolInput json.RawMessage `json:"tool_input"`
+		WorkDir   string          `json:"work_dir"`
+	}
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		log.Printf("[natsbus] permission request parse error: %v", err)
+		b.replyDeny(msg, "malformed permission request")
+		return
+	}
+	sessID := sessionIDFromPermissionSubject(msg.Subject)
+	if sessID == "" {
+		log.Printf("[natsbus] permission request bad subject: %s", msg.Subject)
+		b.replyDeny(msg, "bad subject")
+		return
+	}
+	if b.OnPermissionRequest == nil {
+		b.replyDeny(msg, "permission gate not configured")
+		return
+	}
+	decision, reason := b.OnPermissionRequest(sessID, req.ToolUseID, req.ToolName, req.ToolInput)
+	if decision != "allow" && decision != "deny" {
+		// fail-closed: unknown decision → deny
+		decision = "deny"
+		if reason == "" {
+			reason = "permission gate returned no decision"
+		}
+	}
+	reply := map[string]any{
+		"tool_use_id": req.ToolUseID,
+		"decision":    decision,
+		"reason":      reason,
+	}
+	data, _ := json.Marshal(reply)
+	if err := b.nc.Publish(msg.Reply, data); err != nil {
+		log.Printf("[natsbus] permission reply publish: %v", err)
+	}
+}
+
+func (b *Bus) replyDeny(req *nats.Msg, reason string) {
+	if req.Reply == "" {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{"decision": "deny", "reason": reason})
+	if err := b.nc.Publish(req.Reply, data); err != nil {
+		log.Printf("[natsbus] permission deny reply: %v", err)
+	}
+}
+
+// sessionIDFromPermissionSubject extracts the session id from a
+// "lucode.permissions.<sessID>" subject.
+func sessionIDFromPermissionSubject(subj string) string {
+	const prefix = "lucode.permissions."
+	if len(subj) <= len(prefix) {
+		return ""
+	}
+	return subj[len(prefix):]
 }
 
 // Role is kept for BroadcastToRole interface parity.

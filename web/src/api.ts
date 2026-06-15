@@ -1,4 +1,4 @@
-import type { Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint } from './types'
+import type { Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -59,6 +59,10 @@ export const listAPIKeys = () =>
 export const createAPIKey = (name: string) =>
   req<{ id: string; name: string; prefix: string; key: string; created_at: string }>('POST', '/api/apikeys', { name })
 export const deleteAPIKey = (id: string) => req<void>('DELETE', `/api/apikeys/${id}`)
+
+// MiniMax token plan
+export const getMinimaxTokenPlan = () =>
+  req<Record<string, unknown>>('GET', '/api/minimax/token-plan')
 
 // Projects
 export const listProjects = () => req<Project[]>('GET', '/api/projects')
@@ -279,3 +283,30 @@ export const diffFile = (path: string, workDir: string, from: string, to: string
 
 export const revertToCheckpoint = (id: string, workDir: string) =>
   req<{ checkpoint: Checkpoint }>('POST', `/api/versioning/revert/${encodeURIComponent(id)}?work_dir=${encodeURIComponent(workDir)}`)
+
+// ---- Permissions ----
+
+export interface SessionPermissionsResponse {
+  session_id: string
+  user_file: string
+  project_file: string
+  session_rules: Array<PermissionRule & { source: string }>
+}
+
+export const listSessionPermissions = (sessID: string) =>
+  req<SessionPermissionsResponse>('GET', `/api/sessions/${sessID}/permissions`)
+
+export const createSessionPermission = (sessID: string, data: { tool: string; input_regex?: Record<string, string>; scope: PermissionScope }) =>
+  req<PermissionRule>('POST', `/api/sessions/${sessID}/permissions`, data)
+
+export const deleteSessionPermission = (sessID: string, ruleID: string) =>
+  req<void>('DELETE', `/api/sessions/${sessID}/permissions/${ruleID}`)
+
+export const previewPermission = (workdir: string, tool: string, input?: string) => {
+  const qs = new URLSearchParams({ workdir, tool })
+  if (input) qs.set('input', input)
+  return req<{ decision: string; source: string; path: string; rule: PermissionRule | null }>('GET', `/api/permissions/preview?${qs.toString()}`)
+}
+
+export const getPermissionFiles = (workdir: string) =>
+  req<{ user_file: string; project_file: string }>('GET', `/api/permissions/files?workdir=${encodeURIComponent(workdir)}`)

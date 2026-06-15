@@ -16,6 +16,7 @@ import (
 
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
+	"claude-orchestrator/internal/permissions"
 
 	"github.com/google/uuid"
 )
@@ -33,25 +34,47 @@ type Manager struct {
 	mu           sync.Mutex
 	procs        map[string]*ProcessState
 	turnCounters map[string]int // session_id -> current turn index
+
+	// pendingApprovals holds the channels that gate.go is waiting on
+	// for the user's response. Keyed by "<sessID>:<toolUseID>".
+	pendingApprovalsMu sync.Mutex
+	pendingApprovals   map[string]chan hookResponse
+
+	// workDirsBySession caches the first work_dir per session so
+	// permission lookups don't need to re-derive it.
+	workDirsBySession map[string]string
 }
 
 func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings string) *Manager {
 	m := &Manager{
-		db:             db,
-		bus:            bus,
-		backendNATSURL: backendNATSURL,
-		claudeSettings: claudeSettings,
-		procs:          make(map[string]*ProcessState),
-		turnCounters:   make(map[string]int),
+		db:                 db,
+		bus:                bus,
+		backendNATSURL:     backendNATSURL,
+		claudeSettings:     claudeSettings,
+		procs:              make(map[string]*ProcessState),
+		turnCounters:       make(map[string]int),
+		pendingApprovals:   make(map[string]chan hookResponse),
+		workDirsBySession:  make(map[string]string),
 	}
 	bus.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
 		m.onHookRequest(sessID, toolUseID, toolName, toolInput)
 	}
-	bus.OnHookRespond = func(sessID, toolUseID, decision, reason string) {
-		m.onHookRespond(sessID, toolUseID, decision, reason)
+	bus.OnHookRespond = func(sessID, toolUseID, decision, reason, ruleJSON string) {
+		m.onHookRespond(sessID, toolUseID, decision, reason, ruleJSON)
 	}
 	bus.OnHookDisconnect = func(sessID, toolUseID string) {}
+	bus.OnPermissionRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) (string, string) {
+		return m.onPermissionRequest(sessID, toolUseID, toolName, toolInput)
+	}
 	return m
+}
+
+// hookResponse is the value delivered on a pendingApprovals channel
+// when the user (or settings file) decides on a pending permission.
+type hookResponse struct {
+	decision string
+	reason   string
+	ruleJSON string // optional, populated for allow_always / allow_with_rule
 }
 
 // SetAIAPIURL configures the URL of the aiapi service.
@@ -201,6 +224,11 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		m.mu.Unlock()
 	}()
 
+	// Cache the work_dir so the permission store can resolve settings.json.
+	if len(opts.WorkDirs) > 0 {
+		m.SetWorkDir(sessID, opts.WorkDirs[0])
+	}
+
 	// Build history payload (user + assistant only) and include it in the
 	// request body. aiapi is stateless — it needs the prior turns on every
 	// call to keep the model in context. This mirrors runWithNATSAIAPI.
@@ -227,6 +255,9 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		"image_base64":     opts.ImageBase64,
 		"image_media_type": opts.ImageMediaType,
 		"history":          histMsgs,
+		// Pass our NATS URL so aiapi can lazily connect for the permission gate
+		// even if it wasn't started with --nats-url.
+		"nats_url": m.backendNATSURL,
 	}
 
 	data, _ := json.Marshal(reqBody)
@@ -373,6 +404,11 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 		}
 		m.mu.Unlock()
 	}()
+
+	// Cache the work_dir so the permission store can resolve settings.json.
+	if len(opts.WorkDirs) > 0 {
+		m.SetWorkDir(sessID, opts.WorkDirs[0])
+	}
 
 	type histMsg struct {
 		Role    string `json:"role"`
@@ -549,7 +585,7 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 	})
 }
 
-func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
+func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason, ruleJSON string) {
 	hook, err := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
 	if err == nil {
 		content, _ := json.Marshal(map[string]any{
@@ -568,6 +604,25 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 			Seq:       seq,
 		})
 	}
+
+	// Persist a session-scope rule if the user picked "Allow always"
+	// or "Edit permission". ruleJSON is a JSON-encoded
+	// permissions.Rule (or empty).
+	if ruleJSON != "" && (decision == "allow_always" || decision == "allow_with_rule") {
+		var rule permissions.Rule
+		if jerr := json.Unmarshal([]byte(ruleJSON), &rule); jerr == nil {
+			scope := "allow"
+			if decision == "allow_with_rule" {
+				scope = "allow" // same scope, but the rule carries input_regex
+			}
+			if _, perr := permissions.AddSessionRule(permDBAdapter{m.db}, sessID, scope, rule); perr != nil {
+				log.Printf("[manager] persist session rule failed sess=%s tool=%s: %v", sessID[:8], rule.Tool, perr)
+			}
+		}
+	}
+
+	// Unblock the permission gate if one is waiting on this hook.
+	m.signalApproval(sessID, toolUseID, hookResponse{decision: decision, reason: reason, ruleJSON: ruleJSON})
 
 	dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
 	_ = m.bus.DeleteHookState(sessID, toolUseID)
@@ -590,6 +645,167 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason string) {
 		"tool_use_id": toolUseID,
 		"decision":    decision,
 	})
+}
+
+// onPermissionRequest is invoked synchronously by the bus when aiapi
+// asks for permission to execute a tool. The flow:
+//
+//  1. Resolve the session's PermissionStore (lazy-loaded from
+//     %USERPROFILE%/.lucode/settings.json + <workdir>/.lucode/settings.json
+//     + the session_permissions table).
+//  2. If the store returns Allow or Deny, return immediately. No UI
+//     prompt, no NATS round-trip — the rule is enough.
+//  3. Otherwise (Ask / Miss), record the request in pendingApprovals,
+//     call onHookRequest to broadcast hook_pending to the WS, and
+//     block until onHookRespond signals us back. The same hook
+//     pipeline used by the legacy PreToolUse flow handles the user
+//     interaction; we just wait for the answer.
+//
+// Returns ("allow"|"deny", reason). Reason is set from the matched
+// rule (for store-driven decisions) or the user's response.
+func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) (string, string) {
+	workDir := m.workDirFor(sessID)
+	store, err := permissions.LoadForSession(workDir, permDBAdapter{m.db}, sessID)
+	if err != nil {
+		log.Printf("[manager] permission store load failed sess=%s: %v", sessID[:8], err)
+		// Fail closed.
+		return "deny", "permission store unavailable"
+	}
+
+	match, err := store.Match(toolName, toolInput)
+	if err != nil {
+		log.Printf("[manager] permission match error sess=%s tool=%s: %v", sessID[:8], toolName, err)
+		return "deny", "permission match error: " + err.Error()
+	}
+	switch match.Decision {
+	case permissions.Allow:
+		return "allow", ruleReason(match)
+	case permissions.Deny:
+		return "deny", ruleReason(match)
+	}
+
+	// Ask / Miss: ask the user. Register the wait channel first so we
+	// don't race with the respond.
+	ch := m.registerApproval(sessID, toolUseID)
+	defer m.unregisterApproval(sessID, toolUseID)
+
+	m.onHookRequest(sessID, toolUseID, toolName, toolInput)
+
+	// Block for up to 4 minutes (matches the legacy hook timeout).
+	timer := time.NewTimer(4 * time.Minute)
+	defer timer.Stop()
+	select {
+	case resp := <-ch:
+		// Normalize UI decisions ('approve', 'allow_always', 'allow_with_rule')
+		// to the gate protocol values ('allow' / 'deny').
+		decision := resp.decision
+		switch decision {
+		case "approve", "allow_always", "allow_with_rule":
+			decision = "allow"
+		case "deny", "deny_always":
+			decision = "deny"
+		}
+		return decision, resp.reason
+	case <-timer.C:
+		return "deny", "user did not respond"
+	}
+}
+
+func ruleReason(m permissions.MatchResult) string {
+	if m.Reason != "" {
+		return m.Reason
+	}
+	if m.Rule != nil && m.Rule.Tool != "" {
+		return fmt.Sprintf("matched rule for %s", m.Rule.Tool)
+	}
+	return ""
+}
+
+// workDirFor returns the cached work_dir for a session, falling back
+// to the first work_dir in the active turn if any.
+func (m *Manager) workDirFor(sessID string) string {
+	m.pendingApprovalsMu.Lock()
+	defer m.pendingApprovalsMu.Unlock()
+	if wd, ok := m.workDirsBySession[sessID]; ok {
+		return wd
+	}
+	return ""
+}
+
+// SetWorkDir records a session's work_dir for permission lookups.
+// Called by the turn-start path so the gate can resolve settings.
+func (m *Manager) SetWorkDir(sessID, workDir string) {
+	m.pendingApprovalsMu.Lock()
+	defer m.pendingApprovalsMu.Unlock()
+	m.workDirsBySession[sessID] = workDir
+}
+
+func (m *Manager) registerApproval(sessID, toolUseID string) chan hookResponse {
+	ch := make(chan hookResponse, 1)
+	m.pendingApprovalsMu.Lock()
+	m.pendingApprovals[pendingKey(sessID, toolUseID)] = ch
+	m.pendingApprovalsMu.Unlock()
+	return ch
+}
+
+func (m *Manager) unregisterApproval(sessID, toolUseID string) {
+	m.pendingApprovalsMu.Lock()
+	delete(m.pendingApprovals, pendingKey(sessID, toolUseID))
+	m.pendingApprovalsMu.Unlock()
+}
+
+func (m *Manager) signalApproval(sessID, toolUseID string, resp hookResponse) {
+	m.pendingApprovalsMu.Lock()
+	ch, ok := m.pendingApprovals[pendingKey(sessID, toolUseID)]
+	m.pendingApprovalsMu.Unlock()
+	if ok {
+		// Non-blocking send: the channel has buffer 1.
+		select {
+		case ch <- resp:
+		default:
+		}
+	}
+}
+
+func pendingKey(sessID, toolUseID string) string { return sessID + ":" + toolUseID }
+
+// permDBAdapter wraps the *sql.DB and exposes the SessionStore methods
+// that internal/permissions needs. The actual SQL lives in
+// internal/db/queries.go; this adapter is the bridge.
+type permDBAdapter struct{ db *sql.DB }
+
+func (a permDBAdapter) InsertSessionRule(rule permissions.SessionRuleRow) error {
+	return dbpkg.InsertSessionRule(a.db, dbpkg.SessionRuleRow{
+		ID:         rule.ID,
+		SessionID:  rule.SessionID,
+		Tool:       rule.Tool,
+		InputRegex: rule.InputRegex,
+		Scope:      rule.Scope,
+		CreatedAt:  rule.CreatedAt,
+	})
+}
+
+func (a permDBAdapter) ListSessionRules(sessID string) ([]permissions.SessionRuleRow, error) {
+	rows, err := dbpkg.ListSessionRules(a.db, sessID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]permissions.SessionRuleRow, len(rows))
+	for i, r := range rows {
+		out[i] = permissions.SessionRuleRow{
+			ID:         r.ID,
+			SessionID:  r.SessionID,
+			Tool:       r.Tool,
+			InputRegex: r.InputRegex,
+			Scope:      r.Scope,
+			CreatedAt:  r.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
+func (a permDBAdapter) DeleteSessionRule(sessID, ruleID string) error {
+	return dbpkg.DeleteSessionRule(a.db, sessID, ruleID)
 }
 
 func (m *Manager) GetStatus(sessID string) Status {

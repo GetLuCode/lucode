@@ -89,7 +89,23 @@ CREATE TABLE IF NOT EXISTS pending_hooks (
 		return err
 	}
 
-	// Ideas — quick notes scoped to a project (scope=project_id) or global (scope='global')
+	// session_permissions — per-session permission rule overrides.
+	// scope is one of "allow" | "deny" | "ask". input_regex is a
+	// JSON-encoded map[string]string (field name -> regex pattern).
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS session_permissions (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tool        TEXT NOT NULL,
+    input_regex TEXT NOT NULL DEFAULT '',
+    scope       TEXT NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)
+`); err != nil {
+		return err
+	}
+
+// Ideas — quick notes scoped to a project (scope=project_id) or global (scope='global')
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS ideas (
     id         TEXT PRIMARY KEY,

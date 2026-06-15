@@ -21,6 +21,7 @@ import (
 	authclient "claude-orchestrator/internal/authclient"
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
+	"claude-orchestrator/internal/permissions"
 	sessionpkg "claude-orchestrator/internal/session"
 
 	"github.com/google/uuid"
@@ -42,22 +43,11 @@ type Handler struct {
 	ollamaHost string
 	auth       *authclient.Client
 	aiAPIURL   string
+	minimaxSubKey string
 
 	cacheMu      sync.Mutex
 	profileCache map[string]cachedEntry
 	usageCache   map[string]cachedEntry
-	toolExecMu   sync.RWMutex
-	toolExecMap  map[string]map[string]*toolExecution
-}
-
-// toolExecution tracks a tool execution from PreToolUse to PostToolUse
-type toolExecution struct {
-	ToolName     string
-	ToolInput    json.RawMessage
-	ToolResponse json.RawMessage
-	ToolUseID    string
-	MessageID    string
-	Timestamp    time.Time
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
@@ -70,7 +60,6 @@ func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir s
 		auth:         authclient.New("http://localhost:8092"),
 		profileCache: make(map[string]cachedEntry),
 		usageCache:   make(map[string]cachedEntry),
-		toolExecMap:  make(map[string]map[string]*toolExecution),
 	}
 }
 
@@ -80,6 +69,10 @@ func (h *Handler) SetAuthURL(url string) {
 
 func (h *Handler) SetAIAPIURL(url string) {
 	h.aiAPIURL = url
+}
+
+func (h *Handler) SetMinimaxSubscriptionKey(key string) {
+	h.minimaxSubKey = key
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -168,8 +161,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/agents/{id}", h.updateAgent)
 	mux.HandleFunc("DELETE /api/agents/{id}", h.deleteAgent)
 
-	// HTTP hook endpoint — receives all hook events from Claude Code CLI.
-	mux.HandleFunc("POST /api/hooks/{event}", h.hookEvent)
+	// Permissions (hierarchical settings.json + session overrides)
+	mux.HandleFunc("GET /api/sessions/{id}/permissions", h.listSessionPermissions)
+	mux.HandleFunc("POST /api/sessions/{id}/permissions", h.createSessionPermission)
+	mux.HandleFunc("DELETE /api/sessions/{id}/permissions/{ruleId}", h.deleteSessionPermission)
+	mux.HandleFunc("GET /api/permissions/preview", h.previewPermission)
+	mux.HandleFunc("GET /api/permissions/files", h.permissionFiles)
 
 	// Usage / metrics endpoints
 	mux.HandleFunc("GET /api/usage/daily", h.usageDaily)
@@ -185,6 +182,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// Process task manager (proxied to aiapi)
 	mux.HandleFunc("GET /api/processes", h.listProcesses)
 	mux.HandleFunc("POST /api/processes/{id}/kill", h.killProcess)
+
+	// MiniMax token plan
+	mux.HandleFunc("GET /api/minimax/token-plan", h.minimaxTokenPlan)
 }
 
 // ---- middleware ----
@@ -1546,6 +1546,174 @@ func (h *Handler) fetchAnthropicRaw(accountID, url string, oauthBeta bool) (json
 	return json.RawMessage(body), nil
 }
 
+// ---- Permission Handlers ----
+
+// sessionWorkDir returns the work_dir for a session. Used by the
+// permission endpoints to build a PermissionStore. Falls back to the
+// project's first work_dir, then the handler's workingDir.
+func (h *Handler) sessionWorkDir(sessID string) string {
+	sess, err := dbpkg.GetSession(h.db, sessID)
+	if err == nil && sess.ProjectID != "" {
+		proj, perr := dbpkg.GetProject(h.db, sess.ProjectID)
+		if perr == nil && len(proj.WorkDirs) > 0 {
+			return proj.WorkDirs[0]
+		}
+	}
+	return h.workingDir
+}
+
+func (h *Handler) listSessionPermissions(w http.ResponseWriter, r *http.Request) {
+	sessID := r.PathValue("id")
+	workDir := h.sessionWorkDir(sessID)
+	store, err := permissions.LoadForSession(workDir, h.permissionsAdapter(sessID), sessID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rules, err := permissions.ListSessionRules(h.permissionsAdapter(sessID), sessID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Tag each rule with its source.
+	type out struct {
+		permissions.Rule
+		Source permissions.RuleSource `json:"source"`
+	}
+	res := make([]out, 0, len(rules))
+	for _, rule := range rules {
+		res = append(res, out{Rule: rule, Source: permissions.SourceSession})
+	}
+	_ = store // included in `LoadForSession` to surface file-level paths to the UI
+	jsonResp(w, http.StatusOK, map[string]any{
+		"session_id":   sessID,
+		"user_file":    permissions.DefaultUserSettingsPath(),
+		"project_file": permissions.ProjectSettingsPath(workDir),
+		"session_rules": res,
+	})
+}
+
+func (h *Handler) createSessionPermission(w http.ResponseWriter, r *http.Request) {
+	sessID := r.PathValue("id")
+	var body struct {
+		Tool       string            `json:"tool"`
+		InputRegex map[string]string `json:"input_regex"`
+		Scope      string            `json:"scope"` // "allow" | "deny" | "ask"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Tool == "" {
+		http.Error(w, "tool required", http.StatusBadRequest)
+		return
+	}
+	rule, err := permissions.AddSessionRule(h.permissionsAdapter(sessID), sessID, body.Scope, permissions.Rule{
+		Tool:       body.Tool,
+		InputRegex: body.InputRegex,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonResp(w, http.StatusCreated, rule)
+}
+
+func (h *Handler) deleteSessionPermission(w http.ResponseWriter, r *http.Request) {
+	sessID := r.PathValue("id")
+	ruleID := r.PathValue("ruleId")
+	if err := permissions.RemoveSessionRule(h.permissionsAdapter(sessID), sessID, ruleID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) previewPermission(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	workDir := q.Get("workdir")
+	tool := q.Get("tool")
+	input := q.Get("input")
+	if tool == "" {
+		http.Error(w, "tool query param required", http.StatusBadRequest)
+		return
+	}
+	store, err := permissions.LoadForSession(workDir, nil, "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var inputRaw json.RawMessage
+	if input != "" {
+		inputRaw = json.RawMessage(input)
+	}
+	match, err := store.Match(tool, inputRaw)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]any{
+		"decision": match.Decision.String(),
+		"source":   match.Source,
+		"path":     match.Path,
+		"rule":     match.Rule,
+	})
+}
+
+func (h *Handler) permissionFiles(w http.ResponseWriter, r *http.Request) {
+	workDir := r.URL.Query().Get("workdir")
+	jsonResp(w, http.StatusOK, map[string]any{
+		"user_file":    permissions.DefaultUserSettingsPath(),
+		"project_file": permissions.ProjectSettingsPath(workDir),
+	})
+}
+
+// permissionsAdapter returns a SessionStore scoped to one session so
+// the per-session CRUD only ever sees its own rows.
+func (h *Handler) permissionsAdapter(sessID string) permissions.SessionStore {
+	return permAdapter{db: h.db, sessID: sessID}
+}
+
+type permAdapter struct {
+	db      *sql.DB
+	sessID  string
+}
+
+func (a permAdapter) InsertSessionRule(rule permissions.SessionRuleRow) error {
+	rule.SessionID = a.sessID
+	return dbpkg.InsertSessionRule(a.db, dbpkg.SessionRuleRow{
+		ID:         rule.ID,
+		SessionID:  rule.SessionID,
+		Tool:       rule.Tool,
+		InputRegex: rule.InputRegex,
+		Scope:      rule.Scope,
+		CreatedAt:  rule.CreatedAt,
+	})
+}
+
+func (a permAdapter) ListSessionRules(sessID string) ([]permissions.SessionRuleRow, error) {
+	rows, err := dbpkg.ListSessionRules(a.db, a.sessID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]permissions.SessionRuleRow, len(rows))
+	for i, r := range rows {
+		out[i] = permissions.SessionRuleRow{
+			ID:         r.ID,
+			SessionID:  r.SessionID,
+			Tool:       r.Tool,
+			InputRegex: r.InputRegex,
+			Scope:      r.Scope,
+			CreatedAt:  r.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
+func (a permAdapter) DeleteSessionRule(sessID, ruleID string) error {
+	return dbpkg.DeleteSessionRule(a.db, a.sessID, ruleID)
+}
+
 func jsonResp(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -1773,167 +1941,6 @@ func (h *Handler) executeUserTool(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- HTTP Hook Endpoint ----
-
-// hookEvent receives all hook events from Claude Code CLI via HTTP hook mode.
-// Combines PreToolUse and PostToolUse into a single tool execution message.
-//
-// Route: POST /api/hooks/{event}
-func (h *Handler) hookEvent(w http.ResponseWriter, r *http.Request) {
-	eventName := r.PathValue("event")
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		log.Printf("[hook-http] read body error: %v", err)
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		log.Printf("[hook-http] parse error event=%s: %v", eventName, err)
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	sessID := hookPayloadStr(payload["session_id"])
-	toolName := hookPayloadStr(payload["tool_name"])
-	toolUseID := hookPayloadStr(payload["tool_use_id"])
-
-	log.Printf("[hook-http] event=%s sess=%s tool=%s id=%s", eventName, sessID, toolName, toolUseID)
-
-	// Only process PreToolUse and PostToolUse for tool execution tracking
-	// Skip other hook events
-	if eventName == "PreToolUse" && sessID != "" && toolUseID != "" {
-		h.handlePreToolUse(sessID, toolUseID, toolName, payload)
-	} else if eventName == "PostToolUse" && sessID != "" && toolUseID != "" {
-		h.handlePostToolUse(sessID, toolUseID, payload)
-	}
-
-	// Return an approval response for all event types.
-	// PreToolUse needs a permissionDecision; others just need continue:true.
-	var resp map[string]any
-	if eventName == "PreToolUse" {
-		resp = map[string]any{
-			"hookSpecificOutput": map[string]any{
-				"hookEventName":      "PreToolUse",
-				"permissionDecision": "allow",
-			},
-			"continue": true,
-		}
-	} else {
-		resp = map[string]any{"continue": true}
-	}
-
-	jsonResp(w, http.StatusOK, resp)
-}
-
-func (h *Handler) handlePreToolUse(sessID, toolUseID, toolName string, payload map[string]json.RawMessage) {
-	h.toolExecMu.Lock()
-	defer h.toolExecMu.Unlock()
-
-	if h.toolExecMap[sessID] == nil {
-		h.toolExecMap[sessID] = make(map[string]*toolExecution)
-	}
-
-	msgID := uuid.New().String()
-	toolInput := payload["tool_input"]
-	if toolInput == nil {
-		toolInput = json.RawMessage("{}")
-	}
-
-	h.toolExecMap[sessID][toolUseID] = &toolExecution{
-		ToolName:  toolName,
-		ToolInput: toolInput,
-		ToolUseID: toolUseID,
-		MessageID: msgID,
-		Timestamp: time.Now().UTC(),
-	}
-
-	// Create initial message with tool in progress
-	content, _ := json.Marshal(map[string]any{
-		"tool_name":     toolName,
-		"tool_input":    json.RawMessage(toolInput),
-		"tool_use_id":   toolUseID,
-		"timestamp":     time.Now().UTC().Format(time.RFC3339),
-	})
-	seq, _ := dbpkg.NextMessageSeq(h.db, sessID)
-	_ = dbpkg.InsertMessage(h.db, dbpkg.Message{
-		ID:        msgID,
-		SessionID: sessID,
-		Role:      "tool_execution",
-		Content:   string(content),
-		Seq:       seq,
-	})
-
-	h.bus.Broadcast(sessID, map[string]any{
-		"type":          "tool_execution",
-		"session_id":    sessID,
-		"tool_name":     toolName,
-		"tool_use_id":   toolUseID,
-		"tool_input":    json.RawMessage(toolInput),
-		"timestamp":     time.Now().UTC().Format(time.RFC3339),
-		"message_id":    msgID,
-	})
-}
-
-func (h *Handler) handlePostToolUse(sessID, toolUseID string, payload map[string]json.RawMessage) {
-	h.toolExecMu.Lock()
-	defer h.toolExecMu.Unlock()
-
-	if h.toolExecMap[sessID] == nil {
-		return
-	}
-
-	exec, ok := h.toolExecMap[sessID][toolUseID]
-	if !ok {
-		return
-	}
-
-	toolResponse := payload["tool_response"]
-	if toolResponse == nil {
-		toolResponse = json.RawMessage("{}")
-	}
-	exec.ToolResponse = toolResponse
-
-	// Update message with tool response
-	content, _ := json.Marshal(map[string]any{
-		"tool_name":     exec.ToolName,
-		"tool_input":    exec.ToolInput,
-		"tool_response": json.RawMessage(toolResponse),
-		"tool_use_id":   toolUseID,
-		"timestamp":     exec.Timestamp.Format(time.RFC3339),
-	})
-	_ = dbpkg.UpdateMessageContent(h.db, exec.MessageID, string(content))
-
-	h.bus.Broadcast(sessID, map[string]any{
-		"type":           "tool_execution_complete",
-		"session_id":     sessID,
-		"tool_use_id":    toolUseID,
-		"tool_response":  json.RawMessage(toolResponse),
-		"message_id":     exec.MessageID,
-	})
-
-	// Clean up after 5 minutes
-	go func() {
-		time.Sleep(5 * time.Minute)
-		h.toolExecMu.Lock()
-		defer h.toolExecMu.Unlock()
-		if h.toolExecMap[sessID] != nil {
-			delete(h.toolExecMap[sessID], toolUseID)
-		}
-	}()
-}
-
-func hookPayloadStr(raw json.RawMessage) string {
-	if raw == nil {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return ""
-	}
-	return s
-}
 
 // ---- Auth Handlers ----
 
@@ -2468,4 +2475,42 @@ func (h *Handler) deleteKanbanCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- MiniMax token plan ----
+
+func (h *Handler) minimaxTokenPlan(w http.ResponseWriter, r *http.Request) {
+	key := h.minimaxSubKey
+	if key == "" {
+		key = os.Getenv("MINIMAX_SUBSCRIPTION_KEY")
+	}
+	if key == "" {
+		http.Error(w, `{"error":"MINIMAX_SUBSCRIPTION_KEY not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://www.minimax.io/v1/token_plan/remains", nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
 }

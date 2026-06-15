@@ -41,7 +41,7 @@ export function useSessionWS(sessionId: string | null) {
   }, [sessionId])
 
   const sendHookRespond = useCallback(
-    (toolUseId: string, decision: 'approve' | 'deny', reason?: string) => {
+    (toolUseId: string, decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always', reason?: string, rule?: { tool: string; input_regex?: Record<string, string> }) => {
       if (!sessionId) return
       sendWSMessage({
         type: 'hook_respond',
@@ -49,6 +49,7 @@ export function useSessionWS(sessionId: string | null) {
         tool_use_id: toolUseId,
         decision,
         reason: reason ?? '',
+        rule: rule ? JSON.stringify(rule) : undefined,
       })
     },
     [sessionId]

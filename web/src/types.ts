@@ -63,7 +63,25 @@ export interface PendingHook {
   tool_use_id: string
   tool_name: string
   tool_input: unknown
+  tool_input_schema?: ToolInputField[] | null
   created_at: string
+}
+
+export interface ToolInputField {
+  name: string
+  description?: string
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object'
+  required?: boolean
+}
+
+export type PermissionScope = 'allow' | 'deny' | 'ask'
+
+export interface PermissionRule {
+  id: string
+  tool: string
+  input_regex?: Record<string, string>
+  scope: PermissionScope
+  source?: 'user' | 'project' | 'session' | string
 }
 
 export interface SearchResult {
@@ -94,12 +112,12 @@ export interface ContextUsage {
 
 // WebSocket events from backend
 export type WSEvent =
-  | { type: 'session_status'; session_id: string; status: string }
+  | { type: 'session_status'; session_id: string; status: string; error?: string }
   | { type: 'stream_event'; session_id: string; event: unknown; partial?: boolean }
   | { type: 'user_message'; session_id: string; id: string; content: string; seq: number; created_at: string }
   | { type: 'tool_execution'; session_id: string; tool_name: string; tool_use_id: string; tool_input: unknown; timestamp: string; message_id: string }
   | { type: 'tool_execution_complete'; session_id: string; tool_use_id: string; tool_response: unknown; message_id: string }
-  | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown; created_at: string }
+  | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown; tool_input_schema?: ToolInputField[] | null; created_at: string }
   | { type: 'hook_resolved'; session_id: string; tool_use_id: string; decision: string }
   | { type: 'turn_complete'; session_id: string; result_subtype: string; result_text: string }
   | { type: 'session_updated'; session: Session }

@@ -1434,3 +1434,49 @@ func DeleteKanbanCard(db *sql.DB, id string) error {
 	_, err := db.Exec(`DELETE FROM kanban_cards WHERE id=?`, id)
 	return err
 }
+
+// ---- Session Permission Rule ----
+
+type SessionRuleRow struct {
+	ID         string
+	SessionID  string
+	Tool       string
+	InputRegex string
+	Scope      string
+	CreatedAt  time.Time
+}
+
+func InsertSessionRule(db *sql.DB, r SessionRuleRow) error {
+	_, err := db.Exec(
+		`INSERT INTO session_permissions (id, session_id, tool, input_regex, scope, created_at) VALUES (?,?,?,?,?,?)`,
+		r.ID, r.SessionID, r.Tool, r.InputRegex, r.Scope, r.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func ListSessionRules(db *sql.DB, sessID string) ([]SessionRuleRow, error) {
+	rows, err := db.Query(
+		`SELECT id, session_id, tool, input_regex, scope, created_at FROM session_permissions WHERE session_id=? ORDER BY created_at ASC`,
+		sessID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionRuleRow
+	for rows.Next() {
+		var r SessionRuleRow
+		var createdAt string
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Tool, &r.InputRegex, &r.Scope, &createdAt); err != nil {
+			return nil, err
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func DeleteSessionRule(db *sql.DB, sessID, ruleID string) error {
+	_, err := db.Exec(`DELETE FROM session_permissions WHERE id=? AND session_id=?`, ruleID, sessID)
+	return err
+}

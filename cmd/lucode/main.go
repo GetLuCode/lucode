@@ -20,7 +20,6 @@ import (
 
 	apipkg "claude-orchestrator/internal/api"
 	dbpkg "claude-orchestrator/internal/db"
-	hookcfg "claude-orchestrator/internal/hookconfig"
 	natspkg "claude-orchestrator/internal/natsbus"
 	sessionpkg "claude-orchestrator/internal/session"
 	webui "claude-orchestrator/web"
@@ -46,6 +45,7 @@ func main() {
 	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
+	minimaxSubKey := flag.String("minimax-subscription-key", os.Getenv("MINIMAX_SUBSCRIPTION_KEY"), "MiniMax subscription API key for token plan monitoring")
 	flag.Parse()
 
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
@@ -77,14 +77,9 @@ func main() {
 	bus := natspkg.NewBus(nc)
 	bus.OnBroadcast = apipkg.BroadcastToWS
 
-	backendBaseURL := fmt.Sprintf("http://localhost:%d", *port)
-	claudeSettingsJSON, err := hookcfg.BuildJSON(*hookBinary, backendBaseURL)
-	if err != nil {
-		log.Fatalf("build claude settings: %v", err)
-	}
-	log.Printf("claude settings: hook=%s settings=%s", *hookBinary, claudeSettingsJSON)
+	_ = hookBinary // legacy: claude-CLI hook path removed; permission gate is now NATS-based
 
-	manager := sessionpkg.NewManager(db, bus, *natsURL, claudeSettingsJSON)
+	manager := sessionpkg.NewManager(db, bus, *natsURL, "")
 	manager.SetAIAPIURL(*aiAPIURL)
 	if *natsCreds != "" {
 		manager.SetNATSCreds(*natsCreds)
@@ -105,6 +100,9 @@ func main() {
 	handler := apipkg.New(db, bus, manager, *workingDir)
 	handler.SetAuthURL(*authURL)
 	handler.SetAIAPIURL(*aiAPIURL)
+	if *minimaxSubKey != "" {
+		handler.SetMinimaxSubscriptionKey(*minimaxSubKey)
+	}
 
 	// Start RPC server after handler is created so it can serve remote requests
 	if err := bus.StartRPCServer(apipkg.Wrap(handler)); err != nil {
@@ -186,12 +184,8 @@ func runInstall() {
 		fmt.Printf("  ✓  copied lucode         →  %s\n", lucodeDst)
 	}
 
-	// 5. Write ~/.lucode/settings.json.
-	settingsPath := filepath.Join(installDir, "settings.json")
-	if err := hookcfg.WriteSettings(settingsPath, hookDst, "http://localhost:8090"); err != nil {
-		log.Fatalf("install: write settings: %v", err)
-	}
-	fmt.Printf("  ✓  wrote settings        →  %s\n", settingsPath)
+	// 5. (legacy) was WriteSettings for Claude CLI hooks. Permission
+	// gate is now NATS-based, so no settings file is needed.
 
 	// 6. Interactive PATH setup.
 	fmt.Println()
@@ -210,9 +204,6 @@ func runInstall() {
 	} else {
 		fmt.Printf("    lucode --port 8090 --working-dir ~/\n")
 	}
-	fmt.Println()
-	fmt.Printf("  On first run lucode will use:\n")
-	fmt.Printf("    %s\n", settingsPath)
 	fmt.Println()
 }
 
