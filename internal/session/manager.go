@@ -254,6 +254,7 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		"name":             opts.Name,
 		"image_base64":     opts.ImageBase64,
 		"image_media_type": opts.ImageMediaType,
+		"thinking":         opts.Thinking,
 		"history":          histMsgs,
 		// Pass our NATS URL so aiapi can lazily connect for the permission gate
 		// even if it wasn't started with --nats-url.

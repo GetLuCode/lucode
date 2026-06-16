@@ -26,10 +26,15 @@ import type { Message } from '../../types'
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
 
-const CLAUDE_MODELS = [
-  { label: 'Haiku 4.5',  value: 'haiku' },
-  { label: 'Sonnet 4.6', value: 'sonnet' },
-  { label: 'Opus 4.6',   value: 'opus' },
+const MINIMAX_MODELS = [
+  { label: 'MiniMax M3',              value: 'MiniMax-M3' },
+  { label: 'MiniMax M2.7',            value: 'MiniMax-M2.7' },
+  { label: 'MiniMax M2.7 Highspeed',  value: 'MiniMax-M2.7-highspeed' },
+  { label: 'MiniMax M2.5',            value: 'MiniMax-M2.5' },
+  { label: 'MiniMax M2.5 Highspeed',  value: 'MiniMax-M2.5-highspeed' },
+  { label: 'MiniMax M2.1',            value: 'MiniMax-M2.1' },
+  { label: 'MiniMax M2.1 Highspeed',  value: 'MiniMax-M2.1-highspeed' },
+  { label: 'MiniMax M2',              value: 'MiniMax-M2' },
 ]
 
 function ChatViewEmpty() {
@@ -542,7 +547,7 @@ function ChatViewFull() {
           >
             <span className="chat__session-name">{headerName}</span>
             <span className="chat__header-model-badge">
-              {CLAUDE_MODELS.find(m => m.value === model)?.label
+              {MINIMAX_MODELS.find(m => m.value === model)?.label
                 ?? ollamaModels.find(m => `ollama:${m.name}` === model)?.label
                 ?? model.replace(/^ollama:/, '')}
             </span>
@@ -590,8 +595,8 @@ function ChatViewFull() {
                 const ollamaDisabled = sessionIsClaude
                 return (
                   <>
-                    <div className="chat__header-dropdown-label">Claude</div>
-                    {CLAUDE_MODELS.map(m => (
+                    <div className="chat__header-dropdown-label">MiniMax</div>
+                    {MINIMAX_MODELS.map(m => (
                       <button
                         key={m.value}
                         className={`chat__header-dropdown-item${model === m.value ? ' chat__header-dropdown-item--active' : ''}${claudeDisabled ? ' chat__header-dropdown-item--disabled' : ''}`}

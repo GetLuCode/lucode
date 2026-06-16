@@ -73,7 +73,7 @@ export function InputControls({
       {/* Left: tools */}
       <div className="input-controls__group input-controls__group--left">
         <AttachmentButton onImageSelect={onImageSelect} disabled={isRunning} />
-        <ThinkingToggle thinking={String(thinking)} onThinkingChange={onThinkingChange} disabled={isRunning} />
+        <ThinkingToggle model={model} thinking={String(thinking)} onThinkingChange={onThinkingChange} disabled={isRunning} />
 
         {/* Effort toggle — only for non-haiku models */}
         {model !== 'haiku' && (
