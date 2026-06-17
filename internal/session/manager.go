@@ -40,6 +40,12 @@ type Manager struct {
 	pendingApprovalsMu sync.Mutex
 	pendingApprovals   map[string]chan hookResponse
 
+	// deniedThisTurn tracks sessions that have had at least one tool
+	// denied in the current turn. Subsequent tool calls in the same
+	// turn are auto-denied with an instructive reason so the model
+	// stops and asks the user how to proceed instead of retrying.
+	deniedThisTurn map[string]bool
+
 	// workDirsBySession caches the first work_dir per session so
 	// permission lookups don't need to re-derive it.
 	workDirsBySession map[string]string
@@ -54,6 +60,7 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 		procs:              make(map[string]*ProcessState),
 		turnCounters:       make(map[string]int),
 		pendingApprovals:   make(map[string]chan hookResponse),
+		deniedThisTurn:     make(map[string]bool),
 		workDirsBySession:  make(map[string]string),
 	}
 	bus.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
@@ -176,6 +183,11 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	if len(history) > 0 {
 		history = history[:len(history)-1] // exclude the user msg just inserted
 	}
+
+	// Reset denial flag so a fresh turn starts with no prior denials.
+	m.pendingApprovalsMu.Lock()
+	m.deniedThisTurn[opts.SessionID] = false
+	m.pendingApprovalsMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	ps := &ProcessState{
@@ -665,23 +677,34 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason, ruleJSON st
 // Returns ("allow"|"deny", reason). Reason is set from the matched
 // rule (for store-driven decisions) or the user's response.
 func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) (string, string) {
+	// If a tool was already denied this turn, stop immediately and instruct
+	// the model to inform the user rather than attempting more tools.
+	m.pendingApprovalsMu.Lock()
+	alreadyDenied := m.deniedThisTurn[sessID]
+	m.pendingApprovalsMu.Unlock()
+	if alreadyDenied {
+		return "deny", "A tool call was already denied during this turn. Stop executing tools, explain to the user what you were attempting, and ask how they would like to proceed."
+	}
+
 	workDir := m.workDirFor(sessID)
 	store, err := permissions.LoadForSession(workDir, permDBAdapter{m.db}, sessID)
 	if err != nil {
 		log.Printf("[manager] permission store load failed sess=%s: %v", sessID[:8], err)
-		// Fail closed.
+		m.markDeniedThisTurn(sessID)
 		return "deny", "permission store unavailable"
 	}
 
 	match, err := store.Match(toolName, toolInput)
 	if err != nil {
 		log.Printf("[manager] permission match error sess=%s tool=%s: %v", sessID[:8], toolName, err)
+		m.markDeniedThisTurn(sessID)
 		return "deny", "permission match error: " + err.Error()
 	}
 	switch match.Decision {
 	case permissions.Allow:
 		return "allow", ruleReason(match)
 	case permissions.Deny:
+		m.markDeniedThisTurn(sessID)
 		return "deny", ruleReason(match)
 	}
 
@@ -706,10 +729,20 @@ func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolIn
 		case "deny", "deny_always":
 			decision = "deny"
 		}
+		if decision == "deny" {
+			m.markDeniedThisTurn(sessID)
+		}
 		return decision, resp.reason
 	case <-timer.C:
+		m.markDeniedThisTurn(sessID)
 		return "deny", "user did not respond"
 	}
+}
+
+func (m *Manager) markDeniedThisTurn(sessID string) {
+	m.pendingApprovalsMu.Lock()
+	m.deniedThisTurn[sessID] = true
+	m.pendingApprovalsMu.Unlock()
 }
 
 func ruleReason(m permissions.MatchResult) string {
