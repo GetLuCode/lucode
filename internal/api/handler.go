@@ -52,7 +52,7 @@ type Handler struct {
 	// agent-to-agent messaging (agentmsg.go)
 	msgMu       sync.Mutex
 	inbox       map[string][]string  // session id -> messages waiting for its turn to end
-	sent        map[string][]time.Time // session id -> recent agent_message sends (rate limit)
+	sent        map[string][]time.Time // session id -> recent send_to_agent sends (rate limit)
 	startTurnFn func(sessionpkg.TurnOptions) error // overrides manager.StartTurn in tests
 }
 

@@ -54,7 +54,7 @@ func TestInitializeListAndCall(t *testing.T) {
 	for _, x := range listed {
 		names[x.(map[string]any)["name"].(string)] = true
 	}
-	for _, want := range []string{"task_comment", "task_done", "task_blocked", "agent_list", "agent_message"} {
+	for _, want := range []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info"} {
 		if !names[want] {
 			t.Errorf("tools/list is missing %s", want)
 		}
@@ -91,7 +91,7 @@ func TestUnknownToolAndMethod(t *testing.T) {
 }
 
 func TestIsTaskTool(t *testing.T) {
-	for _, n := range []string{"task_done", "mcp__lucode__task_blocked", "task_comment", "agent_list", "mcp__lucode__agent_message"} {
+	for _, n := range []string{"task_done", "mcp__lucode__task_blocked", "task_comment", "agent_list", "mcp__lucode__send_to_agent", "task_info"} {
 		if !IsTaskTool(n) {
 			t.Errorf("%s should be a task tool", n)
 		}

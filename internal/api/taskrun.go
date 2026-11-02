@@ -191,7 +191,7 @@ func (h *Handler) runTask(card dbpkg.KanbanCard) error {
 // taskPrompt is the first message an agent receives for a task.
 func (h *Handler) taskPrompt(card dbpkg.KanbanCard) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# Task: %s\n", card.Title)
+	fmt.Fprintf(&sb, "# Task: %s\nTask id: %s\n", card.Title, card.ID)
 	if card.CardType != "" {
 		fmt.Fprintf(&sb, "Type: %s\n", card.CardType)
 	}
@@ -229,7 +229,7 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 		sb.WriteString("\n\n")
 	}
 	fmt.Fprintf(&sb, `# Working inside lucode
-You are %q, an agent in lucode working on the task %q from this project's board. The user follows your progress on that board, and the task only changes state when you tell lucode.
+You are %q, an agent in lucode working on the task %q (id %s) from this project's board. The user follows your progress on that board, and the task only changes state when you tell lucode.
 
 Your task is described in your first message. Work only on it. Report through the lucode task tools (in Claude Code they appear as mcp__lucode__task_comment, mcp__lucode__task_done and mcp__lucode__task_blocked):
 - task_comment(text): post a short progress note when you reach something worth telling the user. It does not change the status.
@@ -242,11 +242,13 @@ Rules:
 - Some tools ask the user for approval. If one is denied, do not retry it; adapt, or call task_blocked and explain what you need.
 
 Working with other agents:
-- agent_list(): see your teammates, what each one does and whether it is working on something.
-- agent_message(to, message): ask a teammate for something or tell it something. It reaches them as a message in the task they are working on, and they answer by messaging you back, so do not wait for a reply: keep working or end your turn. A teammate with no task in progress cannot receive messages. Messages you get from other agents start with "Message from agent".
-- Keep messages short and specific; do not use them for chit-chat.`, agent.Name, card.Title)
+- agent_list(): see your teammates, what each one does and whether it is working on something (with the id of that task).
+- send_to_agent(to, message, task_id?, requires_answer?): talk to a teammate. lucode delivers it into the task they are working on and adds the envelope. Set requires_answer=true only when you really need a reply; set task_id when the message is about a task other than your own. The reply comes back later as a message to you, so do not wait for it: keep working or end your turn. A teammate with no task in progress cannot receive messages.
+- task_info(task_id?, fields?): look up a task of this project (your own if you give no id). Ask only for the fields you need: title, description, status, type, tags, agent, dependencies, parent, dates, comments.
+- Messages from other agents start with three header lines: "#From: <name>/<id>", "#Context: task <id> <title>" (use task_info on that id if you need the details) and "#RequiresAnswer: yes|no". If it is yes, answer with send_to_agent to that agent once you have what they asked for; if it is no, do not reply unless you have something they need.
+- Keep messages short and specific; do not use them for chit-chat.`, agent.Name, card.Title, card.ID)
 	if supervisor != "" {
-		fmt.Fprintf(&sb, "\n- Your supervisor is %s: they are told automatically when you finish, get blocked or fail, so do not message them just to report that. Use agent_message with to=\"supervisor\" for questions or decisions you need from them.", supervisor)
+		fmt.Fprintf(&sb, "\n- Your supervisor is %s: they are told automatically when you finish, get blocked or fail, so do not message them just to report that. Use send_to_agent with to=\"supervisor\" for questions or decisions you need from them.", supervisor)
 	}
 	return sb.String()
 }
@@ -270,8 +272,11 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		Text    string `json:"text"`
 		Summary string `json:"summary"`
 		Reason  string `json:"reason"`
-		To      string `json:"to"`
-		Message string `json:"message"`
+		To             string   `json:"to"`
+		Message        string   `json:"message"`
+		TaskID         string   `json:"task_id"`
+		RequiresAnswer bool     `json:"requires_answer"`
+		Fields         []string `json:"fields"`
 	}
 	_ = json.Unmarshal(args, &a)
 
@@ -317,13 +322,16 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 
 	case taskmcp.ToolAgentList:
 		if agentErr != nil {
-			return "", errors.New("this session has no agent")
+			return "", errNoAgent
 		}
 		return h.agentList(agent)
 
-	case taskmcp.ToolAgentMessage:
+	case taskmcp.ToolTaskInfo:
+		return h.taskInfo(sess, a.TaskID, a.Fields)
+
+	case taskmcp.ToolSendToAgent:
 		if agentErr != nil {
-			return "", errors.New("this session has no agent")
+			return "", errNoAgent
 		}
 		if strings.TrimSpace(a.Message) == "" {
 			return "", errors.New("message is required")
@@ -332,10 +340,19 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		if err != nil {
 			return "", err
 		}
+		// the task the message is about: another one of this project, or the sender's own
+		ctxCard := card
+		if id := strings.TrimSpace(a.TaskID); id != "" && id != card.ID {
+			c, err := dbpkg.GetKanbanCard(h.db, id)
+			if err != nil || c.ProjectID != sess.ProjectID {
+				return "", fmt.Errorf("task %q not found in this project", id)
+			}
+			ctxCard = c
+		}
 		if !h.allowSend(sessID) {
 			return "", fmt.Errorf("message limit reached (%d per %s): finish your own work instead of messaging", msgLimit, msgWindow)
 		}
-		return h.deliverToAgent(agent, card, to, a.Message)
+		return h.deliverToAgent(agent, ctxCard, to, a.Message, a.RequiresAnswer)
 
 	case taskmcp.ToolBlocked:
 		if strings.TrimSpace(a.Reason) == "" {

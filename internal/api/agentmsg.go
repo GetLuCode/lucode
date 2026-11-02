@@ -15,15 +15,23 @@ import (
 
 // Agent-to-agent messaging and escalation.
 //
-// An agent can message a teammate (agent_message) and list its teammates
-// (agent_list). A message lands in the recipient's chat for the task it has in
-// progress, as a user message from the sending agent; the recipient answers by
-// messaging back, so nobody blocks waiting. If the recipient is busy the message
+// An agent can message a teammate (send_to_agent), list its teammates
+// (agent_list) and look up a task (task_info). A message lands in the
+// recipient's chat for the task it has in progress, wrapped in an envelope that
+// lucode writes (so the sender cannot forge it):
+//
+//	#From: Alice/<agent id>
+//	#Context: task <task id> "<title>"
+//	#RequiresAnswer: yes|no
+//
+//	<message>
+//
+// The recipient answers by messaging back, so nobody blocks waiting. If the recipient is busy the message
 // is queued and delivered when its turn ends (Manager.OnTurnEnd → DrainInbox).
 //
 // Every agent can have a supervisor (agents.reports_to). That supervisor is told
 // on its own when a subordinate finishes, blocks or fails a task, and
-// agent_message accepts "supervisor" as the recipient.
+// send_to_agent accepts "supervisor" as the recipient.
 
 const (
 	// A sender may post at most msgLimit messages per msgWindow: a guard against
@@ -129,6 +137,17 @@ func (h *Handler) findTeammate(from dbpkg.Agent, to string) (dbpkg.Agent, error)
 	return dbpkg.Agent{}, fmt.Errorf("no agent named %q; teammates: %s", to, strings.Join(names, ", "))
 }
 
+// formatAgentMessage is the envelope a recipient sees. lucode writes it, so
+// #From cannot be forged by the sender.
+func formatAgentMessage(from dbpkg.Agent, ctxCard dbpkg.KanbanCard, requiresAnswer bool, text string) string {
+	answer := "no"
+	if requiresAnswer {
+		answer = "yes"
+	}
+	return fmt.Sprintf("#From: %s/%s\n#Context: task %s %q\n#RequiresAnswer: %s\n\n%s",
+		from.Name, from.ID, ctxCard.ID, ctxCard.Title, answer, strings.TrimSpace(text))
+}
+
 // agentList describes the caller's teammates and what each is doing.
 func (h *Handler) agentList(from dbpkg.Agent) (string, error) {
 	agents, err := dbpkg.ListAgents(h.db, from.ProjectID)
@@ -151,7 +170,7 @@ func (h *Handler) agentList(from dbpkg.Agent) (string, error) {
 		}
 		status := "idle (no task in progress)"
 		if _, card, ok := h.activeSession(a); ok {
-			status = fmt.Sprintf("working on %q", card.Title)
+			status = fmt.Sprintf("working on %q (task %s)", card.Title, card.ID)
 		}
 		fmt.Fprintf(&sb, "- %s — %s [%s, %s]\n", a.Name, role, a.Model, status)
 	}
@@ -185,7 +204,7 @@ func (h *Handler) allowSend(senderSession string) bool {
 
 // deliverToAgent posts a message into the recipient's in-progress task chat,
 // starting a turn for it (or queueing it when the recipient is mid-turn).
-func (h *Handler) deliverToAgent(from dbpkg.Agent, fromCard dbpkg.KanbanCard, to dbpkg.Agent, text string) (string, error) {
+func (h *Handler) deliverToAgent(from dbpkg.Agent, ctxCard dbpkg.KanbanCard, to dbpkg.Agent, text string, requiresAnswer bool) (string, error) {
 	sess, card, ok := h.activeSession(to)
 	if !ok {
 		return "", fmt.Errorf("%s has no task in progress, so it cannot receive messages right now", to.Name)
@@ -194,7 +213,7 @@ func (h *Handler) deliverToAgent(from dbpkg.Agent, fromCard dbpkg.KanbanCard, to
 	if err != nil {
 		return "", errors.New("project not found")
 	}
-	msg := fmt.Sprintf("Message from agent %q (working on %q):\n\n%s\n\nTo answer, use agent_message with to=%q.", from.Name, fromCard.Title, text, from.Name)
+	msg := formatAgentMessage(from, ctxCard, requiresAnswer, text)
 
 	err = h.startTurn(h.agentTurnOpts(sess, to, card, proj, msg))
 	switch {
@@ -272,7 +291,7 @@ func (h *Handler) notifySupervisor(agent dbpkg.Agent, card dbpkg.KanbanCard, tex
 	if err != nil {
 		return
 	}
-	if _, err := h.deliverToAgent(agent, card, sup, text); err != nil {
+	if _, err := h.deliverToAgent(agent, card, sup, text, false); err != nil {
 		log.Printf("[agents] could not notify supervisor %s: %v", sup.Name, err)
 		_ = dbpkg.InsertCardComment(h.db, dbpkg.CardComment{
 			ID: uuid.New().String(), CardID: card.ID, Author: "lucode", Kind: "comment",
