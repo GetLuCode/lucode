@@ -109,6 +109,8 @@ func main() {
 
 	handler := apipkg.New(db, bus, manager, *workingDir)
 	bus.OnTaskTool = handler.HandleTaskTool
+	manager.OnTurnEnd = handler.DrainInbox         // deliver messages other agents queued
+	manager.OnTurnFailed = handler.HandleTurnFailed // unresumable sessions etc.
 	handler.SetAuthURL(*authURL)
 	handler.SetAIAPIURL(*aiAPIURL)
 	if *minimaxSubKey != "" {

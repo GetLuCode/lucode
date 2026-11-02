@@ -20,11 +20,23 @@ import (
 
 	"github.com/google/uuid"
 	"claude-orchestrator/internal/taskmcp"
+	execpkg "claude-orchestrator/internal/executor"
 )
 
 var ErrSessionBusy = errors.New("session already has an active turn")
 
 type Manager struct {
+	// Live claude processes by session (agents with Persistent set).
+	liveMu sync.Mutex
+	lives  map[string]*execpkg.Live
+
+	// OnTurnEnd runs after a turn finishes and the session is free again (used to
+	// deliver messages other agents queued for it).
+	OnTurnEnd func(sessID string)
+	// OnTurnFailed is called when a turn failed in a way the user or a supervising
+	// agent must hear about (e.g. code "resume_failed").
+	OnTurnFailed func(sessID, code, message string)
+
 	db             *sql.DB
 	bus            *natspkg.Bus
 	backendNATSURL string
@@ -59,6 +71,7 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 		backendNATSURL:     backendNATSURL,
 		claudeSettings:     claudeSettings,
 		procs:              make(map[string]*ProcessState),
+		lives:              make(map[string]*execpkg.Live),
 		turnCounters:       make(map[string]int),
 		pendingApprovals:   make(map[string]chan hookResponse),
 		deniedThisTurn:     make(map[string]bool),
@@ -229,15 +242,7 @@ func (m *Manager) CancelTurn(sessionID string) *ProcessState {
 // to the NATS bus (→ WS clients) while persisting relevant events to DB.
 func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnOptions, history []dbpkg.Message) {
 	sessID := ps.SessionID
-	defer func() {
-		ps.Cancel()
-		close(ps.Done)
-		m.mu.Lock()
-		if m.procs[sessID] == ps {
-			delete(m.procs, sessID)
-		}
-		m.mu.Unlock()
-	}()
+	defer m.finishTurn(sessID, ps)
 
 	// Cache the work_dir so the permission store can resolve settings.json.
 	if len(opts.WorkDirs) > 0 {
@@ -413,15 +418,7 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 // It reuses the same event processing logic as runWithAIAPI.
 func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts TurnOptions, history []dbpkg.Message) {
 	sessID := ps.SessionID
-	defer func() {
-		ps.Cancel()
-		close(ps.Done)
-		m.mu.Lock()
-		if m.procs[sessID] == ps {
-			delete(m.procs, sessID)
-		}
-		m.mu.Unlock()
-	}()
+	defer m.finishTurn(sessID, ps)
 
 	// Cache the work_dir so the permission store can resolve settings.json.
 	if len(opts.WorkDirs) > 0 {
@@ -896,4 +893,20 @@ func jsonStr(raw json.RawMessage) string {
 	var s string
 	json.Unmarshal(raw, &s)
 	return s
+}
+
+
+// finishTurn releases the session after a turn: cancels its context, frees the
+// busy marker and lets OnTurnEnd deliver anything queued meanwhile.
+func (m *Manager) finishTurn(sessID string, ps *ProcessState) {
+	ps.Cancel()
+	close(ps.Done)
+	m.mu.Lock()
+	if m.procs[sessID] == ps {
+		delete(m.procs, sessID)
+	}
+	m.mu.Unlock()
+	if m.OnTurnEnd != nil {
+		go m.OnTurnEnd(sessID)
+	}
 }

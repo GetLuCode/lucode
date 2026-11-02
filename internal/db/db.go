@@ -369,6 +369,10 @@ CREATE INDEX IF NOT EXISTS idx_card_comments_card ON card_comments(card_id, crea
 	backfillKanbanListKinds(db)
 	// agents.executor — "aiapi" (HTTP provider service) or "claude" (claude -p CLI)
 	db.Exec(`ALTER TABLE agents ADD COLUMN executor TEXT NOT NULL DEFAULT 'aiapi'`)
+	// agents.persistent — keep the claude -p process alive between turns
+	db.Exec(`ALTER TABLE agents ADD COLUMN persistent INTEGER NOT NULL DEFAULT 0`)
+	// agents.reports_to — the supervising agent that is told when this one finishes, blocks or fails
+	db.Exec(`ALTER TABLE agents ADD COLUMN reports_to TEXT NOT NULL DEFAULT ''`)
 
 	return nil
 }

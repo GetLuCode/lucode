@@ -1208,6 +1208,8 @@ type Agent struct {
 	Personality string    `json:"personality"`
 	Tools       []string  `json:"tools"`
 	Executor    string    `json:"executor"` // "aiapi" | "claude"
+	Persistent  bool      `json:"persistent"` // keep the claude -p process alive between turns
+	ReportsTo   string    `json:"reports_to"` // id of the supervising agent ("" = none)
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -1215,15 +1217,15 @@ type Agent struct {
 func InsertAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, executor) VALUES (?,?,?,?,?,?,?,?)`,
-		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.Executor,
+		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, executor, persistent, reports_to) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.Executor, a.Persistent, a.ReportsTo,
 	)
 	return err
 }
 
 func ListAgents(db *sql.DB, projectID string) ([]Agent, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, account_id, personality, tools, executor, created_at, updated_at FROM agents WHERE project_id=? ORDER BY created_at ASC`,
+		`SELECT id, project_id, name, model, account_id, personality, tools, executor, persistent, reports_to, created_at, updated_at FROM agents WHERE project_id=? ORDER BY created_at ASC`,
 		projectID,
 	)
 	if err != nil {
@@ -1234,7 +1236,7 @@ func ListAgents(db *sql.DB, projectID string) ([]Agent, error) {
 	for rows.Next() {
 		var a Agent
 		var toolsJSON, createdAt, updatedAt string
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &a.Executor, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &a.Executor, &a.Persistent, &a.ReportsTo, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(toolsJSON), &a.Tools)
@@ -1249,8 +1251,8 @@ func GetAgent(db *sql.DB, id string) (Agent, error) {
 	var a Agent
 	var toolsJSON, createdAt, updatedAt string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, model, account_id, personality, tools, executor, created_at, updated_at FROM agents WHERE id=?`, id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &a.Executor, &createdAt, &updatedAt)
+		`SELECT id, project_id, name, model, account_id, personality, tools, executor, persistent, reports_to, created_at, updated_at FROM agents WHERE id=?`, id,
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &a.Executor, &a.Persistent, &a.ReportsTo, &createdAt, &updatedAt)
 	if err != nil {
 		return a, err
 	}
@@ -1263,8 +1265,8 @@ func GetAgent(db *sql.DB, id string) (Agent, error) {
 func UpdateAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`UPDATE agents SET name=?, model=?, account_id=?, personality=?, tools=?, executor=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.Executor, a.ID,
+		`UPDATE agents SET name=?, model=?, account_id=?, personality=?, tools=?, executor=?, persistent=?, reports_to=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.Executor, a.Persistent, a.ReportsTo, a.ID,
 	)
 	return err
 }

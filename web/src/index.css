@@ -6795,3 +6795,5 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 .kmodal__comment-kind { font-weight: 600; text-transform: uppercase; }
 .kmodal__comment-time { margin-left: auto; }
 .kmodal__comment-body { color: var(--text); white-space: pre-wrap; }
+
+.kmodal__comment--error { border-left-color: #f59e0b; }

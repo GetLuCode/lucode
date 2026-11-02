@@ -60,6 +60,8 @@ interface AgentFormData {
   personality: string
   tools: string[]
   executor: 'aiapi' | 'claude'
+  persistent: boolean
+  reports_to: string
 }
 
 const EMPTY_FORM: AgentFormData = {
@@ -69,17 +71,24 @@ const EMPTY_FORM: AgentFormData = {
   personality: '',
   tools: [...DEFAULT_TOOLS],
   executor: 'aiapi',
+  persistent: false,
+  reports_to: '',
 }
 
 function AgentForm({
   initial,
+  selfId,
+  teammates,
   onSave,
   onCancel,
 }: {
   initial?: AgentFormData
+  selfId?: string
+  teammates: Agent[]
   onSave: (data: AgentFormData) => Promise<void>
   onCancel: () => void
 }) {
+  const supervisors = teammates.filter(a => a.id !== selfId)
   const [form, setForm] = useState<AgentFormData>(initial ?? EMPTY_FORM)
   const [activeTab, setActiveTab] = useState<'general' | 'tools'>('general')
   const [saving, setSaving] = useState(false)
@@ -162,6 +171,8 @@ function AgentForm({
                   setField('executor', executor)
                   // the claude CLI only runs Claude models
                   if (executor === 'claude' && form.model.startsWith('MiniMax')) setField('model', 'sonnet')
+                  // only the claude CLI can keep a process alive
+                  if (executor !== 'claude') setField('persistent', false)
                 }}
               >
                 {EXECUTORS.map(x => (
@@ -170,6 +181,39 @@ function AgentForm({
               </select>
             </div>
           </div>
+
+          <div className="agent-form__row">
+            <div className="agent-form__field">
+              <label className="agent-form__label">Reports to</label>
+              <select
+                className="agent-form__select"
+                value={form.reports_to}
+                onChange={e => setField('reports_to', e.target.value)}
+              >
+                <option value="">Nobody</option>
+                {supervisors.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="agent-form__field">
+              <label className="agent-form__label">Process</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
+                <input
+                  type="checkbox"
+                  checked={form.persistent && form.executor === 'claude'}
+                  disabled={form.executor !== 'claude'}
+                  onChange={e => setField('persistent', e.target.checked)}
+                />
+                Keep it alive between messages
+              </label>
+            </div>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
+            Reports to: this agent&apos;s supervisor is told when it finishes, gets blocked or fails, and can be
+            reached with agent_message. Keep alive (claude -p only): replies faster, but each active task holds a
+            claude process in memory; it exits by itself after 30 idle minutes and the conversation resumes later.
+          </p>
 
           <div className="agent-form__field">
             <label className="agent-form__label">Personality</label>
@@ -233,10 +277,12 @@ function AgentForm({
 
 function AgentCard({
   agent,
+  supervisor,
   onEdit,
   onDelete,
 }: {
   agent: Agent
+  supervisor?: string
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -261,6 +307,8 @@ function AgentCard({
           <span className="agent-card__name">{agent.name}</span>
           <span className="agent-card__model">{modelLabel}</span>
           <span className="agent-card__model">{agent.executor === 'claude' ? 'claude -p' : 'aiapi'}</span>
+          {agent.persistent && <span className="agent-card__model" title="Process stays alive between messages">live</span>}
+          {supervisor && <span className="agent-card__model" title="Reports to">→ {supervisor}</span>}
         </div>
         {agent.personality && (
           <p className="agent-card__personality">{agent.personality}</p>
@@ -378,6 +426,7 @@ export function AgentsView() {
 
       {view === 'create' && (
         <AgentForm
+          teammates={agents}
           onSave={handleCreate}
           onCancel={() => setView('list')}
         />
@@ -392,7 +441,11 @@ export function AgentsView() {
             personality: view.edit.personality,
             tools: view.edit.tools,
             executor: view.edit.executor ?? 'aiapi',
+            persistent: view.edit.persistent ?? false,
+            reports_to: view.edit.reports_to ?? '',
           }}
+          selfId={view.edit.id}
+          teammates={agents}
           onSave={data => handleUpdate(view.edit.id, data)}
           onCancel={() => setView('list')}
         />
@@ -413,6 +466,7 @@ export function AgentsView() {
             <AgentCard
               key={agent.id}
               agent={agent}
+              supervisor={agents.find(x => x.id === agent.reports_to)?.name}
               onEdit={() => setView({ edit: agent })}
               onDelete={() => handleDelete(agent.id)}
             />

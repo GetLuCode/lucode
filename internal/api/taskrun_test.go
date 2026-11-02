@@ -196,8 +196,8 @@ func TestTaskToolRejectsNonTaskSession(t *testing.T) {
 }
 
 func TestAgentSystemPromptHasPersonalityAndTaskInstructions(t *testing.T) {
-	p := agentSystemPrompt(dbpkg.Agent{Name: "Engineer", Personality: "You write Go."}, dbpkg.KanbanCard{Title: "Fix login"})
-	for _, want := range []string{"You write Go.", "Engineer", "Fix login", "task_done", "task_blocked", "task_comment"} {
+	p := agentSystemPrompt(dbpkg.Agent{Name: "Engineer", Personality: "You write Go."}, dbpkg.KanbanCard{Title: "Fix login"}, "Lead")
+	for _, want := range []string{"You write Go.", "Engineer", "Fix login", "task_done", "task_blocked", "task_comment", "agent_message", "agent_list", "Your supervisor is Lead"} {
 		if !contains2(p, want) {
 			t.Errorf("system prompt is missing %q", want)
 		}

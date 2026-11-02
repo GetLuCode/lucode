@@ -65,4 +65,5 @@ type TurnOptions struct {
 	SystemPrompt string // agent personality, appended to the system prompt
 	AgentName    string
 	Tools        []string // built-in tools the agent may use (claude names); empty = all
+	Persistent   bool     // keep the claude process alive between turns (Executor "claude" only)
 }

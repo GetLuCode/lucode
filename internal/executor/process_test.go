@@ -51,3 +51,30 @@ func TestBuildEnvRespectsUserChoice(t *testing.T) {
 		t.Errorf("an explicit user setting must win, got %q", v)
 	}
 }
+
+func TestResumeFailureIsNotATurn(t *testing.T) {
+	failed := ParsedEvent{ResultSubtype: "error_during_execution"}
+	ok := ParsedEvent{ResultSubtype: "success"}
+	empty := newTurnAccum()
+	used := newTurnAccum()
+	used.outputTokens = 12
+
+	if !resumeFailed(TurnRequest{Resume: true}, failed, empty) {
+		t.Error("an errored result with no tokens on --resume is a failed resume")
+	}
+	if resumeFailed(TurnRequest{Resume: false}, failed, empty) {
+		t.Error("without --resume it is some other error, not an unresumable session")
+	}
+	if resumeFailed(TurnRequest{Resume: true}, ok, empty) {
+		t.Error("a successful result is not a failure")
+	}
+	if resumeFailed(TurnRequest{Resume: true}, failed, used) {
+		t.Error("a turn that produced output did not fail to resume")
+	}
+
+	var events []map[string]any
+	publishResumeFailure(TurnRequest{SessionID: "s"}, func(e map[string]any) { events = append(events, e) })
+	if len(events) != 2 || events[0]["code"] != "resume_failed" || events[1]["status"] != "error" {
+		t.Errorf("want an error event with code resume_failed then status error, got %v", events)
+	}
+}

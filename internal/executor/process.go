@@ -84,23 +84,7 @@ func spawnClaude(ctx context.Context, req TurnRequest) (*spawnResult, error) {
 	}()
 
 	// Write user message as stream-json to stdin.
-	var content interface{} = req.Message
-	if req.ImageBase64 != "" {
-		content = []map[string]interface{}{
-			{"type": "text", "text": req.Message},
-			{"type": "image", "source": map[string]interface{}{
-				"type":       "base64",
-				"media_type": req.ImageMediaType,
-				"data":       req.ImageBase64,
-			}},
-		}
-	}
-	msg := map[string]interface{}{
-		"type":    "user",
-		"message": map[string]interface{}{"role": "user", "content": content},
-	}
-	data, _ := json.Marshal(msg)
-	fmt.Fprintf(stdinPipe, "%s\n", data)
+	fmt.Fprintf(stdinPipe, "%s\n", userMessageLine(req.Message, req.ImageBase64, req.ImageMediaType))
 	// stdin stays open for control_request writes; closed in the stream loop defer.
 
 	ps := &ProcessState{
@@ -110,6 +94,26 @@ func spawnClaude(ctx context.Context, req TurnRequest) (*spawnResult, error) {
 		StdinPipe: stdinPipe,
 	}
 	return &spawnResult{ps: ps, stdout: stdoutPipe, req: req}, nil
+}
+
+// userMessageLine is a user message in claude's stream-json input format.
+func userMessageLine(text, imageBase64, imageMediaType string) []byte {
+	var content interface{} = text
+	if imageBase64 != "" {
+		content = []map[string]interface{}{
+			{"type": "text", "text": text},
+			{"type": "image", "source": map[string]interface{}{
+				"type":       "base64",
+				"media_type": imageMediaType,
+				"data":       imageBase64,
+			}},
+		}
+	}
+	data, _ := json.Marshal(map[string]interface{}{
+		"type":    "user",
+		"message": map[string]interface{}{"role": "user", "content": content},
+	})
+	return data
 }
 
 // SendControlRequest writes an SDK control_request line to the process stdin.

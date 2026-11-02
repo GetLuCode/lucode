@@ -93,6 +93,13 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 			continue
 		}
 
+		if isResult && resumeFailed(req, event, accum) {
+			publishResumeFailure(req, publish)
+			turnCompleted = true // already reported; do not report the exit again
+			closeStdin(ps)
+			continue
+		}
+
 		publish(parsedEventToMap(event))
 
 		if event.EventType == "stream_event" && event.Event != nil {
@@ -164,6 +171,27 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 			publish(map[string]any{"type": "session_status", "session_id": req.SessionID, "status": "idle"})
 		}
 	}
+}
+
+// resumeFailed reports whether a result event means `--resume` could not find the
+// conversation: claude answers with error_during_execution, no turns and no
+// tokens, then exits with code 1 ("No conversation found with session ID ...").
+// Without this check lucode would take it for a normal, empty turn.
+func resumeFailed(req TurnRequest, e ParsedEvent, a *turnAccum) bool {
+	return req.Resume && e.ResultSubtype == "error_during_execution" && a.inputTokens == 0 && a.outputTokens == 0
+}
+
+// publishResumeFailure tells the user (and, through lucode, the supervising
+// agent) that the session cannot be resumed. There is deliberately no automatic
+// retry in a fresh session: the conversation would be silently lost.
+func publishResumeFailure(req TurnRequest, publish func(map[string]any)) {
+	publish(map[string]any{
+		"type":       "error",
+		"code":       "resume_failed",
+		"session_id": req.SessionID,
+		"message":    "This session can no longer be resumed: claude has no saved conversation for it. Delete the session and open the task again to start a new one.",
+	})
+	publish(map[string]any{"type": "session_status", "session_id": req.SessionID, "status": "error"})
 }
 
 // closeStdin closes claude's stdin once; safe to call repeatedly.

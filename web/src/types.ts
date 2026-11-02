@@ -221,6 +221,8 @@ export interface Agent {
   personality: string
   tools: string[]
   executor: 'aiapi' | 'claude'  // how the agent runs: aiapi service or the claude -p CLI
+  persistent: boolean           // keep the claude -p process alive between messages
+  reports_to: string            // id of the supervising agent ('' = none)
   created_at: string
   updated_at: string
 }
@@ -231,7 +233,7 @@ export interface CardComment {
   card_id: string
   session_id?: string
   author: string
-  kind: 'comment' | 'done' | 'blocked'
+  kind: 'comment' | 'done' | 'blocked' | 'error'
   body: string
   created_at: string
 }

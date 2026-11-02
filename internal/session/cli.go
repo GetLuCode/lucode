@@ -41,8 +41,8 @@ func InstallHookSettings(hookBinary []byte) string {
 		"hooks": map[string]any{
 			"PreToolUse": []any{map[string]any{
 				"matcher": "",
-				// claude runs hook commands through a bash-style shell on Windows, which
-				// swallows backslashes, so the path must use forward slashes.
+				// claude runs hook commands through a bash-style shell on Windows,
+				// which swallows backslashes, so the path must use forward slashes.
 				"hooks": []any{map[string]any{"type": "command", "command": filepath.ToSlash(hookPath)}},
 			}},
 		},
@@ -57,8 +57,8 @@ func InstallHookSettings(hookBinary []byte) string {
 }
 
 // writeTaskMCPConfig writes the MCP config that starts `lucode mcp-task` for
-// this session, giving the agent the task_comment/task_done/task_blocked tools.
-// Returns "" when it cannot be written (the agent then just has no task tools).
+// this session, giving the agent the task and teammate tools. Returns "" when it
+// cannot be written (the agent then just has no lucode tools).
 func (m *Manager) writeTaskMCPConfig(sessID string) string {
 	exe, err := os.Executable()
 	home, herr := os.UserHomeDir()
@@ -93,17 +93,13 @@ func (m *Manager) writeTaskMCPConfig(sessID string) string {
 // runWithCLI runs a turn with the local `claude -p` CLI (the paperclip-style
 // executor). Tool approvals go through lucodehook → NATS → the same permission
 // gate aiapi uses, so the UI shows them identically.
+//
+// By default every turn is its own process (--resume carries the conversation).
+// With opts.Persistent the process stays alive between turns and later messages
+// are written to its stdin.
 func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOptions) {
 	sessID := ps.SessionID
-	defer func() {
-		ps.Cancel()
-		close(ps.Done)
-		m.mu.Lock()
-		if m.procs[sessID] == ps {
-			delete(m.procs, sessID)
-		}
-		m.mu.Unlock()
-	}()
+	defer m.finishTurn(sessID, ps)
 
 	if len(opts.WorkDirs) > 0 {
 		m.SetWorkDir(sessID, opts.WorkDirs[0])
@@ -132,20 +128,109 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 		ImageMediaType:     opts.ImageMediaType,
 	}
 
-	nextSeq, _ := dbpkg.NextMessageSeq(m.db, sessID)
-	execpkg.Run(ctx, req, func(ev map[string]any) {
+	publish := m.cliPublisher(sessID, opts)
+	if opts.Persistent {
+		m.runLiveTurn(ctx, req, opts, publish)
+		return
+	}
+	execpkg.Run(ctx, req, publish)
+}
+
+// runLiveTurn sends the message to the session's live process, starting one if
+// there is none, and returns when the turn ends (or ctx is cancelled).
+func (m *Manager) runLiveTurn(ctx context.Context, req execpkg.TurnRequest, opts TurnOptions, publish func(map[string]any)) {
+	sessID := req.SessionID
+
+	var live *execpkg.Live
+	var done <-chan struct{}
+	if l := m.getLive(sessID); l != nil {
+		d, err := l.Send(opts.Message, opts.ImageBase64, opts.ImageMediaType)
+		if err == nil {
+			live, done = l, d
+		} else {
+			log.Printf("[cli] live process for %s unusable (%v); starting a new one", sessID[:8], err)
+			m.dropLive(sessID, l)
+			l.Kill()
+		}
+	}
+	if live == nil {
+		var started *execpkg.Live
+		l, d, err := execpkg.StartLive(req, publish, func() { m.dropLive(sessID, started) })
+		if err != nil {
+			publish(map[string]any{"type": "error", "session_id": sessID, "message": err.Error()})
+			publish(map[string]any{"type": "session_status", "session_id": sessID, "status": "error"})
+			return
+		}
+		started, live, done = l, l, d
+		m.setLive(sessID, l)
+	}
+
+	select {
+	case <-done:
+	case <-ctx.Done(): // turn cancelled by the user: stop the process
+		live.Kill()
+	}
+}
+
+// ---- live process registry ----
+
+func (m *Manager) getLive(sessID string) *execpkg.Live {
+	m.liveMu.Lock()
+	defer m.liveMu.Unlock()
+	l := m.lives[sessID]
+	if l != nil && !l.Alive() {
+		delete(m.lives, sessID)
+		return nil
+	}
+	return l
+}
+
+func (m *Manager) setLive(sessID string, l *execpkg.Live) {
+	m.liveMu.Lock()
+	m.lives[sessID] = l
+	m.liveMu.Unlock()
+}
+
+// dropLive forgets l if it is still the registered process for the session.
+func (m *Manager) dropLive(sessID string, l *execpkg.Live) {
+	if l == nil {
+		return
+	}
+	m.liveMu.Lock()
+	if m.lives[sessID] == l {
+		delete(m.lives, sessID)
+	}
+	m.liveMu.Unlock()
+}
+
+// CloseLive gracefully stops a session's live process, if it has one. The next
+// message starts a fresh process with --resume.
+func (m *Manager) CloseLive(sessID string) {
+	m.liveMu.Lock()
+	l := m.lives[sessID]
+	delete(m.lives, sessID)
+	m.liveMu.Unlock()
+	if l != nil {
+		l.Close()
+	}
+}
+
+// cliPublisher returns the event sink for a claude process: it persists
+// messages, usage and status, and relays everything to the browsers. It is
+// shared by one-shot runs and live processes (which keep calling it across turns).
+func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]any) {
+	return func(ev map[string]any) {
 		evType, _ := ev["type"].(string)
 		switch evType {
 		case "message_ready":
 			role, _ := ev["role"].(string)
 			content, _ := ev["content"].(string)
 			if role != "" && content != "" {
+				seq, _ := dbpkg.NextMessageSeq(m.db, sessID)
 				if err := dbpkg.InsertMessage(m.db, dbpkg.Message{
-					ID: uuid.New().String(), SessionID: sessID, Role: role, Content: content, Seq: nextSeq,
+					ID: uuid.New().String(), SessionID: sessID, Role: role, Content: content, Seq: seq,
 				}); err != nil {
 					log.Printf("[cli] message insert sess=%s: %v", sessID[:8], err)
-				} else {
-					nextSeq++
 				}
 			}
 			// The frontend reads message_ready as {message:{role,content}}.
@@ -157,6 +242,11 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 		case "session_status":
 			if status, _ := ev["status"].(string); status != "" {
 				dbpkg.UpdateSessionStatus(m.db, sessID, status)
+			}
+		case "error":
+			if code, _ := ev["code"].(string); code != "" && m.OnTurnFailed != nil {
+				msg, _ := ev["message"].(string)
+				go m.OnTurnFailed(sessID, code, msg)
 			}
 		case "turn_usage":
 			tu := dbpkg.TurnUsage{
@@ -185,5 +275,5 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 			}
 		}
 		m.broadcastAndPersist(sessID, ev)
-	})
+	}
 }

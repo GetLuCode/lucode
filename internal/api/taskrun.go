@@ -177,22 +177,8 @@ func (h *Handler) runTask(card dbpkg.KanbanCard) error {
 		message = "This task was moved back to In Progress. Review the current state of the work and continue.\n\n" + message
 	}
 
-	provider, model := resolveProvider("", agent.Model)
-	opts := sessionpkg.TurnOptions{
-		SessionID:       sess.ID,
-		ProjectID:       sess.ProjectID,
-		Message:         message,
-		Model:           model,
-		Provider:        provider,
-		WorkDirs:        proj.WorkDirs,
-		ClaudeConfigDir: proj.ClaudeConfigDir,
-		Resume:          sess.MessageCount > 0,
-		Executor:        agent.Executor,
-		SystemPrompt:    agentSystemPrompt(agent, card),
-		AgentName:       agent.Name,
-		Tools:           agent.Tools,
-	}
-	if err := h.manager.StartTurn(opts); err != nil {
+	opts := h.agentTurnOpts(sess, agent, card, proj, message)
+	if err := h.startTurn(opts); err != nil {
 		if errors.Is(err, sessionpkg.ErrSessionBusy) {
 			return nil // already running
 		}
@@ -236,7 +222,7 @@ func (h *Handler) taskPrompt(card dbpkg.KanbanCard) string {
 
 // agentSystemPrompt is what gets appended to the agent's system prompt: its own
 // personality followed by how to work with lucode (reporting on the task).
-func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard) string {
+func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor string) string {
 	var sb strings.Builder
 	if p := strings.TrimSpace(agent.Personality); p != "" {
 		sb.WriteString(p)
@@ -253,7 +239,15 @@ Your task is described in your first message. Work only on it. Report through th
 Rules:
 - Never say the task is finished without calling task_done; do not call it for unfinished work.
 - After task_done or task_blocked, stop: end your turn with one short closing message.
-- Some tools ask the user for approval. If one is denied, do not retry it; adapt, or call task_blocked and explain what you need.`, agent.Name, card.Title)
+- Some tools ask the user for approval. If one is denied, do not retry it; adapt, or call task_blocked and explain what you need.
+
+Working with other agents:
+- agent_list(): see your teammates, what each one does and whether it is working on something.
+- agent_message(to, message): ask a teammate for something or tell it something. It reaches them as a message in the task they are working on, and they answer by messaging you back, so do not wait for a reply: keep working or end your turn. A teammate with no task in progress cannot receive messages. Messages you get from other agents start with "Message from agent".
+- Keep messages short and specific; do not use them for chit-chat.`, agent.Name, card.Title)
+	if supervisor != "" {
+		fmt.Fprintf(&sb, "\n- Your supervisor is %s: they are told automatically when you finish, get blocked or fail, so do not message them just to report that. Use agent_message with to=\"supervisor\" for questions or decisions you need from them.", supervisor)
+	}
 	return sb.String()
 }
 
@@ -276,11 +270,14 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		Text    string `json:"text"`
 		Summary string `json:"summary"`
 		Reason  string `json:"reason"`
+		To      string `json:"to"`
+		Message string `json:"message"`
 	}
 	_ = json.Unmarshal(args, &a)
 
 	author := "agent"
-	if agent, err := dbpkg.GetAgent(h.db, sess.AgentID); err == nil {
+	agent, agentErr := dbpkg.GetAgent(h.db, sess.AgentID)
+	if agentErr == nil {
 		author = agent.Name
 	}
 	comment := func(kind, body string) error {
@@ -313,7 +310,32 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		}
 		h.releaseDependents(moved)
 		h.notifyTaskUpdated(sessID, moved)
+		if agentErr == nil {
+			h.notifySupervisor(agent, moved, fmt.Sprintf("Task %q is done: %s", moved.Title, a.Summary))
+		}
 		return "Task marked as done. Dependent tasks were released. End your turn now with a short closing message.", nil
+
+	case taskmcp.ToolAgentList:
+		if agentErr != nil {
+			return "", errors.New("this session has no agent")
+		}
+		return h.agentList(agent)
+
+	case taskmcp.ToolAgentMessage:
+		if agentErr != nil {
+			return "", errors.New("this session has no agent")
+		}
+		if strings.TrimSpace(a.Message) == "" {
+			return "", errors.New("message is required")
+		}
+		to, err := h.findTeammate(agent, a.To)
+		if err != nil {
+			return "", err
+		}
+		if !h.allowSend(sessID) {
+			return "", fmt.Errorf("message limit reached (%d per %s): finish your own work instead of messaging", msgLimit, msgWindow)
+		}
+		return h.deliverToAgent(agent, card, to, a.Message)
 
 	case taskmcp.ToolBlocked:
 		if strings.TrimSpace(a.Reason) == "" {
@@ -327,6 +349,9 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 			return "", fmt.Errorf("could not move the task to Blocked: %w", err)
 		}
 		h.notifyTaskUpdated(sessID, moved)
+		if agentErr == nil {
+			h.notifySupervisor(agent, moved, fmt.Sprintf("Task %q is blocked: %s", moved.Title, a.Reason))
+		}
 		return "Task marked as blocked. The user was notified. End your turn now with a short closing message.", nil
 	}
 	return "", fmt.Errorf("unknown task tool %q", tool)

@@ -1,6 +1,7 @@
 // Package taskmcp is a minimal MCP (Model Context Protocol) server over stdio
-// that gives an agent three tools to report on its task: task_comment,
-// task_done and task_blocked. It is started by `claude -p` through
+// that gives an agent the lucode tools: three to report on its task
+// (task_comment, task_done, task_blocked) and two to work with other agents
+// (agent_list, agent_message). It is started by `claude -p` through
 // --mcp-config; each call is forwarded to lucode by the supplied callback.
 package taskmcp
 
@@ -17,13 +18,16 @@ const (
 	ToolComment = "task_comment"
 	ToolDone    = "task_done"
 	ToolBlocked = "task_blocked"
+
+	ToolAgentList    = "agent_list"
+	ToolAgentMessage = "agent_message"
 )
 
 // IsTaskTool reports whether name is one of the task tools, with or without
 // the mcp__lucode__ prefix claude adds.
 func IsTaskTool(name string) bool {
 	switch strings.TrimPrefix(name, "mcp__lucode__") {
-	case ToolComment, ToolDone, ToolBlocked:
+	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolAgentMessage:
 		return true
 	}
 	return false
@@ -44,6 +48,24 @@ func textArg(name, desc string) map[string]any {
 }
 
 var tools = []tool{
+	{
+		Name:        ToolAgentList,
+		Description: "List the other agents of this project: what each one does and whether it is working on a task right now. Use it to find who to ask for help.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name: ToolAgentMessage,
+		Description: "Send a message to another agent. It arrives in the task that agent is working on, and its answer comes back later as a message to you, so do not wait for it. " +
+			"The agent must have a task in progress. Use to=\"supervisor\" to reach the agent you report to.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"to":      map[string]any{"type": "string", "description": "Name of the agent, or \"supervisor\"."},
+				"message": map[string]any{"type": "string", "description": "What you need or want to tell it. Short and specific."},
+			},
+			"required": []string{"to", "message"},
+		},
+	},
 	{
 		Name:        ToolComment,
 		Description: "Post a progress note on your task so the user can follow along. Does not change the task status.",

@@ -48,6 +48,12 @@ type Handler struct {
 	cacheMu      sync.Mutex
 	profileCache map[string]cachedEntry
 	usageCache   map[string]cachedEntry
+
+	// agent-to-agent messaging (agentmsg.go)
+	msgMu       sync.Mutex
+	inbox       map[string][]string  // session id -> messages waiting for its turn to end
+	sent        map[string][]time.Time // session id -> recent agent_message sends (rate limit)
+	startTurnFn func(sessionpkg.TurnOptions) error // overrides manager.StartTurn in tests
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
@@ -443,6 +449,7 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	h.manager.CloseLive(id)
 	if err := dbpkg.DeleteSession(h.db, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -530,8 +537,9 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		opts.Executor = agent.Executor
 		opts.AgentName = agent.Name
 		opts.Tools = agent.Tools
+		opts.Persistent = agent.Persistent && agent.Executor == "claude"
 		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
-			opts.SystemPrompt = agentSystemPrompt(*agent, card)
+			opts.SystemPrompt = agentSystemPrompt(*agent, card, h.supervisorName(*agent))
 		} else {
 			opts.SystemPrompt = agent.Personality
 		}
@@ -2200,6 +2208,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Personality string   `json:"personality"`
 		Tools       []string `json:"tools"`
 		Executor    string   `json:"executor"`
+		Persistent  bool     `json:"persistent"`
+		ReportsTo   string   `json:"reports_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -2207,6 +2217,10 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Executor != "claude" {
 		body.Executor = "aiapi"
+	}
+	if err := h.validateReportsTo("", pid, body.ReportsTo); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if body.Name == "" {
 		http.Error(w, "name required", http.StatusBadRequest)
@@ -2224,6 +2238,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Name:        body.Name,
 		Model:       body.Model,
 		Executor:    body.Executor,
+		Persistent:  body.Persistent && body.Executor == "claude",
+		ReportsTo:   body.ReportsTo,
 		AccountID:   body.AccountID,
 		Personality: body.Personality,
 		Tools:       body.Tools,
@@ -2261,6 +2277,8 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Personality *string  `json:"personality"`
 		Tools       []string `json:"tools"`
 		Executor    *string  `json:"executor"`
+		Persistent  *bool    `json:"persistent"`
+		ReportsTo   *string  `json:"reports_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -2272,6 +2290,16 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		} else {
 			a.Executor = "aiapi"
 		}
+	}
+	if body.Persistent != nil {
+		a.Persistent = *body.Persistent
+	}
+	if body.ReportsTo != nil {
+		if err := h.validateReportsTo(a.ID, a.ProjectID, *body.ReportsTo); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		a.ReportsTo = *body.ReportsTo
 	}
 	if body.Name != nil {
 		a.Name = *body.Name
@@ -2288,16 +2316,19 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	if body.Tools != nil {
 		a.Tools = body.Tools
 	}
+	a.Persistent = a.Persistent && a.Executor == "claude" // only the claude CLI can stay alive
 	if err := dbpkg.UpdateAgent(h.db, a); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.closeLives(a.ID) // live processes keep the old configuration; restart them
 	a, _ = dbpkg.GetAgent(h.db, id)
 	json.NewEncoder(w).Encode(a)
 }
 
 func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	h.closeLives(id)
 	if err := dbpkg.DeleteAgent(h.db, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2602,4 +2633,31 @@ func (h *Handler) listAgentSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, sessions)
+}
+
+
+// validateReportsTo checks a supervisor id: it must be another agent of the same
+// project and must not close a reporting loop.
+func (h *Handler) validateReportsTo(agentID, projectID, reportsTo string) error {
+	if reportsTo == "" {
+		return nil
+	}
+	if reportsTo == agentID {
+		return errors.New("an agent cannot report to itself")
+	}
+	sup, err := dbpkg.GetAgent(h.db, reportsTo)
+	if err != nil || sup.ProjectID != projectID {
+		return errors.New("supervisor must be an agent of the same project")
+	}
+	for i, cur := 0, sup; cur.ReportsTo != "" && i < 32; i++ {
+		if cur.ReportsTo == agentID {
+			return errors.New("that would create a reporting loop")
+		}
+		next, err := dbpkg.GetAgent(h.db, cur.ReportsTo)
+		if err != nil {
+			break
+		}
+		cur = next
+	}
+	return nil
 }
