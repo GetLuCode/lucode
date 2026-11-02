@@ -1,4 +1,4 @@
-import type { Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -242,6 +242,10 @@ export const getAgent = (id: string) => req<Agent>('GET', `/api/agents/${id}`)
 export const updateAgent = (id: string, data: Partial<Omit<Agent, 'id' | 'project_id' | 'created_at' | 'updated_at'>>) =>
   req<Agent>('PUT', `/api/agents/${id}`, data)
 export const deleteAgent = (id: string) => req<void>('DELETE', `/api/agents/${id}`)
+// Tasks run as agent sessions: one chat per kanban card, on the card's agent.
+export const openCardSession = (cardId: string) => req<Session>('POST', `/api/cards/${cardId}/session`)
+export const listCardComments = (cardId: string) => req<CardComment[]>('GET', `/api/cards/${cardId}/comments`)
+export const listAgentSessions = (agentId: string) => req<Session[]>('GET', `/api/agents/${agentId}/sessions`)
 
 // Kanban
 export const listKanbanLists = (projectId: string) =>

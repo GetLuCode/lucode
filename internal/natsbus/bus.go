@@ -65,6 +65,11 @@ type Bus struct {
 	// prompt path.
 	OnPermissionRequest func(sessID, toolUseID, toolName string, toolInput json.RawMessage) (decision, reason string)
 
+	// OnTaskTool runs a task tool (task_comment / task_done / task_blocked) an
+	// agent called. The returned text is shown to the agent; an error is
+	// reported to it as a failed tool call.
+	OnTaskTool func(sessID, tool string, args json.RawMessage) (string, error)
+
 	// discovery
 	peersMu       sync.RWMutex
 	selfInfo      InstanceInfo
@@ -91,6 +96,9 @@ func (b *Bus) Start() error {
 	}
 	if _, err := b.nc.Subscribe("lucode.permissions.>", b.handlePermissionRequest); err != nil {
 		return fmt.Errorf("subscribe lucode.permissions.>: %w", err)
+	}
+	if _, err := b.nc.Subscribe("lucode.tasktools.>", b.handleTaskTool); err != nil {
+		return fmt.Errorf("subscribe lucode.tasktools.>: %w", err)
 	}
 	return nil
 }
@@ -269,6 +277,43 @@ func (b *Bus) handlePermissionRequest(msg *nats.Msg) {
 	if err := b.nc.Publish(msg.Reply, data); err != nil {
 		log.Printf("[natsbus] permission reply publish: %v", err)
 	}
+}
+
+// handleTaskTool serves lucode.tasktools.<sessID> request/reply: the agent's
+// task tools (via the MCP server or aiapi) land here.
+func (b *Bus) handleTaskTool(msg *nats.Msg) {
+	reply := func(ok bool, text string) {
+		if msg.Reply == "" {
+			return
+		}
+		data, _ := json.Marshal(map[string]any{"ok": ok, "message": text})
+		if err := b.nc.Publish(msg.Reply, data); err != nil {
+			log.Printf("[natsbus] task tool reply: %v", err)
+		}
+	}
+	var req struct {
+		Tool string          `json:"tool"`
+		Args json.RawMessage `json:"args"`
+	}
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		reply(false, "malformed task tool request")
+		return
+	}
+	const prefix = "lucode.tasktools."
+	if len(msg.Subject) <= len(prefix) {
+		reply(false, "bad subject")
+		return
+	}
+	if b.OnTaskTool == nil {
+		reply(false, "task tools not configured")
+		return
+	}
+	text, err := b.OnTaskTool(msg.Subject[len(prefix):], req.Tool, req.Args)
+	if err != nil {
+		reply(false, err.Error())
+		return
+	}
+	reply(true, text)
 }
 
 func (b *Bus) replyDeny(req *nats.Msg, reason string) {

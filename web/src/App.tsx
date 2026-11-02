@@ -8,6 +8,7 @@ import { SpotlightSearch } from './components/Search/SpotlightSearch'
 import { TitleBar } from './components/TitleBar'
 import { RawEventsModal } from './components/RawEvents/RawEventsModal'
 import { initWSConnection } from './hooks/useWSConnection'
+import { useGlobalWS } from './hooks/useGlobalWS'
 import { AgentsView } from './components/Agents/AgentsView'
 import { KanbanView } from './components/Kanban/KanbanView'
 import { CheckpointsView } from './components/Checkpoints/CheckpointsView'
@@ -40,6 +41,8 @@ export default function App() {
   useEffect(() => {
     initWSConnection()
   }, [])
+  // Route events from every session into the store (tasks run in the background)
+  useGlobalWS()
 
   // Load projects on mount
   useEffect(() => {

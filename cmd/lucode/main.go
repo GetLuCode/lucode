@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	_ "embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
 	sessionpkg "claude-orchestrator/internal/session"
+	"claude-orchestrator/internal/taskmcp"
 	webui "claude-orchestrator/web"
 )
 
@@ -34,6 +36,10 @@ var embeddedHook []byte
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "install" {
 		runInstall()
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp-task" {
+		runMCPTask()
 		return
 	}
 
@@ -77,9 +83,13 @@ func main() {
 	bus := natspkg.NewBus(nc)
 	bus.OnBroadcast = apipkg.BroadcastToWS
 
-	_ = hookBinary // legacy: claude-CLI hook path removed; permission gate is now NATS-based
+	_ = hookBinary // the hook is extracted from the embedded copy below
 
-	manager := sessionpkg.NewManager(db, bus, *natsURL, "")
+	// Extract lucodehook and write the claude settings that register it as the
+	// PermissionRequest hook for agents that run through `claude -p`.
+	hookSettings := sessionpkg.InstallHookSettings(embeddedHook)
+
+	manager := sessionpkg.NewManager(db, bus, *natsURL, hookSettings)
 	manager.SetAIAPIURL(*aiAPIURL)
 	if *natsCreds != "" {
 		manager.SetNATSCreds(*natsCreds)
@@ -98,6 +108,7 @@ func main() {
 	}
 
 	handler := apipkg.New(db, bus, manager, *workingDir)
+	bus.OnTaskTool = handler.HandleTaskTool
 	handler.SetAuthURL(*authURL)
 	handler.SetAIAPIURL(*aiAPIURL)
 	if *minimaxSubKey != "" {
@@ -368,4 +379,61 @@ func defaultHookBinary() string {
 	// In production, use ~/.lucode/lucodehook
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".lucode", "lucodehook")
+}
+
+// ── mcp-task ─────────────────────────────────────────────────────────────────
+
+// runMCPTask is the stdio MCP server `claude -p` starts (see --mcp-config) to
+// give an agent the task_comment / task_done / task_blocked tools. Calls are
+// forwarded to the running lucode over NATS. stdout carries only protocol
+// messages, so everything diagnostic goes to stderr.
+func runMCPTask() {
+	sessionID := os.Getenv("LUCODE_SESSION_ID")
+	natsURL := os.Getenv("LUCODE_NATS_URL")
+	if natsURL == "" {
+		natsURL = "nats://127.0.0.1:4222"
+	}
+
+	var nc *nats.Conn
+	call := func(tool string, args json.RawMessage) (string, error) {
+		if sessionID == "" {
+			return "", fmt.Errorf("not running under lucode (no LUCODE_SESSION_ID)")
+		}
+		if nc == nil {
+			opts := []nats.Option{nats.Timeout(10 * time.Second), nats.RetryOnFailedConnect(false)}
+			if creds := os.Getenv("LUCODE_NATS_CREDS"); creds != "" {
+				opts = append(opts, nats.UserCredentials(creds))
+			}
+			c, err := nats.Connect(natsURL, opts...)
+			if err != nil {
+				return "", fmt.Errorf("cannot reach lucode: %w", err)
+			}
+			nc = c
+		}
+		payload, _ := json.Marshal(map[string]any{"tool": tool, "args": args})
+		msg, err := nc.Request("lucode.tasktools."+sessionID, payload, 30*time.Second)
+		if err != nil {
+			return "", fmt.Errorf("lucode did not answer: %w", err)
+		}
+		var reply struct {
+			OK      bool   `json:"ok"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(msg.Data, &reply); err != nil {
+			return "", fmt.Errorf("bad reply from lucode: %w", err)
+		}
+		if !reply.OK {
+			return "", fmt.Errorf("%s", reply.Message)
+		}
+		return reply.Message, nil
+	}
+
+	err := taskmcp.Run(os.Stdin, os.Stdout, call)
+	if nc != nil {
+		nc.Close()
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mcp-task:", err)
+		os.Exit(1)
+	}
 }

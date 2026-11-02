@@ -9,7 +9,10 @@ import (
 )
 
 func Init(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	// busy_timeout is a per-connection pragma, so it goes in the DSN to apply to every
+	// pooled connection: concurrent writers (messages, raw events, usage) wait for the
+	// lock instead of failing with SQLITE_BUSY.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -238,6 +241,12 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	// sessions.context_usage — last known context window breakdown per session (idempotent)
 	db.Exec(`ALTER TABLE sessions ADD COLUMN context_usage TEXT NOT NULL DEFAULT ''`)
 
+	// Task model: a session belongs to a kanban card (task) and runs on its agent (idempotent)
+	db.Exec(`ALTER TABLE sessions ADD COLUMN card_id  TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_card  ON sessions(card_id)`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`)
+
 	// turn_usage — per-turn token consumption for analytics
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS turn_usage (
@@ -336,6 +345,30 @@ CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
 `); err != nil {
 		return fmt.Errorf("create agents: %w", err)
 	}
+
+	// card_comments — progress notes and completion summaries posted on a task
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS card_comments (
+    id         TEXT PRIMARY KEY,
+    card_id    TEXT NOT NULL REFERENCES kanban_cards(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL DEFAULT '',
+    author     TEXT NOT NULL DEFAULT '',
+    kind       TEXT NOT NULL DEFAULT 'comment',
+    body       TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_card_comments_card ON card_comments(card_id, created_at);
+`); err != nil {
+		return fmt.Errorf("create card_comments: %w", err)
+	}
+
+	// Column additions for tables created above (idempotent).
+	// kanban_lists.kind — the workflow role of a list ("backlog", "todo", "inprogress",
+	// "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
+	db.Exec(`ALTER TABLE kanban_lists ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
+	backfillKanbanListKinds(db)
+	// agents.executor — "aiapi" (HTTP provider service) or "claude" (claude -p CLI)
+	db.Exec(`ALTER TABLE agents ADD COLUMN executor TEXT NOT NULL DEFAULT 'aiapi'`)
 
 	return nil
 }

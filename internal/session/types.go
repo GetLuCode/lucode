@@ -58,4 +58,11 @@ type TurnOptions struct {
 
 	// AIAPIInstanceID, when non-empty, routes this turn to a remote aiapi via NATS.
 	AIAPIInstanceID string
+
+	// Agent-driven turns (task sessions). Executor selects how the agent runs:
+	// "claude" spawns `claude -p` locally, anything else goes through aiapi.
+	Executor     string
+	SystemPrompt string // agent personality, appended to the system prompt
+	AgentName    string
+	Tools        []string // built-in tools the agent may use (claude names); empty = all
 }

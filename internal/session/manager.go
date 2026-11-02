@@ -19,6 +19,7 @@ import (
 	"claude-orchestrator/internal/permissions"
 
 	"github.com/google/uuid"
+	"claude-orchestrator/internal/taskmcp"
 )
 
 var ErrSessionBusy = errors.New("session already has an active turn")
@@ -199,7 +200,9 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	m.procs[opts.SessionID] = ps
 	m.mu.Unlock()
 
-	if opts.AIAPIInstanceID != "" {
+	if opts.Executor == "claude" {
+		go m.runWithCLI(ctx, ps, opts)
+	} else if opts.AIAPIInstanceID != "" {
 		go m.runWithNATSAIAPI(ctx, ps, opts, history)
 	} else {
 		go m.runWithAIAPI(ctx, ps, opts, history)
@@ -267,6 +270,8 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		"image_base64":     opts.ImageBase64,
 		"image_media_type": opts.ImageMediaType,
 		"thinking":         opts.Thinking,
+		"system_prompt":    opts.SystemPrompt,
+		"tools":            opts.Tools,
 		"history":          histMsgs,
 		// Pass our NATS URL so aiapi can lazily connect for the permission gate
 		// even if it wasn't started with --nats-url.
@@ -455,6 +460,7 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 		"claude_settings":   m.claudeSettings,
 		"nats_settings":     m.backendNATSURL,
 		"nats_creds":        m.natsCreds,
+		"tools":             opts.Tools,
 		"ollama_host":       opts.OllamaHost,
 		"image_base64":      opts.ImageBase64,
 		"image_media_type":  opts.ImageMediaType,
@@ -598,6 +604,22 @@ func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput js
 	})
 }
 
+// expireApproval clears an approval nobody answered: drops the pending row and
+// in-memory state, and tells the UI it was resolved (denied) so it stops waiting.
+func (m *Manager) expireApproval(sessID, toolUseID string) {
+	dbpkg.DeletePendingHook(m.db, sessID, toolUseID)
+	_ = m.bus.DeleteHookState(sessID, toolUseID)
+	if remaining, _ := dbpkg.CountPendingHooks(m.db, sessID); remaining == 0 {
+		dbpkg.UpdateSessionStatus(m.db, sessID, string(StatusRunning))
+	}
+	m.bus.BroadcastToRole(sessID, natspkg.RoleClient, map[string]any{
+		"type":        "hook_resolved",
+		"session_id":  sessID,
+		"tool_use_id": toolUseID,
+		"decision":    "deny",
+	})
+}
+
 func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason, ruleJSON string) {
 	hook, err := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
 	if err == nil {
@@ -677,6 +699,16 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason, ruleJSON st
 // Returns ("allow"|"deny", reason). Reason is set from the matched
 // rule (for store-driven decisions) or the user's response.
 func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) (string, string) {
+	// The task tools only report on the agent's own task; they never need approval
+	// (and must stay usable after a denial so the agent can report it as blocked).
+	if taskmcp.IsTaskTool(toolName) {
+		return "allow", "lucode task tool"
+	}
+	// ToolSearch only loads the schemas of deferred tools (how claude finds the task tools).
+	if toolName == "ToolSearch" {
+		return "allow", "loads tool schemas only"
+	}
+
 	// If a tool was already denied this turn, stop immediately and instruct
 	// the model to inform the user rather than attempting more tools.
 	m.pendingApprovalsMu.Lock()
@@ -735,6 +767,7 @@ func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolIn
 		return decision, resp.reason
 	case <-timer.C:
 		m.markDeniedThisTurn(sessID)
+		m.expireApproval(sessID, toolUseID)
 		return "deny", "user did not respond"
 	}
 }

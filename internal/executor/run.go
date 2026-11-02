@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -40,12 +41,7 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 
 	ps := sr.ps
 	defer func() {
-		ps.StdinMu.Lock()
-		if ps.StdinPipe != nil {
-			ps.StdinPipe.Close()
-			ps.StdinPipe = nil
-		}
-		ps.StdinMu.Unlock()
+		closeStdin(ps)
 		if ps.Cancel != nil {
 			ps.Cancel()
 		}
@@ -90,6 +86,9 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 				})
 			} else {
 				log.Printf("[executor] session=%s context parse error: %v", sid8, err)
+			}
+			if turnCompleted {
+				closeStdin(ps) // the turn is done; let claude exit so the task is free again
 			}
 			continue
 		}
@@ -137,6 +136,8 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 				log.Printf("[executor] session=%s context request error: %v", sid8, err)
 				return
 			}
+			// Safety net: if the context reply never comes, close stdin anyway.
+			time.AfterFunc(15*time.Second, func() { closeStdin(ps) })
 			continue
 		}
 	}
@@ -162,6 +163,16 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 		} else {
 			publish(map[string]any{"type": "session_status", "session_id": req.SessionID, "status": "idle"})
 		}
+	}
+}
+
+// closeStdin closes claude's stdin once; safe to call repeatedly.
+func closeStdin(ps *ProcessState) {
+	ps.StdinMu.Lock()
+	defer ps.StdinMu.Unlock()
+	if ps.StdinPipe != nil {
+		ps.StdinPipe.Close()
+		ps.StdinPipe = nil
 	}
 }
 

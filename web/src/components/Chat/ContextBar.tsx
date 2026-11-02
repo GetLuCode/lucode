@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../../store'
 import { getMinimaxTokenPlan } from '../../api'
+import { IconX } from '@tabler/icons-react'
+import { estimateCost, formatCost } from '../../lib/tokenPricing'
 
 // Maps Claude's internal color names to CSS colors
 const COLOR_MAP: Record<string, string> = {
@@ -11,6 +13,11 @@ const COLOR_MAP: Record<string, string> = {
   purple_FOR_SUBAGENTS_ONLY: '#8b5cf6', // purple — messages / subagents
   primary: '#3b82f6',           // blue fallback
   success: '#22c55e',           // green fallback
+  tools: '#06b6d4',             // cyan — tool definitions
+  cacheRead: '#22c55e',         // green — cached prompt tokens read (cheap)
+  cacheWrite: '#f59e0b',        // amber — tokens written to cache
+  input: '#3b82f6',             // blue — uncached input
+  output: '#8b5cf6',            // purple — model output
 }
 
 function fmtTokens(n: number): string {
@@ -101,12 +108,13 @@ interface ContextBarProps {
 
 export function ContextBar({ sessionId }: ContextBarProps) {
   const contextUsage = useStore(s => s.contextUsage[sessionId])
+  const sessionUsage = useStore(s => s.sessionUsage[sessionId])
+  const [detailOpen, setDetailOpen] = useState(false)
   const [tooltip, setTooltip] = useState<{ name: string; tokens: number; pct: number; x: number } | null>(null)
 
   if (!contextUsage) return <TokenPlanBadge />
 
   const { categories, totalTokens, maxTokens, percentage } = contextUsage
-  console.log('[ContextBar] contextUsage:', contextUsage, 'categories:', categories)
   const usedCategories = (categories ?? []).filter(c => c.name !== 'Free space' && c.tokens > 0)
   const freeSpace = (categories ?? []).find(c => c.name === 'Free space')
 
@@ -117,8 +125,10 @@ export function ContextBar({ sessionId }: ContextBarProps) {
   return (
     <div className="context-bar">
       <div
-        className="context-bar__track"
+        className="context-bar__track context-bar__track--clickable"
         onMouseLeave={() => setTooltip(null)}
+        onClick={() => setDetailOpen(true)}
+        title="Click for context details"
       >
         {usedCategories.map((cat) => {
           const catPct = maxTokens > 0 ? (cat.tokens / maxTokens) * 100 : 0
@@ -181,6 +191,64 @@ export function ContextBar({ sessionId }: ContextBarProps) {
       </div>
 
       <TokenPlanBadge />
+
+      {detailOpen && (
+        <>
+          <div className="voice-modal-backdrop" onClick={() => setDetailOpen(false)} />
+          <div className="voice-modal context-detail" role="dialog" aria-label="Context details">
+            <div className="voice-modal__header">
+              <h3 className="voice-modal__title">Context window</h3>
+              <button className="voice-modal__close" onClick={() => setDetailOpen(false)} title="Close" aria-label="Close">
+                <IconX size={18} />
+              </button>
+            </div>
+            <div className="voice-modal__body">
+              <div className="context-detail__summary">
+                <span>{contextUsage.model}</span>
+                <span>{fmtTokens(totalTokens)} / {fmtTokens(maxTokens)} ({pctUsed.toFixed(1)}%)</span>
+              </div>
+              <div className="context-detail__section">Current context</div>
+              {usedCategories.map(cat => (
+                <div key={cat.name} className="context-detail__row">
+                  <span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP[cat.color] ?? COLOR_MAP.primary }} />
+                  <span className="context-detail__name">{cat.name}</span>
+                  <span className="context-detail__tokens">{cat.tokens.toLocaleString()}</span>
+                  <span className="context-detail__pct">{maxTokens > 0 ? ((cat.tokens / maxTokens) * 100).toFixed(2) : '0'}%</span>
+                </div>
+              ))}
+              {freeSpace && (
+                <div className="context-detail__row context-detail__row--muted">
+                  <span className="context-detail__dot context-detail__dot--free" />
+                  <span className="context-detail__name">Free space</span>
+                  <span className="context-detail__tokens">{freeSpace.tokens.toLocaleString()}</span>
+                  <span className="context-detail__pct">{maxTokens > 0 ? ((freeSpace.tokens / maxTokens) * 100).toFixed(1) : '0'}%</span>
+                </div>
+              )}
+              {sessionUsage && (
+                <>
+                  <div className="context-detail__section">Session total (billed turns)</div>
+                  <div className="context-detail__row"><span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP.input }} /><span className="context-detail__name">Input</span><span className="context-detail__tokens">{sessionUsage.input_tokens.toLocaleString()}</span></div>
+                  <div className="context-detail__row"><span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP.output }} /><span className="context-detail__name">Output</span><span className="context-detail__tokens">{sessionUsage.output_tokens.toLocaleString()}</span></div>
+                  <div className="context-detail__row"><span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP.cacheRead }} /><span className="context-detail__name">Cache read</span><span className="context-detail__tokens">{(sessionUsage.cache_read_input_tokens ?? 0).toLocaleString()}</span></div>
+                  <div className="context-detail__row"><span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP.cacheWrite }} /><span className="context-detail__name">Cache write</span><span className="context-detail__tokens">{(sessionUsage.cache_creation_input_tokens ?? 0).toLocaleString()}</span></div>
+                  <div className="context-detail__row context-detail__row--muted">
+                    <span className="context-detail__name">Estimated cost</span>
+                    <span className="context-detail__tokens">
+                      {formatCost(estimateCost(
+                        contextUsage.model,
+                        sessionUsage.input_tokens,
+                        sessionUsage.output_tokens,
+                        sessionUsage.cache_read_input_tokens ?? 0,
+                        sessionUsage.cache_creation_input_tokens ?? 0,
+                      ))}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

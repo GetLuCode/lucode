@@ -29,6 +29,16 @@ type TurnRequest struct {
 	ClaudeConfigDir string `json:"claude_config_dir,omitempty"`
 	ClaudeSettings  string `json:"claude_settings,omitempty"` // --settings path
 	NATSSettings    string `json:"nats_settings,omitempty"`   // injected as LUCODE_NATS_URL
+	NATSCreds       string `json:"nats_creds,omitempty"`      // injected as LUCODE_NATS_CREDS
+
+	// Tools restricts the built-in tools offered to the model (--tools). Empty = all.
+	Tools []string `json:"tools,omitempty"`
+
+	// MCPConfig is a path to an MCP server config (--mcp-config): the lucode task tools.
+	MCPConfig string `json:"mcp_config,omitempty"`
+
+	// AppendSystemPrompt is the agent personality, passed via --append-system-prompt.
+	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
 
 	ImageBase64    string `json:"image_base64,omitempty"`
 	ImageMediaType string `json:"image_media_type,omitempty"`

@@ -37,11 +37,12 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
   const location = useLocation()
   const projects = useStore(s => s.projects)
   const sessions = useStore(s => s.sessions)
+  // Only task sessions (those tied to a kanban card) are listed.
+  const taskSessions = sessions.filter(s => s.card_id)
   const activeProjectId = useStore(s => s.activeProjectId)
   const activeSessionId = useStore(s => s.activeSessionId)
   const setActiveProject = useStore(s => s.setActiveProject)
   const setActiveSession = useStore(s => s.setActiveSession)
-  const setPendingSession = useStore(s => s.setPendingSession)
   const createProject = useStore(s => s.createProject)
   const deleteProject = useStore(s => s.deleteProject)
   const renameProject = useStore(s => s.renameProject)
@@ -75,9 +76,10 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
     navigate(`/projects/${p.id}`)
   }
 
-  const handleNewSession = (proj: Project) => {
-    const model = proj.default_model || 'haiku'
-    setPendingSession(proj.id, model)
+  // Chats now belong to tasks: a "new session" is a new task on the board.
+  const handleNewTask = async (proj: Project) => {
+    await setActiveProject(proj.id)
+    navigate(`/projects/${proj.id}/kanban`)
   }
 
   const handleStartEditProject = (proj: Project, e: React.MouseEvent) => {
@@ -306,8 +308,8 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
               )}
               <button
                 className="icon-btn"
-                onClick={() => handleNewSession(activeProject)}
-                title="New session"
+                onClick={() => handleNewTask(activeProject)}
+                title="New task"
               >+</button>
               <div className="nav-tree__menu-container">
                 <button
@@ -344,12 +346,12 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
             </div>
 
             <ul className="nav-tree">
-              {sessions.length === 0 ? (
+              {taskSessions.length === 0 ? (
                 <li className="nav-tree__session nav-tree__session--empty">
-                  <span>No sessions yet</span>
+                  <span>No tasks yet</span>
                 </li>
               ) : (
-                sessions.map((s: Session) => (
+                taskSessions.map((s: Session) => (
                   <li
                     key={s.id}
                     className={`nav-tree__session${activeSessionId === s.id ? ' nav-tree__session--active' : ''}`}

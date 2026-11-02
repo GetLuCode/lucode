@@ -160,6 +160,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agents/{id}", h.getAgent)
 	mux.HandleFunc("PUT /api/agents/{id}", h.updateAgent)
 	mux.HandleFunc("DELETE /api/agents/{id}", h.deleteAgent)
+	mux.HandleFunc("GET /api/agents/{id}/sessions", h.listAgentSessions)
+	mux.HandleFunc("POST /api/cards/{id}/session", h.cardSession)
+	mux.HandleFunc("GET /api/cards/{id}/comments", h.listCardComments)
 
 	// Permissions (hierarchical settings.json + session overrides)
 	mux.HandleFunc("GET /api/sessions/{id}/permissions", h.listSessionPermissions)
@@ -497,6 +500,15 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = sess.Model
 	}
+	// Task sessions run on their assigned agent: its model, personality and
+	// executor (claude -p CLI or aiapi) override whatever the client sent.
+	var agent *dbpkg.Agent
+	if sess.AgentID != "" {
+		if a, err := dbpkg.GetAgent(h.db, sess.AgentID); err == nil {
+			agent = &a
+			model = a.Model
+		}
+	}
 	provider, model := resolveProvider(body.Provider, model)
 
 	opts := sessionpkg.TurnOptions{
@@ -512,6 +524,17 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		Resume:          sess.MessageCount > 0,
 		ImageBase64:     body.Image.Base64,
 		ImageMediaType:  body.Image.MediaType,
+	}
+
+	if agent != nil {
+		opts.Executor = agent.Executor
+		opts.AgentName = agent.Name
+		opts.Tools = agent.Tools
+		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
+			opts.SystemPrompt = agentSystemPrompt(*agent, card)
+		} else {
+			opts.SystemPrompt = agent.Personality
+		}
 	}
 
 	// If the session has an account, pass it to aiapi (which will resolve it to the claude_config_dir)
@@ -2176,10 +2199,14 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		AccountID   string   `json:"account_id"`
 		Personality string   `json:"personality"`
 		Tools       []string `json:"tools"`
+		Executor    string   `json:"executor"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
+	}
+	if body.Executor != "claude" {
+		body.Executor = "aiapi"
 	}
 	if body.Name == "" {
 		http.Error(w, "name required", http.StatusBadRequest)
@@ -2196,6 +2223,7 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		ProjectID:   pid,
 		Name:        body.Name,
 		Model:       body.Model,
+		Executor:    body.Executor,
 		AccountID:   body.AccountID,
 		Personality: body.Personality,
 		Tools:       body.Tools,
@@ -2232,10 +2260,18 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		AccountID   *string  `json:"account_id"`
 		Personality *string  `json:"personality"`
 		Tools       []string `json:"tools"`
+		Executor    *string  `json:"executor"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
+	}
+	if body.Executor != nil {
+		if *body.Executor == "claude" {
+			a.Executor = "claude"
+		} else {
+			a.Executor = "aiapi"
+		}
 	}
 	if body.Name != nil {
 		a.Name = *body.Name
@@ -2273,6 +2309,9 @@ func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listKanbanLists(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
+	if err := dbpkg.EnsureDefaultKanbanLists(h.db, pid); err != nil {
+		log.Printf("kanban: default lists for %s: %v", pid, err)
+	}
 	lists, err := dbpkg.ListKanbanLists(h.db, pid)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -2448,6 +2487,7 @@ func (h *Handler) updateKanbanCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	oldListID := c.ListID
 	if body.ListID != nil      { c.ListID = *body.ListID }
 	if body.Title != nil       { c.Title = *body.Title }
 	if body.Description != nil { c.Description = *body.Description }
@@ -2465,6 +2505,11 @@ func (h *Handler) updateKanbanCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, _ = dbpkg.GetKanbanCard(h.db, id)
+	// Moving a card between lists drives the workflow: In Progress runs it
+	// (or parks it in Blocked), Done releases cards that depended on it.
+	if c.ListID != oldListID {
+		c = h.afterCardSaved(c)
+	}
 	json.NewEncoder(w).Encode(c)
 }
 
@@ -2513,4 +2558,48 @@ func (h *Handler) minimaxTokenPlan(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
+}
+
+
+// ---- Tasks (kanban cards) as agent sessions ----
+
+// cardSession returns the chat session of a task, creating it on first use.
+// The session runs on the card's assigned agent; reassigning the card moves the
+// same conversation to the new agent.
+func (h *Handler) cardSession(w http.ResponseWriter, r *http.Request) {
+	card, err := dbpkg.GetKanbanCard(h.db, r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+	if card.AgentID == "" {
+		http.Error(w, "assign an agent to this task first", http.StatusBadRequest)
+		return
+	}
+	agent, err := dbpkg.GetAgent(h.db, card.AgentID)
+	if err != nil {
+		http.Error(w, "assigned agent not found", http.StatusBadRequest)
+		return
+	}
+
+	sess, created, err := h.ensureCardSession(card, agent)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	jsonResp(w, status, sess)
+}
+
+// listAgentSessions lists the task sessions an agent has run, so they can be inspected.
+func (h *Handler) listAgentSessions(w http.ResponseWriter, r *http.Request) {
+	sessions, err := dbpkg.ListSessionsByAgent(h.db, r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, sessions)
 }

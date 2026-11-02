@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ---- Project ----
@@ -91,12 +94,14 @@ type Session struct {
 	CreatedAt    time.Time `json:"created_at"`
 	LastActive   time.Time `json:"last_active"`
 	ContextUsage string    `json:"context_usage,omitempty"`
+	CardID       string    `json:"card_id,omitempty"`
+	AgentID      string    `json:"agent_id,omitempty"`
 }
 
 func InsertSession(db *sql.DB, s Session) error {
 	_, err := db.Exec(
-		`INSERT INTO sessions (id, project_id, name, model, status, parent_id, account_id) VALUES (?,?,?,?,?,?,?)`,
-		s.ID, s.ProjectID, s.Name, s.Model, s.Status, nullStr(s.ParentID), s.AccountID,
+		`INSERT INTO sessions (id, project_id, name, model, status, parent_id, account_id, card_id, agent_id) VALUES (?,?,?,?,?,?,?,?,?)`,
+		s.ID, s.ProjectID, s.Name, s.Model, s.Status, nullStr(s.ParentID), s.AccountID, s.CardID, s.AgentID,
 	)
 	return err
 }
@@ -106,8 +111,8 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 	var parentID sql.NullString
 	var createdAt, lastActive string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage FROM sessions WHERE id=?`, id,
-	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage)
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id FROM sessions WHERE id=?`, id,
+	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID)
 	if err != nil {
 		return s, err
 	}
@@ -121,7 +126,7 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 
 func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage FROM sessions WHERE project_id=? ORDER BY last_active DESC`,
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id FROM sessions WHERE project_id=? ORDER BY last_active DESC`,
 		projectID,
 	)
 	if err != nil {
@@ -133,7 +138,7 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		var s Session
 		var parentID sql.NullString
 		var createdAt, lastActive string
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -1202,6 +1207,7 @@ type Agent struct {
 	AccountID   string    `json:"account_id"`
 	Personality string    `json:"personality"`
 	Tools       []string  `json:"tools"`
+	Executor    string    `json:"executor"` // "aiapi" | "claude"
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -1209,15 +1215,15 @@ type Agent struct {
 func InsertAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools) VALUES (?,?,?,?,?,?,?)`,
-		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools),
+		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, executor) VALUES (?,?,?,?,?,?,?,?)`,
+		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.Executor,
 	)
 	return err
 }
 
 func ListAgents(db *sql.DB, projectID string) ([]Agent, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, account_id, personality, tools, created_at, updated_at FROM agents WHERE project_id=? ORDER BY created_at ASC`,
+		`SELECT id, project_id, name, model, account_id, personality, tools, executor, created_at, updated_at FROM agents WHERE project_id=? ORDER BY created_at ASC`,
 		projectID,
 	)
 	if err != nil {
@@ -1228,7 +1234,7 @@ func ListAgents(db *sql.DB, projectID string) ([]Agent, error) {
 	for rows.Next() {
 		var a Agent
 		var toolsJSON, createdAt, updatedAt string
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &a.Executor, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(toolsJSON), &a.Tools)
@@ -1243,8 +1249,8 @@ func GetAgent(db *sql.DB, id string) (Agent, error) {
 	var a Agent
 	var toolsJSON, createdAt, updatedAt string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, model, account_id, personality, tools, created_at, updated_at FROM agents WHERE id=?`, id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &createdAt, &updatedAt)
+		`SELECT id, project_id, name, model, account_id, personality, tools, executor, created_at, updated_at FROM agents WHERE id=?`, id,
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &a.Executor, &createdAt, &updatedAt)
 	if err != nil {
 		return a, err
 	}
@@ -1257,8 +1263,8 @@ func GetAgent(db *sql.DB, id string) (Agent, error) {
 func UpdateAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`UPDATE agents SET name=?, model=?, account_id=?, personality=?, tools=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.ID,
+		`UPDATE agents SET name=?, model=?, account_id=?, personality=?, tools=?, executor=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.Executor, a.ID,
 	)
 	return err
 }
@@ -1276,20 +1282,61 @@ type KanbanList struct {
 	ProjectID string    `json:"project_id"`
 	Name      string    `json:"name"`
 	Position  int       `json:"position"`
+	Kind      string    `json:"kind"` // workflow role, see the Kanban* constants
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Workflow roles of the default kanban lists.
+const (
+	KanbanBacklog    = "backlog"
+	KanbanTodo       = "todo"
+	KanbanInProgress = "inprogress"
+	KanbanDone       = "done"
+	KanbanBlocked    = "blocked"
+)
+
 func InsertKanbanList(db *sql.DB, l KanbanList) error {
 	_, err := db.Exec(
-		`INSERT INTO kanban_lists (id, project_id, name, position) VALUES (?,?,?,?)`,
-		l.ID, l.ProjectID, l.Name, l.Position,
+		`INSERT INTO kanban_lists (id, project_id, name, position, kind) VALUES (?,?,?,?,?)`,
+		l.ID, l.ProjectID, l.Name, l.Position, l.Kind,
 	)
 	return err
 }
 
+// EnsureDefaultKanbanLists creates Backlog / Todo / In Progress / Done / Blocked
+// when a project has no lists yet.
+func EnsureDefaultKanbanLists(db *sql.DB, projectID string) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM kanban_lists WHERE project_id=?`, projectID).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	defaults := []struct{ name, kind string }{
+		{"Backlog", KanbanBacklog},
+		{"Todo", KanbanTodo},
+		{"In Progress", KanbanInProgress},
+		{"Done", KanbanDone},
+		{"Blocked", KanbanBlocked},
+	}
+	for i, d := range defaults {
+		if err := InsertKanbanList(db, KanbanList{ID: uuid.New().String(), ProjectID: projectID, Name: d.name, Position: i, Kind: d.kind}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// FindKanbanListByKind returns the project's list with the given workflow role.
+func FindKanbanListByKind(db *sql.DB, projectID, kind string) (KanbanList, error) {
+	var id string
+	if err := db.QueryRow(`SELECT id FROM kanban_lists WHERE project_id=? AND kind=? ORDER BY position ASC LIMIT 1`, projectID, kind).Scan(&id); err != nil {
+		return KanbanList{}, err
+	}
+	return GetKanbanList(db, id)
+}
+
 func ListKanbanLists(db *sql.DB, projectID string) ([]KanbanList, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, position, created_at FROM kanban_lists WHERE project_id=? ORDER BY position ASC`,
+		`SELECT id, project_id, name, position, kind, created_at FROM kanban_lists WHERE project_id=? ORDER BY position ASC`,
 		projectID,
 	)
 	if err != nil {
@@ -1300,7 +1347,7 @@ func ListKanbanLists(db *sql.DB, projectID string) ([]KanbanList, error) {
 	for rows.Next() {
 		var l KanbanList
 		var ts string
-		if err := rows.Scan(&l.ID, &l.ProjectID, &l.Name, &l.Position, &ts); err != nil {
+		if err := rows.Scan(&l.ID, &l.ProjectID, &l.Name, &l.Position, &l.Kind, &ts); err != nil {
 			return nil, err
 		}
 		l.CreatedAt, _ = time.Parse(time.RFC3339Nano, ts)
@@ -1313,8 +1360,8 @@ func GetKanbanList(db *sql.DB, id string) (KanbanList, error) {
 	var l KanbanList
 	var ts string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, position, created_at FROM kanban_lists WHERE id=?`, id,
-	).Scan(&l.ID, &l.ProjectID, &l.Name, &l.Position, &ts)
+		`SELECT id, project_id, name, position, kind, created_at FROM kanban_lists WHERE id=?`, id,
+	).Scan(&l.ID, &l.ProjectID, &l.Name, &l.Position, &l.Kind, &ts)
 	if err != nil {
 		return l, err
 	}
@@ -1479,4 +1526,117 @@ func ListSessionRules(db *sql.DB, sessID string) ([]SessionRuleRow, error) {
 func DeleteSessionRule(db *sql.DB, sessID, ruleID string) error {
 	_, err := db.Exec(`DELETE FROM session_permissions WHERE id=? AND session_id=?`, ruleID, sessID)
 	return err
+}
+
+
+// ---- Task sessions ----
+
+// GetSessionByCard returns the session that belongs to a kanban card (task).
+func GetSessionByCard(db *sql.DB, cardID string) (Session, error) {
+	var id string
+	if err := db.QueryRow(`SELECT id FROM sessions WHERE card_id=? ORDER BY created_at ASC LIMIT 1`, cardID).Scan(&id); err != nil {
+		return Session{}, err
+	}
+	return GetSession(db, id)
+}
+
+// ListSessionsByAgent returns the task sessions an agent has run, newest first.
+func ListSessionsByAgent(db *sql.DB, agentID string) ([]Session, error) {
+	rows, err := db.Query(`SELECT id FROM sessions WHERE agent_id=? ORDER BY last_active DESC`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	out := []Session{}
+	for _, id := range ids {
+		if s, err := GetSession(db, id); err == nil {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// UpdateSessionAgent reassigns a task session to another agent (and its model).
+func UpdateSessionAgent(db *sql.DB, id, agentID, model string) error {
+	_, err := db.Exec(`UPDATE sessions SET agent_id=?, model=? WHERE id=?`, agentID, model, id)
+	return err
+}
+
+
+// backfillKanbanListKinds assigns a workflow role to existing lists whose name
+// matches one of the defaults (case/space/dash-insensitive). Idempotent.
+func backfillKanbanListKinds(db *sql.DB) {
+	rows, err := db.Query(`SELECT id, name FROM kanban_lists WHERE kind=''`)
+	if err != nil {
+		return
+	}
+	type row struct{ id, name string }
+	var todo []row
+	for rows.Next() {
+		var r row
+		if rows.Scan(&r.id, &r.name) == nil {
+			todo = append(todo, r)
+		}
+	}
+	rows.Close()
+	for _, r := range todo {
+		key := strings.NewReplacer(" ", "", "-", "", "_", "").Replace(strings.ToLower(r.name))
+		switch key {
+		case "backlog", "todo", "inprogress", "done", "blocked":
+			db.Exec(`UPDATE kanban_lists SET kind=? WHERE id=?`, key, r.id)
+		}
+	}
+}
+
+
+// ---- Card comments ----
+
+// CardComment is a note on a task. Kind is "comment", "done" or "blocked".
+type CardComment struct {
+	ID        string    `json:"id"`
+	CardID    string    `json:"card_id"`
+	SessionID string    `json:"session_id,omitempty"`
+	Author    string    `json:"author"`
+	Kind      string    `json:"kind"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func InsertCardComment(db *sql.DB, c CardComment) error {
+	_, err := db.Exec(
+		`INSERT INTO card_comments (id, card_id, session_id, author, kind, body) VALUES (?,?,?,?,?,?)`,
+		c.ID, c.CardID, c.SessionID, c.Author, c.Kind, c.Body,
+	)
+	return err
+}
+
+func ListCardComments(db *sql.DB, cardID string) ([]CardComment, error) {
+	rows, err := db.Query(
+		`SELECT id, card_id, session_id, author, kind, body, created_at FROM card_comments WHERE card_id=? ORDER BY created_at ASC, rowid ASC`,
+		cardID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CardComment{}
+	for rows.Next() {
+		var c CardComment
+		var ts string
+		if err := rows.Scan(&c.ID, &c.CardID, &c.SessionID, &c.Author, &c.Kind, &c.Body, &ts); err != nil {
+			return nil, err
+		}
+		c.CreatedAt, _ = time.Parse(time.RFC3339Nano, ts)
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   IconPlus, IconX, IconTrash, IconArchive,
   IconArchiveOff, IconRobot, IconCalendar, IconLink,
   IconTag, IconGripVertical,
 } from '@tabler/icons-react'
 import { useStore } from '../../store'
-import type { Agent, KanbanCard, KanbanList } from '../../types'
+import type { Agent, CardComment, KanbanCard, KanbanList } from '../../types'
 import * as api from '../../api'
 
 // ---- constants ---------------------------------------------------------------
@@ -45,17 +46,26 @@ interface CardModalProps {
   onSave: (id: string, patch: Partial<KanbanCard>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onArchive: (id: string, archived: boolean) => Promise<void>
+  onOpenChat: (id: string, patch: Partial<KanbanCard>) => Promise<void>
 }
 
-function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, onArchive }: CardModalProps) {
+function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, onArchive, onOpenChat }: CardModalProps) {
   const [form, setForm] = useState<Partial<KanbanCard>>({})
   const [tagInput, setTagInput] = useState('')
   const [saving, setSaving] = useState(false)
   const [activeTab, setActiveTab] = useState<'details' | 'relations'>('details')
+  const [comments, setComments] = useState<CardComment[]>([])
+  const boardVersion = useStore(s => s.boardVersion)
 
   useEffect(() => {
     if (card) setForm({ ...card })
   }, [card?.id])
+
+  // Notes the agent posted on this task; re-read when the board changes.
+  useEffect(() => {
+    if (!card) return
+    api.listCardComments(card.id).then(setComments).catch(() => setComments([]))
+  }, [card?.id, boardVersion])
 
   if (!card) return null
 
@@ -84,6 +94,13 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
     if (!card) return
     setSaving(true)
     try { await onSave(card.id, form) } finally { setSaving(false) }
+    onClose()
+  }
+
+  async function handleOpenChat() {
+    if (!card) return
+    setSaving(true)
+    try { await onOpenChat(card.id, form) } finally { setSaving(false) }
     onClose()
   }
 
@@ -304,7 +321,31 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
           )}
         </div>
 
+        {comments.length > 0 && (
+          <div className="kmodal__activity">
+            <div className="kmodal__activity-title">Activity</div>
+            {comments.map(c => (
+              <div key={c.id} className={`kmodal__comment kmodal__comment--${c.kind}`}>
+                <div className="kmodal__comment-head">
+                  <span>{c.author}</span>
+                  {c.kind !== 'comment' && <span className="kmodal__comment-kind">{c.kind}</span>}
+                  <span className="kmodal__comment-time">{new Date(c.created_at).toLocaleString()}</span>
+                </div>
+                <div className="kmodal__comment-body">{c.body}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="kmodal__footer">
+          <button
+            className="kmodal__btn kmodal__btn--cancel"
+            onClick={handleOpenChat}
+            disabled={saving || !form.agent_id}
+            title={form.agent_id ? "Open this task's chat with its agent" : 'Assign an agent first'}
+          >
+            Open chat
+          </button>
           <button className="kmodal__btn kmodal__btn--cancel" onClick={onClose}>Cancel</button>
           <button className="kmodal__btn kmodal__btn--save" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}
@@ -326,8 +367,20 @@ interface CardItemProps {
   onDrop: (e: React.DragEvent) => void
 }
 
+const STATUS_BADGE: Record<string, { label: string; color: string }> = {
+  running:      { label: '● running',        color: '#22c55e' },
+  waiting_hook: { label: '◆ needs approval', color: '#f59e0b' },
+  error:        { label: '✕ error',          color: '#ef4444' },
+}
+
 function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop }: CardItemProps) {
   const agent = agents.find(a => a.id === card.agent_id)
+  // Live state of the agent working on this task (its chat session).
+  const runStatus = useStore(s => {
+    const sess = s.sessions.find(x => x.card_id === card.id)
+    return sess ? (s.sessionStatus[sess.id] ?? sess.status) : undefined
+  })
+  const badge = runStatus ? STATUS_BADGE[runStatus] : undefined
   const hasDates = card.start_date || card.end_date
   const isOverdue = card.end_date && new Date(card.end_date) < new Date()
 
@@ -365,6 +418,9 @@ function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop
             <IconRobot size={11} />
             {agent.name}
           </span>
+        )}
+        {badge && (
+          <span className="kcard__status" style={{ color: badge.color }}>{badge.label}</span>
         )}
         {card.depends_on.length > 0 && (
           <span className="kcard__deps" title={`${card.depends_on.length} dependency`}>
@@ -501,6 +557,8 @@ function KanbanColumn({
 
 export function KanbanView() {
   const activeProjectId = useStore(s => s.activeProjectId)
+  const openTaskSession = useStore(s => s.openTaskSession)
+  const navigate = useNavigate()
 
   const [lists, setLists] = useState<KanbanList[]>([])
   const [cards, setCards] = useState<KanbanCard[]>([])
@@ -574,11 +632,39 @@ export function KanbanView() {
     setCards(prev => [...prev, c])
   }
 
+  // Moving a card runs the workflow server-side (In Progress starts the agent or
+  // parks the card in Blocked; Done releases dependents), so re-read the board.
+  async function reloadBoard() {
+    if (!activeProjectId) return
+    const [cs, sess] = await Promise.all([
+      api.listKanbanCards(activeProjectId, showArchived),
+      api.listSessions(activeProjectId),
+    ])
+    setCards(cs)
+    useStore.setState({ sessions: sess })
+  }
+
+  // An agent finished, blocked or commented on a task: re-read the board.
+  const boardVersion = useStore(s => s.boardVersion)
+  useEffect(() => {
+    if (boardVersion > 0) reloadBoard().catch(console.error)
+  }, [boardVersion])
+
   async function handleSaveCard(id: string, patch: Partial<KanbanCard>) {
+    const before = cards.find(c => c.id === id)
     const updated = await api.updateKanbanCard(id, patch)
     setCards(prev => prev.map(c => c.id === id ? updated : c))
     // keep modal in sync
     setSelectedCard(updated)
+    if (before && before.list_id !== updated.list_id) await reloadBoard()
+  }
+
+  // Save the card (so the agent assignment sticks), then open its chat session.
+  async function handleOpenChat(id: string, patch: Partial<KanbanCard>) {
+    const updated = await api.updateKanbanCard(id, patch)
+    setCards(prev => prev.map(c => c.id === id ? updated : c))
+    const sess = await openTaskSession(id)
+    navigate(`/projects/${sess.project_id}/sessions/${sess.id}`)
   }
 
   async function handleDeleteCard(id: string) {
@@ -631,6 +717,7 @@ export function KanbanView() {
       ? (cards.filter(c => c.list_id === toListId).findIndex(c => c.id === afterCardId) + 1)
       : cards.filter(c => c.list_id === toListId).length
     await api.updateKanbanCard(cid, { list_id: toListId, position: newPos })
+    if (card.list_id !== toListId) await reloadBoard()
   }
 
   // ---- render ----
@@ -721,6 +808,7 @@ export function KanbanView() {
           onSave={handleSaveCard}
           onDelete={handleDeleteCard}
           onArchive={handleArchiveCard}
+          onOpenChat={handleOpenChat}
         />
       )}
     </div>

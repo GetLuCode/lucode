@@ -152,8 +152,10 @@ func buildArgs(req TurnRequest) []string {
 		if req.Name != "" {
 			args = append(args, "--name="+req.Name)
 		}
-		for _, d := range req.WorkDirs[1:] {
-			args = append(args, "--add-dir="+d)
+		if len(req.WorkDirs) > 1 {
+			for _, d := range req.WorkDirs[1:] {
+				args = append(args, "--add-dir="+d)
+			}
 		}
 	}
 
@@ -166,14 +168,44 @@ func buildArgs(req TurnRequest) []string {
 	if req.ClaudeSettings != "" {
 		args = append(args, "--settings="+req.ClaudeSettings)
 	}
+	if len(req.Tools) > 0 {
+		args = append(args, "--tools="+strings.Join(withToolSearch(req.Tools), ","))
+	}
+	if req.MCPConfig != "" {
+		args = append(args, "--mcp-config="+req.MCPConfig)
+	}
+	if req.AppendSystemPrompt != "" {
+		args = append(args, "--append-system-prompt="+req.AppendSystemPrompt)
+	}
 
 	return args
 }
 
+// withToolSearch appends ToolSearch: claude needs it to load the schemas of the
+// lucode task tools (MCP tools are deferred), so it must never be filtered out.
+func withToolSearch(tools []string) []string {
+	out := make([]string, 0, len(tools)+1)
+	for _, t := range tools {
+		if t != "ToolSearch" {
+			out = append(out, t)
+		}
+	}
+	return append(out, "ToolSearch")
+}
+
 func buildEnv(req TurnRequest) []string {
 	env := append(os.Environ(), "LUCODE_SESSION_ID="+req.SessionID)
+	// Agents get only the user's own MCP servers: the claude.ai account connectors
+	// (Notion, Gmail, Drive, ...) are off unless the user opts back in by setting
+	// ENABLE_CLAUDEAI_MCP_SERVERS in lucode's environment.
+	if _, set := os.LookupEnv("ENABLE_CLAUDEAI_MCP_SERVERS"); !set {
+		env = append(env, "ENABLE_CLAUDEAI_MCP_SERVERS=false")
+	}
 	if req.NATSSettings != "" {
 		env = append(env, "LUCODE_NATS_URL="+req.NATSSettings)
+	}
+	if req.NATSCreds != "" {
+		env = append(env, "LUCODE_NATS_CREDS="+req.NATSCreds)
 	}
 	if req.ClaudeConfigDir != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+req.ClaudeConfigDir)

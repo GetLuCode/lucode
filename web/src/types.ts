@@ -32,6 +32,8 @@ export interface Session {
   created_at: string
   last_active: string
   context_usage?: string  // JSON-encoded context usage, persisted per session
+  card_id?: string        // the task (kanban card) this session belongs to
+  agent_id?: string       // the agent running it
 }
 
 export interface MessageUsage {
@@ -117,6 +119,7 @@ export type WSEvent =
   | { type: 'user_message'; session_id: string; id: string; content: string; seq: number; created_at: string }
   | { type: 'tool_execution'; session_id: string; tool_name: string; tool_use_id: string; tool_input: unknown; timestamp: string; message_id: string }
   | { type: 'tool_execution_complete'; session_id: string; tool_use_id: string; tool_response: unknown; message_id: string }
+  | { type: 'task_updated'; session_id: string; project_id: string; card_id: string }
   | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown; tool_input_schema?: ToolInputField[] | null; created_at: string }
   | { type: 'hook_resolved'; session_id: string; tool_use_id: string; decision: string }
   | { type: 'turn_complete'; session_id: string; result_subtype: string; result_text: string }
@@ -217,8 +220,20 @@ export interface Agent {
   account_id: string
   personality: string
   tools: string[]
+  executor: 'aiapi' | 'claude'  // how the agent runs: aiapi service or the claude -p CLI
   created_at: string
   updated_at: string
+}
+
+// A note an agent posted on a task (progress, completion summary or blocker).
+export interface CardComment {
+  id: string
+  card_id: string
+  session_id?: string
+  author: string
+  kind: 'comment' | 'done' | 'blocked'
+  body: string
+  created_at: string
 }
 
 export interface RawEventEntry {

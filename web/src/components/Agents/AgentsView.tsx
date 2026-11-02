@@ -1,24 +1,54 @@
 import { useEffect, useState } from 'react'
-import { IconPlus, IconTrash, IconEdit, IconRobot, IconX } from '@tabler/icons-react'
+import { useNavigate } from 'react-router-dom'
+import { IconPlus, IconTrash, IconEdit, IconRobot, IconX, IconMessages } from '@tabler/icons-react'
 import { useStore } from '../../store'
-import type { Agent } from '../../types'
+import type { Agent, Session } from '../../types'
 import * as api from '../../api'
 
 const MODELS = [
-  { label: 'Haiku 4.5',  value: 'haiku' },
-  { label: 'Sonnet 4.6', value: 'sonnet' },
-  { label: 'Opus 4.6',   value: 'opus' },
+  { label: 'Haiku 5.5',  value: 'haiku' },
+  { label: 'Sonnet 5.5', value: 'sonnet' },
+  { label: 'Opus 5.5',   value: 'opus' },
+  { label: 'MiniMax M3', value: 'MiniMax-M3' },
+  { label: 'MiniMax M2.7', value: 'MiniMax-M2.7' },
 ]
 
+const EXECUTORS = [
+  { label: 'aiapi (API service)', value: 'aiapi' },
+  { label: 'claude -p (local CLI)', value: 'claude' },
+] as const
+
+// The built-in tools `claude -p` reports in its init event. ToolSearch is left out:
+// it is how claude loads the lucode task tools, so it is always available.
 const ALL_TOOLS = [
-  { name: 'Bash',    desc: 'Execute shell commands' },
-  { name: 'Edit',    desc: 'Edit file contents' },
-  { name: 'Read',    desc: 'Read files from disk' },
-  { name: 'Write',   desc: 'Write files to disk' },
-  { name: 'Glob',    desc: 'Find files by pattern' },
-  { name: 'Grep',    desc: 'Search file contents' },
-  { name: 'WebFetch', desc: 'Fetch URLs from the web' },
-  { name: 'WebSearch', desc: 'Search the web' },
+  { name: 'Bash',                 desc: 'Execute shell commands' },
+  { name: 'PowerShell',           desc: 'Execute PowerShell commands' },
+  { name: 'Read',                 desc: 'Read files from disk' },
+  { name: 'Edit',                 desc: 'Edit file contents' },
+  { name: 'Write',                desc: 'Write files to disk' },
+  { name: 'NotebookEdit',         desc: 'Edit Jupyter notebooks' },
+  { name: 'Glob',                 desc: 'Find files by pattern' },
+  { name: 'Grep',                 desc: 'Search file contents' },
+  { name: 'WebFetch',             desc: 'Fetch URLs from the web' },
+  { name: 'WebSearch',            desc: 'Search the web' },
+  { name: 'Task',                 desc: 'Run a sub-agent for a subtask' },
+  { name: 'TaskStop',             desc: 'Stop a running background task' },
+  { name: 'Skill',                desc: 'Run a skill' },
+  { name: 'Monitor',              desc: 'Watch a background process' },
+  { name: 'EnterWorktree',        desc: 'Work in an isolated git worktree' },
+  { name: 'ExitWorktree',         desc: 'Leave the git worktree' },
+  { name: 'ListAgents',           desc: 'List other agents' },
+  { name: 'SendMessage',          desc: 'Send a message to another agent' },
+  { name: 'SendToProject',        desc: 'Send a message to another project' },
+  { name: 'SendToProjectContext', desc: 'Send context to another project' },
+  { name: 'RemoteTrigger',        desc: 'Trigger a remote agent' },
+  { name: 'CronCreate',           desc: 'Schedule a recurring prompt' },
+  { name: 'CronList',             desc: 'List scheduled prompts' },
+  { name: 'CronDelete',           desc: 'Remove a scheduled prompt' },
+  { name: 'ScheduleWakeup',       desc: 'Schedule the next wake-up of a loop' },
+  { name: 'PushNotification',     desc: 'Send a notification to the user' },
+  { name: 'ReportFindings',       desc: 'Report code review findings' },
+  { name: 'DesignSync',           desc: 'Sync designs' },
 ]
 
 const DEFAULT_TOOLS = ['Bash', 'Edit', 'Read', 'Write']
@@ -29,6 +59,7 @@ interface AgentFormData {
   account_id: string  // legacy field — no longer drives anything, kept for ABI
   personality: string
   tools: string[]
+  executor: 'aiapi' | 'claude'
 }
 
 const EMPTY_FORM: AgentFormData = {
@@ -37,6 +68,7 @@ const EMPTY_FORM: AgentFormData = {
   account_id: '',
   personality: '',
   tools: [...DEFAULT_TOOLS],
+  executor: 'aiapi',
 }
 
 function AgentForm({
@@ -115,8 +147,25 @@ function AgentForm({
                 value={form.model}
                 onChange={e => setField('model', e.target.value)}
               >
-                {MODELS.map(m => (
+                {MODELS.filter(m => form.executor !== 'claude' || !m.value.startsWith('MiniMax')).map(m => (
                   <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="agent-form__field">
+              <label className="agent-form__label">Runs with</label>
+              <select
+                className="agent-form__select"
+                value={form.executor}
+                onChange={e => {
+                  const executor = e.target.value as AgentFormData['executor']
+                  setField('executor', executor)
+                  // the claude CLI only runs Claude models
+                  if (executor === 'claude' && form.model.startsWith('MiniMax')) setField('model', 'sonnet')
+                }}
+              >
+                {EXECUTORS.map(x => (
+                  <option key={x.value} value={x.value}>{x.label}</option>
                 ))}
               </select>
             </div>
@@ -160,6 +209,11 @@ function AgentForm({
               )
             })}
           </div>
+          <p className="agent-form__hint" style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0 0' }}>
+            Only these built-in tools are offered to the agent (none selected = all of them). The lucode
+            task tools and ToolSearch are always available. With &quot;aiapi&quot;, tools map onto its own set
+            (Read, Glob, Grep, Edit/Write, Bash/PowerShell).
+          </p>
         </div>
       )}
 
@@ -187,6 +241,15 @@ function AgentCard({
   onDelete: () => void
 }) {
   const modelLabel = MODELS.find(m => m.value === agent.model)?.label ?? agent.model
+  const navigate = useNavigate()
+  const setActiveSession = useStore(s => s.setActiveSession)
+  const [sessions, setSessions] = useState<Session[] | null>(null)
+
+  // Inspect: list the task sessions this agent has run and jump into one.
+  async function toggleSessions() {
+    if (sessions) { setSessions(null); return }
+    setSessions(await api.listAgentSessions(agent.id).catch(() => []))
+  }
 
   return (
     <div className="agent-card">
@@ -197,6 +260,7 @@ function AgentCard({
         <div className="agent-card__header">
           <span className="agent-card__name">{agent.name}</span>
           <span className="agent-card__model">{modelLabel}</span>
+          <span className="agent-card__model">{agent.executor === 'claude' ? 'claude -p' : 'aiapi'}</span>
         </div>
         {agent.personality && (
           <p className="agent-card__personality">{agent.personality}</p>
@@ -206,8 +270,29 @@ function AgentCard({
             <span key={t} className="agent-card__tool-badge">{t}</span>
           ))}
         </div>
+        {sessions && (
+          <div className="agent-card__sessions">
+            {sessions.length === 0 && <span className="agent-card__personality">No tasks run yet.</span>}
+            {sessions.map(s => (
+              <button
+                key={s.id}
+                className="agent-card__tool-badge"
+                title={`${s.message_count} messages`}
+                onClick={async () => {
+                  await setActiveSession(s.id)
+                  navigate(`/projects/${s.project_id}/sessions/${s.id}`)
+                }}
+              >
+                {s.name || 'Untitled task'}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="agent-card__actions">
+        <button className="agent-card__btn" title="Inspect tasks / sessions" onClick={toggleSessions}>
+          <IconMessages size={14} />
+        </button>
         <button className="agent-card__btn" title="Edit" onClick={onEdit}>
           <IconEdit size={14} />
         </button>
@@ -306,6 +391,7 @@ export function AgentsView() {
             account_id: view.edit.account_id,
             personality: view.edit.personality,
             tools: view.edit.tools,
+            executor: view.edit.executor ?? 'aiapi',
           }}
           onSave={data => handleUpdate(view.edit.id, data)}
           onCancel={() => setView('list')}

@@ -1522,6 +1522,8 @@ html, body, #root {
   transition: width 300ms ease;
   cursor: default;
 }
+.context-bar__track--clickable { cursor: pointer; }
+.context-bar__track--clickable .context-bar__segment { cursor: pointer; }
 .context-bar__segment:first-child {
   border-radius: 4px 0 0 4px;
 }
@@ -6725,3 +6727,71 @@ input[type="date"].kmodal__input { color-scheme: dark; }
   font-weight: 600;
 }
 .kmodal__btn--save:hover:not(:disabled) { background: #00e8bb; }
+
+/* ── Context detail modal ───────────────────────────────────────────────── */
+.context-detail__summary {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.context-detail__section {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.context-detail__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.context-detail__row--muted { color: var(--text-muted); }
+.context-detail__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.context-detail__dot--free { border: 1px solid var(--border); }
+.context-detail__name { flex: 1; }
+.context-detail__tokens, .context-detail__pct {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+.context-detail__pct { min-width: 52px; color: var(--text-muted); }
+
+.kcard__status {
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.kmodal__activity {
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kmodal__activity-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.kmodal__comment { font-size: 12px; border-left: 2px solid var(--border); padding-left: 8px; }
+.kmodal__comment--done { border-left-color: #22c55e; }
+.kmodal__comment--blocked { border-left-color: #ef4444; }
+.kmodal__comment-head { display: flex; gap: 8px; align-items: center; color: var(--text-muted); font-size: 11px; }
+.kmodal__comment-kind { font-weight: 600; text-transform: uppercase; }
+.kmodal__comment-time { margin-left: auto; }
+.kmodal__comment-body { color: var(--text); white-space: pre-wrap; }

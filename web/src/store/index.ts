@@ -33,6 +33,8 @@ export interface FilePreview {
 interface AppState {
   projects: Project[]
   sessions: Session[]
+  // Bumped when an agent changes a task (done/blocked/comment) so open boards refresh.
+  boardVersion: number
   activeProjectId: string | null
   activeSessionId: string | null
   pendingSession: { projectId: string; model: string } | null
@@ -97,6 +99,7 @@ interface AppState {
   renameProject: (id: string, name: string) => Promise<void>
   setActiveProject: (id: string) => Promise<void>
   setActiveSession: (id: string) => Promise<void>
+  openTaskSession: (cardId: string) => Promise<Session>
   setPendingSession: (projectId: string, model: string) => void
   clearPendingSession: () => void
   createSession: (pid: string, data: { name?: string; model?: string; provider?: string }) => Promise<Session>
@@ -261,6 +264,7 @@ export const useStore = create<AppState>((set, get) => ({
   activeRemoteId: null,
   projects: [],
   sessions: [],
+  boardVersion: 0,
   activeProjectId: null,
   activeSessionId: null,
   pendingSession: null,
@@ -441,6 +445,17 @@ export const useStore = create<AppState>((set, get) => ({
 
   clearPendingSession: () => {
     set({ pendingSession: null })
+  },
+
+  // Opens (creating on first use) the chat session of a task and makes it active.
+  openTaskSession: async (cardId) => {
+    const session = await api.openCardSession(cardId)
+    set(s => ({
+      sessions: [session, ...s.sessions.filter(x => x.id !== session.id)],
+      sessionStatus: { ...s.sessionStatus, [session.id]: session.status },
+    }))
+    await get().setActiveSession(session.id)
+    return session
   },
 
   createSession: async (pid, data) => {
@@ -898,6 +913,11 @@ export const useStore = create<AppState>((set, get) => ({
             streamingThinking: { ...s.streamingThinking, [sessId]: '' },
           }))
         }
+        break
+      }
+
+      case 'task_updated': {
+        set(s => ({ boardVersion: s.boardVersion + 1 }))
         break
       }
 

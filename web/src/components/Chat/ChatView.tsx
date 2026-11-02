@@ -26,6 +26,12 @@ import type { Message } from '../../types'
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
 
+const CLAUDE_MODELS = [
+  { label: 'Haiku 5.5',  value: 'haiku' },
+  { label: 'Sonnet 5.5', value: 'sonnet' },
+  { label: 'Opus 5.5',   value: 'opus' },
+]
+
 const MINIMAX_MODELS = [
   { label: 'MiniMax M3',              value: 'MiniMax-M3' },
   { label: 'MiniMax M2.7',            value: 'MiniMax-M2.7' },
@@ -547,7 +553,7 @@ function ChatViewFull() {
           >
             <span className="chat__session-name">{headerName}</span>
             <span className="chat__header-model-badge">
-              {MINIMAX_MODELS.find(m => m.value === model)?.label
+              {[...CLAUDE_MODELS, ...MINIMAX_MODELS].find(m => m.value === model)?.label
                 ?? ollamaModels.find(m => `ollama:${m.name}` === model)?.label
                 ?? model.replace(/^ollama:/, '')}
             </span>
@@ -595,6 +601,20 @@ function ChatViewFull() {
                 const ollamaDisabled = sessionIsClaude
                 return (
                   <>
+                    <div className="chat__header-dropdown-label">Claude</div>
+                    {CLAUDE_MODELS.map(m => (
+                      <button
+                        key={m.value}
+                        className={`chat__header-dropdown-item${model === m.value ? ' chat__header-dropdown-item--active' : ''}${claudeDisabled ? ' chat__header-dropdown-item--disabled' : ''}`}
+                        onClick={() => { if (!claudeDisabled) { setModel(m.value); setHeaderMenuOpen(false) } }}
+                        disabled={claudeDisabled}
+                        title={claudeDisabled ? 'Cannot switch provider mid-session' : undefined}
+                      >
+                        <span>{m.label}</span>
+                        {model === m.value && <IconCheck size={12} className="chat__header-dropdown-check" />}
+                      </button>
+                    ))}
+
                     <div className="chat__header-dropdown-label">MiniMax</div>
                     {MINIMAX_MODELS.map(m => (
                       <button

@@ -10,7 +10,8 @@ interface Props {
 const THINKING_STATES = ['disabled', 'adaptive'] as const
 
 export function ThinkingToggle({ model, thinking, onThinkingChange, disabled }: Props) {
-  const isM3 = model.includes('M3')
+  // Claude models and MiniMax M3 support configurable thinking; other MiniMax models are always on.
+  const isM3 = model.includes('M3') || !model.includes('MiniMax')
 
   const handleClick = () => {
     const idx = THINKING_STATES.indexOf(thinking as typeof THINKING_STATES[number])
