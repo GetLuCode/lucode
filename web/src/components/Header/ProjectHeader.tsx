@@ -4,6 +4,7 @@ import { IconCpu, IconEdit, IconRobot, IconTrash, IconUpload } from '@tabler/ico
 import { useStore } from '../../store'
 import { RunnersButton } from '../Sidebar/RunnersList'
 import { ProjectEnvironmentModal } from '../Sidebar/ProjectEnvironmentModal'
+import { ProjectEnvInfo } from './ProjectEnvInfo'
 
 // Top bar of a project: its name and menu, the Kanban | Running tabs, and the
 // Runners / Agents actions at the right.
@@ -75,6 +76,7 @@ export function ProjectHeader() {
         ) : (
           <span className="project-header__name" title={project.name}>{project.name}</span>
         )}
+        <ProjectEnvInfo project={project} />
         <div className="header-menu">
           <button className="header-icon-btn" onClick={() => setMenuOpen(v => !v)} title="Project menu" aria-label="Project menu">⋯</button>
           {menuOpen && (
