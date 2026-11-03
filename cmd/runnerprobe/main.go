@@ -32,6 +32,7 @@ func main() {
 	natsURL := flag.String("nats-url", "nats://127.0.0.1:4222", "NATS server")
 	dir := flag.String("dir", "", "directory of the runner to list")
 	host := flag.String("host", "", "hostname of the runner (default: the first other lucode peer)")
+	noTurns := flag.Bool("no-turns", false, "only check discovery and the RPC calls; run no turns (spends no tokens even with the real claude)")
 	flag.Parse()
 	log.SetFlags(0)
 
@@ -77,6 +78,9 @@ func main() {
 	}
 	call("/api/ai-profiles")
 	call("/api/fs/dirs?path=" + url.QueryEscape(*dir))
+	if *noTurns {
+		return
+	}
 
 	sess := uuid.New().String()
 	turn := func(n int, msg string) {
