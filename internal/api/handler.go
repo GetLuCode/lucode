@@ -2273,6 +2273,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		ReportsTo   string   `json:"reports_to"`
 		Scope       string   `json:"scope"`        // "project" (default) or "global"
 		LucodeTools []string `json:"lucode_tools"` // nil = all
+		RunnerID    string   `json:"runner_id"`
+		AIProfileID string   `json:"ai_profile_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -2307,6 +2309,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Executor:    body.Executor,
 		Persistent:  body.Persistent && body.Executor == "claude",
 		ReportsTo:   body.ReportsTo,
+		RunnerID:    body.RunnerID,
+		AIProfileID: body.AIProfileID,
 		LucodeTools: sanitizeLucodeTools(body.LucodeTools),
 		AccountID:   body.AccountID,
 		Personality: body.Personality,
@@ -2350,10 +2354,18 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Scope       *string  `json:"scope"`      // "project" | "global"
 		ProjectID   *string  `json:"project_id"` // needed when a global agent becomes project-only
 		LucodeTools []string `json:"lucode_tools"`
+		RunnerID    *string  `json:"runner_id"`
+		AIProfileID *string  `json:"ai_profile_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
+	}
+	if body.RunnerID != nil {
+		a.RunnerID = *body.RunnerID
+	}
+	if body.AIProfileID != nil {
+		a.AIProfileID = *body.AIProfileID
 	}
 	if body.Executor != nil {
 		if *body.Executor == "claude" {

@@ -404,6 +404,11 @@ CREATE INDEX IF NOT EXISTS idx_card_comments_card ON card_comments(card_id, crea
 	// agents.lucode_tools — which lucode tools (task_*, agent_list, send_to_agent, task_info) the agent has
 	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info"]'`)
 
+	// After the rebuild above, which only copies the columns it knows.
+	// agents.runner_id / ai_profile_id: environment and preconfigured AI that override the project's (empty = inherit)
+	db.Exec(`ALTER TABLE agents ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE agents ADD COLUMN ai_profile_id TEXT NOT NULL DEFAULT ''`)
+
 	return nil
 }
 

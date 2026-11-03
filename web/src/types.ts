@@ -249,6 +249,8 @@ export interface Agent {
   lucode_tools: string[]        // lucode tools the agent has (task_*, agent_list, send_to_agent, task_info)
   persistent: boolean           // keep the claude -p process alive between messages
   reports_to: string            // id of the supervising agent ('' = none)
+  runner_id: string             // runner the agent works on ('' = the project's)
+  ai_profile_id: string         // preconfigured AI of that runner ('' = the project's)
   created_at: string
   updated_at: string
 }

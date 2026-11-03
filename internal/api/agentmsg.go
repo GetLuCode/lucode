@@ -49,24 +49,24 @@ func (h *Handler) startTurn(opts sessionpkg.TurnOptions) error {
 }
 
 // agentTurnOpts is the turn configuration for a task session on its agent.
-func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpkg.KanbanCard, proj dbpkg.Project, message string) sessionpkg.TurnOptions {
+func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpkg.KanbanCard, proj dbpkg.Project, message string) (sessionpkg.TurnOptions, error) {
 	provider, model := resolveProvider("", agent.Model)
-	// A project on a peer runner runs its agents there: the work dirs are the
-	// runner's and its AI is resolved by the runner, so the hub sends no config dir.
-	runner, configDir := "", h.projectConfigDir(proj)
-	if h.isRemoteRunner(proj.RunnerID) {
-		runner, configDir = proj.RunnerID, ""
+	// Where it runs and with which AI: the agent's choice, else the project's.
+	env, err := h.resolveTurnEnv(agent, proj)
+	if err != nil {
+		return sessionpkg.TurnOptions{}, err
 	}
+	runner := env.RunnerID
 	return sessionpkg.TurnOptions{
 		SessionID:       sess.ID,
 		ProjectID:       sess.ProjectID,
 		Message:         message,
 		Model:           model,
 		Provider:        provider,
-		WorkDirs:        h.projectWorkDirs(proj),
-		ClaudeConfigDir: configDir,
+		WorkDirs:        env.WorkDirs,
+		ClaudeConfigDir: env.ConfigDir,
 		RunnerID:        runner,
-		AIProfileID:     proj.AIProfileID,
+		AIProfileID:     env.AIProfileID,
 		Resume:          sess.MessageCount > 0,
 		Executor:        agent.Executor,
 		SystemPrompt:    agentSystemPrompt(agent, card, h.supervisorName(agent)),
@@ -74,7 +74,7 @@ func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpk
 		Tools:           agent.Tools,
 		Persistent:      agent.Persistent && agent.Executor == "claude" && runner == "", // remote turns are one-shot
 		LucodeTools:     agent.LucodeTools,
-	}
+	}, nil
 }
 
 // supervisorName is the name of the agent this one reports to ("" if none).
@@ -225,7 +225,11 @@ func (h *Handler) deliverToAgent(from dbpkg.Agent, ctxCard dbpkg.KanbanCard, to 
 	}
 	msg := formatAgentMessage(from, ctxCard, requiresAnswer, text)
 
-	err = h.startTurn(h.agentTurnOpts(sess, to, card, proj, msg))
+	opts, err := h.agentTurnOpts(sess, to, card, proj, msg)
+	if err != nil {
+		return "", err
+	}
+	err = h.startTurn(opts)
 	switch {
 	case err == nil:
 		return fmt.Sprintf("Message delivered to %s. Their answer will arrive as a new message.", to.Name), nil
@@ -282,7 +286,10 @@ func (h *Handler) DrainInbox(sessID string) {
 	if err != nil {
 		return
 	}
-	err = h.startTurn(h.agentTurnOpts(sess, agent, card, proj, strings.Join(msgs, "\n\n---\n\n")))
+	opts, err := h.agentTurnOpts(sess, agent, card, proj, strings.Join(msgs, "\n\n---\n\n"))
+	if err == nil {
+		err = h.startTurn(opts)
+	}
 	if errors.Is(err, sessionpkg.ErrSessionBusy) {
 		requeue() // another turn started first; try again when it ends
 	} else if err != nil {

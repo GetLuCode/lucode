@@ -6,6 +6,7 @@ import type { Project, Session } from '../../types'
 import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout, IconDownload, IconUpload, IconCpu, IconRobot, IconLayoutKanban, IconMessage } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 import { RunnersList } from './RunnersList'
+import { ProjectEnvironmentModal } from './ProjectEnvironmentModal'
 import { SettingsModal } from '../Settings/SettingsModal'
 import { TaskManagerPanel } from '../TaskManager/TaskManagerPanel'
 import { useAuthStore } from '../../store/auth'
@@ -61,6 +62,7 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
   const [editingName, setEditingName] = useState('')
   const [editingType, setEditingType] = useState<'project' | 'session' | null>(null)
   const [activeProjectMenu, setActiveProjectMenu] = useState<string | null>(null)
+  const [envProject, setEnvProject] = useState<Project | null>(null)
   const [activeSessionMenu, setActiveSessionMenu] = useState<string | null>(null)
 
   const activeProject = projects.find(p => p.id === activeProjectId) ?? null
@@ -259,6 +261,13 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
         <input ref={importRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
 
         <RunnersList />
+        {envProject && (
+          <ProjectEnvironmentModal
+            project={envProject}
+            onClose={() => setEnvProject(null)}
+            onSaved={() => useStore.getState().loadProjects()}
+          />
+        )}
 
         {/* section nav — only shown when a project is active.
             Icon-only by design: keeps the row from overflowing the 244px panel
@@ -331,6 +340,13 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
                     >
                       <IconEdit size={14} />
                       <span>Rename</span>
+                    </button>
+                    <button
+                      className="nav-tree__menu-item"
+                      onClick={e => { e.stopPropagation(); setEnvProject(activeProject); setActiveProjectMenu(null) }}
+                    >
+                      <IconCpu size={14} />
+                      <span>Environment…</span>
                     </button>
                     <button
                       className="nav-tree__menu-item"

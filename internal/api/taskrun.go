@@ -80,6 +80,14 @@ func (h *Handler) startTask(card dbpkg.KanbanCard) dbpkg.KanbanCard {
 	}
 	if err := h.runTask(card); err != nil {
 		log.Printf("[task] run %q: %v", card.Title, err)
+		// The task could not start (for example no work dir on the agent's runner):
+		// say why on the card and park it in Blocked instead of leaving it silent.
+		_ = dbpkg.InsertCardComment(h.db, dbpkg.CardComment{
+			ID: uuid.New().String(), CardID: card.ID, Author: "lucode", Kind: "error", Body: err.Error(),
+		})
+		if moved, mErr := h.moveCardToKind(card, dbpkg.KanbanBlocked); mErr == nil {
+			return moved
+		}
 	}
 	return card
 }
@@ -177,7 +185,10 @@ func (h *Handler) runTask(card dbpkg.KanbanCard) error {
 		message = "This task was moved back to In Progress. Review the current state of the work and continue.\n\n" + message
 	}
 
-	opts := h.agentTurnOpts(sess, agent, card, proj, message)
+	opts, err := h.agentTurnOpts(sess, agent, card, proj, message)
+	if err != nil {
+		return err
+	}
 	if err := h.startTurn(opts); err != nil {
 		if errors.Is(err, sessionpkg.ErrSessionBusy) {
 			return nil // already running

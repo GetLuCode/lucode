@@ -229,3 +229,47 @@ func (h *Handler) projectWorkDirs(p dbpkg.Project) []string {
 	}
 	return p.WorkDirs
 }
+
+// turnEnv is where and with which AI an agent's turn runs: the agent's own choice
+// wins over the project's. An AI belongs to its runner, so when the agent picks a
+// different runner than the project's, the project's AI does not carry over.
+type turnEnv struct {
+	RunnerID    string   // "" = this instance
+	AIProfileID string   // preconfigured AI of that runner ("" = default account)
+	WorkDirs    []string // directories on that runner
+	ConfigDir   string   // claude_config_dir, resolved here only for this instance
+}
+
+func (h *Handler) resolveTurnEnv(agent dbpkg.Agent, p dbpkg.Project) (turnEnv, error) {
+	norm := func(id string) string {
+		if h.isRemoteRunner(id) {
+			return id
+		}
+		return ""
+	}
+	runner, aiID := norm(p.RunnerID), p.AIProfileID
+	if agent.RunnerID != "" {
+		if want := norm(agent.RunnerID); want != runner {
+			runner, aiID = want, "" // another runner: the project's AI is not valid there
+		}
+	}
+	if agent.AIProfileID != "" {
+		aiID = agent.AIProfileID
+	}
+	env := turnEnv{RunnerID: runner, AIProfileID: aiID}
+	if runner != "" {
+		env.WorkDirs = p.EnvDirs[runner]
+		if len(env.WorkDirs) == 0 {
+			return env, fmt.Errorf("project %q has no work dir on that runner: add one in the project settings", p.Name)
+		}
+		return env, nil // the runner resolves the AI's config dir itself
+	}
+	env.WorkDirs = p.WorkDirs
+	env.ConfigDir = p.ClaudeConfigDir
+	if aiID != "" {
+		if prof, err := dbpkg.GetAIProfile(h.db, aiID); err == nil {
+			env.ConfigDir = prof.ClaudeConfigDir
+		}
+	}
+	return env, nil
+}

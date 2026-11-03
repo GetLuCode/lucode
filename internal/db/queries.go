@@ -1238,6 +1238,10 @@ type Agent struct {
 	Executor    string    `json:"executor"`   // "aiapi" | "claude"
 	Persistent  bool      `json:"persistent"` // keep the claude -p process alive between turns
 	ReportsTo   string    `json:"reports_to"` // id of the supervising agent ("" = none)
+	// RunnerID and AIProfileID override the project's environment for this agent
+	// ("" = use the project's). The AI belongs to the runner it is set with.
+	RunnerID    string    `json:"runner_id"`
+	AIProfileID string    `json:"ai_profile_id"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -1245,13 +1249,13 @@ type Agent struct {
 // DefaultLucodeTools is every lucode tool; new agents start with all of them.
 var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info"}
 
-const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, created_at, updated_at`
+const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, created_at, updated_at`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var toolsJSON, lucodeJSON, createdAt, updatedAt string
 	if err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &lucodeJSON,
-		&a.Executor, &a.Persistent, &a.ReportsTo, &createdAt, &updatedAt); err != nil {
+		&a.Executor, &a.Persistent, &a.ReportsTo, &a.RunnerID, &a.AIProfileID, &createdAt, &updatedAt); err != nil {
 		return a, err
 	}
 	json.Unmarshal([]byte(toolsJSON), &a.Tools)
@@ -1278,8 +1282,8 @@ func lucodeToolsJSON(tools []string) string {
 func InsertAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo,
+		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID,
 	)
 	return err
 }
@@ -1312,8 +1316,8 @@ func GetAgent(db *sql.DB, id string) (Agent, error) {
 func UpdateAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.ID,
+		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, runner_id=?, ai_profile_id=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.ID,
 	)
 	return err
 }

@@ -68,6 +68,8 @@ export const getMinimaxTokenPlan = () =>
 export const listProjects = () => req<Project[]>('GET', '/api/projects')
 export const createProject = (data: Partial<Project>) => req<Project>('POST', '/api/projects', data)
 export const deleteProject = (id: string) => req<void>('DELETE', `/api/projects/${id}`)
+export const updateProjectEnvironment = (id: string, data: { runner_id: string; ai_profile_id: string; env_dirs?: Record<string, string[]> }) =>
+  req<void>('PATCH', `/api/projects/${id}`, data)
 export const renameProject = (id: string, name: string) => req<void>('PATCH', `/api/projects/${id}`, { name })
 
 // Sessions

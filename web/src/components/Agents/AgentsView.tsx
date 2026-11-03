@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconPlus, IconTrash, IconEdit, IconRobot, IconX, IconMessages } from '@tabler/icons-react'
 import { useStore } from '../../store'
-import type { Agent, Session } from '../../types'
+import type { Agent, AIProfile, Runner, Session } from '../../types'
 import * as api from '../../api'
 
 const MODELS = [
@@ -115,6 +115,8 @@ interface AgentFormData {
   reports_to: string
   scope: 'project' | 'global'
   lucode_tools: string[]
+  runner_id: string     // '' = the project's; 'local' = this instance
+  ai_profile_id: string // '' = the project's
 }
 
 const EMPTY_FORM: AgentFormData = {
@@ -128,6 +130,8 @@ const EMPTY_FORM: AgentFormData = {
   reports_to: '',
   scope: 'project',
   lucode_tools: LUCODE_TOOLS.map(t => t.name),
+  runner_id: '',
+  ai_profile_id: '',
 }
 
 function AgentForm({
@@ -148,6 +152,17 @@ function AgentForm({
   const [activeTab, setActiveTab] = useState<'general' | 'tools'>('general')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // Environment: the agent can pick its own runner and AI; empty means the project's.
+  const project = useStore(s => s.projects.find(p => p.id === s.activeProjectId))
+  const [runners, setRunners] = useState<Runner[]>([])
+  const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([])
+  useEffect(() => { api.listRunners().then(setRunners).catch(() => setRunners([])) }, [])
+  // The AIs offered are those of the runner the agent will use.
+  const aiRunner = form.runner_id || project?.runner_id || 'local'
+  useEffect(() => {
+    api.listAIProfiles(aiRunner).then(setAiProfiles).catch(() => setAiProfiles([]))
+  }, [aiRunner])
 
   function setField<K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) {
     setForm(f => ({ ...f, [k]: v }))
@@ -299,6 +314,41 @@ function AgentForm({
             Reports to: this agent&apos;s supervisor is told when it finishes, gets blocked or fails, and can be
             reached with agent_message. Keep alive (claude -p only): replies faster, but each active task holds a
             claude process in memory; it exits by itself after 30 idle minutes and the conversation resumes later.
+          </p>
+
+          <div className="agent-form__row">
+            <div className="agent-form__field">
+              <label className="agent-form__label">Runner</label>
+              <select
+                className="agent-form__select"
+                value={form.runner_id}
+                onChange={e => { setField('runner_id', e.target.value); setField('ai_profile_id', '') }}
+              >
+                <option value="">Project&apos;s runner</option>
+                {runners.map(r => (
+                  <option key={r.id} value={r.self ? 'local' : r.id}>
+                    {r.hostname}{r.self ? ' (this)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="agent-form__field">
+              <label className="agent-form__label">AI</label>
+              <select
+                className="agent-form__select"
+                value={form.ai_profile_id}
+                onChange={e => setField('ai_profile_id', e.target.value)}
+              >
+                <option value="">{form.runner_id ? 'Default account' : "Project's AI"}</option>
+                {aiProfiles.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}{p.email ? ` — ${p.email}` : ''}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
+            Where the agent runs and with which account. Empty uses the project&apos;s. Only claude -p agents run on
+            other runners, and the project needs a work dir on that runner.
           </p>
 
           <div className="agent-form__field">
@@ -522,6 +572,8 @@ export function AgentsView() {
             reports_to: view.edit.reports_to ?? '',
             scope: view.edit.scope ?? 'project',
             lucode_tools: view.edit.lucode_tools ?? LUCODE_TOOLS.map(t => t.name),
+            runner_id: view.edit.runner_id ?? '',
+            ai_profile_id: view.edit.ai_profile_id ?? '',
           }}
           selfId={view.edit.id}
           teammates={agents}
