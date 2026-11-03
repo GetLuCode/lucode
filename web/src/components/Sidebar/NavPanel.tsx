@@ -70,8 +70,14 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
     navigate(`/projects/${id}`)
   }
 
-  const handleWorkspacePickerConfirm = async (name: string, path: string, aiProfileId: string) => {
-    const p = await createProject({ name, work_dirs: [path], ...(aiProfileId ? { ai_profile_id: aiProfileId } : {}) })
+  const handleWorkspacePickerConfirm = async (name: string, path: string, env: { runnerId: string; aiProfileId: string }) => {
+    const p = await createProject({
+      name,
+      work_dirs: [path],
+      ...(env.aiProfileId ? { ai_profile_id: env.aiProfileId } : {}),
+      // on a peer runner the path belongs to that machine
+      ...(env.runnerId ? { runner_id: env.runnerId, env_dirs: { [env.runnerId]: [path] } } : {}),
+    })
     await setActiveProject(p.id)
     navigate(`/projects/${p.id}`)
   }

@@ -62,7 +62,12 @@ func (b *Bus) PublishStreamDone(replySubject string) error {
 // and calls cb for each streamed event. Returns when the stream is done or errors.
 // cb returns false to cancel early.
 func (b *Bus) AIAPIExecute(instanceID string, payload []byte, cb func(event []byte) bool) error {
-	subj := aiapiSubject(instanceID)
+	return b.streamExecute(aiapiSubject(instanceID), payload, cb)
+}
+
+// streamExecute publishes a request on subj and feeds the events streamed back on
+// its inbox to cb, until the done sentinel arrives.
+func (b *Bus) streamExecute(subj string, payload []byte, cb func(event []byte) bool) error {
 	inbox := nats.NewInbox()
 
 	sub, err := b.nc.SubscribeSync(inbox)

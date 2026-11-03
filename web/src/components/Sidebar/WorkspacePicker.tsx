@@ -2,12 +2,12 @@ import { IconChevronRight, IconFolder, IconX } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import * as api from '../../api'
-import type { AIProfile } from '../../types'
+import type { AIProfile, Runner } from '../../types'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
-  onConfirm: (name: string, path: string, aiProfileId: string) => void
+  onConfirm: (name: string, path: string, env: { runnerId: string; aiProfileId: string }) => void
 }
 
 export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
@@ -15,23 +15,35 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
   const [root, setRoot] = useState('')
   const [dirs, setDirs] = useState<string[]>([])
   const [name, setName] = useState('')
+  const [runners, setRunners] = useState<Runner[]>([])
+  const [runnerId, setRunnerId] = useState('') // '' = this instance
   const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([])
   const [aiProfileId, setAiProfileId] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const nameInputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch initial config and load directory
+  // Runners offered for the project (this instance first).
+  useEffect(() => {
+    if (!isOpen) return
+    setRunnerId('')
+    api.listRunners().then(setRunners).catch(() => setRunners([]))
+  }, [isOpen])
+
+  // Load the AIs and the starting directory of the chosen runner.
   useEffect(() => {
     if (!isOpen) return
 
     setError('')
     setLoading(true)
     setAiProfileId('')
-    api.listAIProfiles('local').then(setAiProfiles).catch(() => setAiProfiles([]))
-    api
-      .getConfig()
-      .then(config => api.listDirs(config.working_dir || ''))
+    api.listAIProfiles(runnerId || 'local').then(setAiProfiles).catch(() => setAiProfiles([]))
+    // A peer lists its own root when no path is given; this instance starts at the configured one.
+    const start = runnerId
+      ? Promise.resolve('')
+      : api.getConfig().then(config => config.working_dir || '')
+    start
+      .then(dir => api.listDirs(dir, runnerId || undefined))
       .then(result => {
         setRoot(result.path)
         setCurrentPath(result.path)
@@ -39,10 +51,13 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
       })
       .catch(err => {
         console.error('Failed to load dirs:', err)
+        setRoot('')
+        setCurrentPath('')
+        setDirs([])
         setError(err.message || 'Failed to load directories')
       })
       .finally(() => setLoading(false))
-  }, [isOpen])
+  }, [isOpen, runnerId])
 
   // Calculate segments BEFORE using them in effects
   const relativePath = root && currentPath.startsWith(root)
@@ -69,7 +84,7 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
     setLoading(true)
     setError('')
     try {
-      const result = await api.listDirs(path)
+      const result = await api.listDirs(path, runnerId || undefined)
       setCurrentPath(result.path)
       setDirs(result.dirs || [])
     } catch (err) {
@@ -90,7 +105,7 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
       setError('Name is required')
       return
     }
-    onConfirm(name.trim(), currentPath, aiProfileId)
+    onConfirm(name.trim(), currentPath, { runnerId, aiProfileId })
     onClose()
   }
 
@@ -193,7 +208,21 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
           />
         </div>
 
-        {/* Preconfigured AI of this runner */}
+        {/* Runner: the machine the project works on */}
+        {runners.length > 1 && (
+          <div className="workspace-picker__name-input">
+            <label>Runner</label>
+            <select className="input" value={runnerId} onChange={e => setRunnerId(e.target.value)}>
+              {runners.map(r => (
+                <option key={r.id} value={r.self ? '' : r.id}>
+                  {r.hostname}{r.self ? ' (this)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Preconfigured AI of the chosen runner */}
         <div className="workspace-picker__name-input">
           <label>AI</label>
           <select className="input" value={aiProfileId} onChange={e => setAiProfileId(e.target.value)}>

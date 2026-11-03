@@ -51,20 +51,28 @@ func (h *Handler) startTurn(opts sessionpkg.TurnOptions) error {
 // agentTurnOpts is the turn configuration for a task session on its agent.
 func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpkg.KanbanCard, proj dbpkg.Project, message string) sessionpkg.TurnOptions {
 	provider, model := resolveProvider("", agent.Model)
+	// A project on a peer runner runs its agents there: the work dirs are the
+	// runner's and its AI is resolved by the runner, so the hub sends no config dir.
+	runner, configDir := "", h.projectConfigDir(proj)
+	if h.isRemoteRunner(proj.RunnerID) {
+		runner, configDir = proj.RunnerID, ""
+	}
 	return sessionpkg.TurnOptions{
 		SessionID:       sess.ID,
 		ProjectID:       sess.ProjectID,
 		Message:         message,
 		Model:           model,
 		Provider:        provider,
-		WorkDirs:        proj.WorkDirs,
-		ClaudeConfigDir: h.projectConfigDir(proj),
+		WorkDirs:        h.projectWorkDirs(proj),
+		ClaudeConfigDir: configDir,
+		RunnerID:        runner,
+		AIProfileID:     proj.AIProfileID,
 		Resume:          sess.MessageCount > 0,
 		Executor:        agent.Executor,
 		SystemPrompt:    agentSystemPrompt(agent, card, h.supervisorName(agent)),
 		AgentName:       agent.Name,
 		Tools:           agent.Tools,
-		Persistent:      agent.Persistent && agent.Executor == "claude",
+		Persistent:      agent.Persistent && agent.Executor == "claude" && runner == "", // remote turns are one-shot
 		LucodeTools:     agent.LucodeTools,
 	}
 }

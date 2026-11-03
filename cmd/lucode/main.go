@@ -109,12 +109,18 @@ func main() {
 
 	handler := apipkg.New(db, bus, manager, *workingDir)
 	bus.OnTaskTool = handler.HandleTaskTool
+	bus.OwnsSession = func(id string) bool { _, err := dbpkg.GetSession(db, id); return err == nil }
 	manager.OnTurnEnd = handler.DrainInbox         // deliver messages other agents queued
 	manager.OnTurnFailed = handler.HandleTurnFailed // unresumable sessions etc.
 	handler.SetAuthURL(*authURL)
 	handler.SetAIAPIURL(*aiAPIURL)
 	if *minimaxSubKey != "" {
 		handler.SetMinimaxSubscriptionKey(*minimaxSubKey)
+	}
+
+	// Accept turns hubs send to this instance as a runner.
+	if err := bus.StartRunnerServer(manager.ServeRemoteTurn, manager.CancelRemoteTurn); err != nil {
+		log.Printf("[runner] start error: %v", err)
 	}
 
 	// Start RPC server after handler is created so it can serve remote requests

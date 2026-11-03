@@ -70,6 +70,12 @@ type Bus struct {
 	// reported to it as a failed tool call.
 	OnTaskTool func(sessID, tool string, args json.RawMessage) (string, error)
 
+	// OwnsSession reports whether a session belongs to this instance. Every lucode
+	// on the NATS server sees the hook, permission and task-tool subjects of every
+	// session, so an instance must ignore the ones it does not own (for example a
+	// session a hub runs on this instance as a runner). Nil = own all.
+	OwnsSession func(sessID string) bool
+
 	// discovery
 	peersMu       sync.RWMutex
 	selfInfo      InstanceInfo
@@ -191,6 +197,10 @@ func (b *Bus) publish(subj string, event any) {
 
 // --- inbound handlers ---
 
+func (b *Bus) owns(sessID string) bool {
+	return b.OwnsSession == nil || b.OwnsSession(sessID)
+}
+
 func (b *Bus) handleHookRequest(msg *nats.Msg) {
 	var req struct {
 		Type      string          `json:"type"`
@@ -203,7 +213,7 @@ func (b *Bus) handleHookRequest(msg *nats.Msg) {
 		log.Printf("[natsbus] hook request parse error: %v", err)
 		return
 	}
-	if b.OnHookRequest == nil {
+	if b.OnHookRequest == nil || !b.owns(req.SessionID) {
 		return
 	}
 	log.Printf("[natsbus] hook_request sess=%s tool=%s id=%s", req.SessionID, req.ToolName, req.ToolUseID)
@@ -225,7 +235,7 @@ func (b *Bus) handleSessionCmd(msg *nats.Msg) {
 	}
 	switch cmd.Type {
 	case "hook_respond":
-		if b.OnHookRespond != nil {
+		if b.OnHookRespond != nil && b.owns(cmd.SessionID) {
 			log.Printf("[natsbus] hook_respond sess=%s tool=%s decision=%s", cmd.SessionID, cmd.ToolUseID, cmd.Decision)
 			b.OnHookRespond(cmd.SessionID, cmd.ToolUseID, cmd.Decision, cmd.Reason, cmd.Rule)
 		}
@@ -255,6 +265,9 @@ func (b *Bus) handlePermissionRequest(msg *nats.Msg) {
 		log.Printf("[natsbus] permission request bad subject: %s", msg.Subject)
 		b.replyDeny(msg, "bad subject")
 		return
+	}
+	if !b.owns(sessID) {
+		return // another instance owns this session and answers it
 	}
 	if b.OnPermissionRequest == nil {
 		b.replyDeny(msg, "permission gate not configured")
@@ -303,6 +316,9 @@ func (b *Bus) handleTaskTool(msg *nats.Msg) {
 	if len(msg.Subject) <= len(prefix) {
 		reply(false, "bad subject")
 		return
+	}
+	if !b.owns(msg.Subject[len(prefix):]) {
+		return // another instance owns this session and answers it
 	}
 	if b.OnTaskTool == nil {
 		reply(false, "task tools not configured")

@@ -195,10 +195,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)
 	mux.HandleFunc("DELETE /api/ai-profiles/{id}", h.deleteAIProfile)
 	mux.HandleFunc("GET /api/runners", h.listRunners)
-	root := func(*http.Request) string { return "" }
+	root := func(*http.Request) string { return "/api/ai-profiles" }
 	byID := func(tail string) func(*http.Request) string {
-		return func(r *http.Request) string { return "/" + r.PathValue("id") + tail }
+		return func(r *http.Request) string { return "/api/ai-profiles/" + r.PathValue("id") + tail }
 	}
+	mux.HandleFunc("GET /api/runners/{rid}/dirs", h.runnerAI(h.listDirs, func(*http.Request) string { return "/api/fs/dirs" }))
 	mux.HandleFunc("GET /api/runners/{rid}/ai-profiles", h.runnerAI(h.listAIProfiles, root))
 	mux.HandleFunc("POST /api/runners/{rid}/ai-profiles", h.runnerAI(h.createAIProfile, root))
 	mux.HandleFunc("POST /api/runners/{rid}/ai-profiles/{id}/refresh", h.runnerAI(h.refreshAIProfile, byID("/refresh")))
@@ -368,6 +369,8 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		DefaultModel    string   `json:"default_model"`
 		RunnerID        string   `json:"runner_id"`
 		AIProfileID     string   `json:"ai_profile_id"`
+		// Work dirs on the chosen runner when it is a peer (WorkDirs is for this one).
+		EnvDirs map[string][]string `json:"env_dirs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -384,6 +387,7 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		DefaultModel:    body.DefaultModel,
 		RunnerID:        body.RunnerID,
 		AIProfileID:     body.AIProfileID,
+		EnvDirs:         body.EnvDirs,
 	}
 	if err := dbpkg.InsertProject(h.db, p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1170,17 +1174,24 @@ func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
 		ClaudeConfigDir *string `json:"claude_config_dir"`
 		RunnerID        *string `json:"runner_id"`
 		AIProfileID     *string `json:"ai_profile_id"`
+		EnvDirs         map[string][]string `json:"env_dirs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.Name == "" && body.ClaudeConfigDir == nil && body.RunnerID == nil && body.AIProfileID == nil {
+	if body.Name == "" && body.ClaudeConfigDir == nil && body.RunnerID == nil && body.AIProfileID == nil && body.EnvDirs == nil {
 		http.Error(w, "nothing to update", http.StatusBadRequest)
 		return
 	}
 	if body.Name != "" {
 		if err := dbpkg.UpdateProjectName(h.db, id, body.Name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if body.EnvDirs != nil {
+		if err := dbpkg.UpdateProjectEnvDirs(h.db, id, body.EnvDirs); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

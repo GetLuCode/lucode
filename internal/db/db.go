@@ -250,6 +250,8 @@ CREATE TABLE IF NOT EXISTS ai_profiles (
 	// projects.runner_id / ai_profile_id — the environment and preconfigured AI a project uses (idempotent)
 	db.Exec(`ALTER TABLE projects ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE projects ADD COLUMN ai_profile_id TEXT NOT NULL DEFAULT ''`)
+	// projects.env_dirs — work dirs per runner: {"<runner id>": ["/path", ...]}
+	db.Exec(`ALTER TABLE projects ADD COLUMN env_dirs TEXT NOT NULL DEFAULT '{}'`)
 
 	// projects.aiapi_instance_id — which aiapi instance to use for this project (idempotent)
 	db.Exec(`ALTER TABLE projects ADD COLUMN aiapi_instance_id TEXT NOT NULL DEFAULT ''`)

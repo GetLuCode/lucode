@@ -11,6 +11,7 @@ export interface Project {
   aiapi_instance_id?: string
   runner_id?: string
   ai_profile_id?: string
+  env_dirs?: Record<string, string[]>
   created_at: string
 }
 

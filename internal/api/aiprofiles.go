@@ -178,9 +178,9 @@ func (h *Handler) listRunners(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, out)
 }
 
-// runnerAI runs one of the AI actions on the runner named in the path: locally
+// runnerAI runs one of the actions on the runner named in the path: locally
 // when it is this instance, otherwise on the peer over NATS.
-func (h *Handler) runnerAI(local http.HandlerFunc, suffix func(r *http.Request) string) http.HandlerFunc {
+func (h *Handler) runnerAI(local http.HandlerFunc, target func(r *http.Request) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rid := r.PathValue("rid")
 		if rid == "local" || rid == h.bus.SelfInfo().ID {
@@ -188,7 +188,7 @@ func (h *Handler) runnerAI(local http.HandlerFunc, suffix func(r *http.Request) 
 			return
 		}
 		r2 := r.Clone(r.Context())
-		r2.URL.Path = "/api/ai-profiles" + suffix(r)
+		r2.URL.Path = target(r)
 		r2.Header.Del("X-Lucode-Remote")
 		resp, err := h.bus.RPCRequest(rid, r2)
 		if err != nil {
@@ -215,4 +215,17 @@ func (h *Handler) projectConfigDir(p dbpkg.Project) string {
 		}
 	}
 	return p.ClaudeConfigDir
+}
+
+// isRemoteRunner reports whether id names a peer, not this instance.
+func (h *Handler) isRemoteRunner(id string) bool {
+	return id != "" && id != "local" && id != h.bus.SelfInfo().ID
+}
+
+// projectWorkDirs are the directories a project uses on the runner it works on.
+func (h *Handler) projectWorkDirs(p dbpkg.Project) []string {
+	if h.isRemoteRunner(p.RunnerID) {
+		return p.EnvDirs[p.RunnerID]
+	}
+	return p.WorkDirs
 }

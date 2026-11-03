@@ -13,28 +13,33 @@ import (
 // ---- Project ----
 
 type Project struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	WorkDirs        []string  `json:"work_dirs"`
-	ClaudeConfigDir string    `json:"claude_config_dir"`
-	DefaultModel    string    `json:"default_model"`
-	AIAPIInstanceID string    `json:"aiapi_instance_id,omitempty"`
-	RunnerID        string    `json:"runner_id"`    // instance the project runs on ("" = this one)
-	AIProfileID     string    `json:"ai_profile_id"` // preconfigured AI of that runner ("" = default account)
-	CreatedAt       time.Time `json:"created_at"`
+	ID              string              `json:"id"`
+	Name            string              `json:"name"`
+	WorkDirs        []string            `json:"work_dirs"`
+	ClaudeConfigDir string              `json:"claude_config_dir"`
+	DefaultModel    string              `json:"default_model"`
+	AIAPIInstanceID string              `json:"aiapi_instance_id,omitempty"`
+	RunnerID        string              `json:"runner_id"`     // instance the project runs on ("" = this one)
+	AIProfileID     string              `json:"ai_profile_id"` // preconfigured AI of that runner ("" = default account)
+	EnvDirs         map[string][]string `json:"env_dirs"`      // work dirs on each runner other than this one
+	CreatedAt       time.Time           `json:"created_at"`
 }
 
 func InsertProject(db *sql.DB, p Project) error {
 	dirs, _ := json.Marshal(p.WorkDirs)
+	env, _ := json.Marshal(p.EnvDirs)
+	if p.EnvDirs == nil {
+		env = []byte("{}")
+	}
 	_, err := db.Exec(
-		`INSERT INTO projects (id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id) VALUES (?,?,?,?,?,?,?,?)`,
-		p.ID, p.Name, string(dirs), p.ClaudeConfigDir, p.DefaultModel, p.AIAPIInstanceID, p.RunnerID, p.AIProfileID,
+		`INSERT INTO projects (id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, env_dirs) VALUES (?,?,?,?,?,?,?,?,?)`,
+		p.ID, p.Name, string(dirs), p.ClaudeConfigDir, p.DefaultModel, p.AIAPIInstanceID, p.RunnerID, p.AIProfileID, string(env),
 	)
 	return err
 }
 
 func ListProjects(db *sql.DB) ([]Project, error) {
-	rows, err := db.Query(`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, created_at FROM projects ORDER BY created_at DESC`)
+	rows, err := db.Query(`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, env_dirs, created_at FROM projects ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -42,11 +47,12 @@ func ListProjects(db *sql.DB) ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		var dirsJSON, createdAt string
-		if err := rows.Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &p.RunnerID, &p.AIProfileID, &createdAt); err != nil {
+		var dirsJSON, envJSON, createdAt string
+		if err := rows.Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &p.RunnerID, &p.AIProfileID, &envJSON, &createdAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(dirsJSON), &p.WorkDirs)
+		json.Unmarshal([]byte(envJSON), &p.EnvDirs)
 		p.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		out = append(out, p)
 	}
@@ -55,14 +61,15 @@ func ListProjects(db *sql.DB) ([]Project, error) {
 
 func GetProject(db *sql.DB, id string) (Project, error) {
 	var p Project
-	var dirsJSON, createdAt string
+	var dirsJSON, envJSON, createdAt string
 	err := db.QueryRow(
-		`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, created_at FROM projects WHERE id=?`, id,
-	).Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &p.RunnerID, &p.AIProfileID, &createdAt)
+		`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, env_dirs, created_at FROM projects WHERE id=?`, id,
+	).Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &p.RunnerID, &p.AIProfileID, &envJSON, &createdAt)
 	if err != nil {
 		return p, err
 	}
 	json.Unmarshal([]byte(dirsJSON), &p.WorkDirs)
+	json.Unmarshal([]byte(envJSON), &p.EnvDirs)
 	p.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	return p, nil
 }
@@ -394,11 +401,11 @@ func ListStarredMessages(db *sql.DB, sessionID string) ([]Message, error) {
 // ---- Pending Hook ----
 
 type PendingHook struct {
-	SessionID  string    `json:"session_id"`
-	ToolUseID  string    `json:"tool_use_id"`
-	ToolName   string    `json:"tool_name"`
-	ToolInput  string    `json:"tool_input"`
-	CreatedAt  time.Time `json:"created_at"`
+	SessionID string    `json:"session_id"`
+	ToolUseID string    `json:"tool_use_id"`
+	ToolName  string    `json:"tool_name"`
+	ToolInput string    `json:"tool_input"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func InsertPendingHook(db *sql.DB, h PendingHook) error {
@@ -756,16 +763,16 @@ func DeleteAPIKey(db *sql.DB, id, userID string) error {
 // ---- TurnUsage ----
 
 type TurnUsage struct {
-	ID                        string    `json:"id"`
-	SessionID                 string    `json:"session_id"`
-	ProjectID                 string    `json:"project_id"`
-	AccountID                 string    `json:"account_id"`
-	Model                     string    `json:"model"`
-	InputTokens               int       `json:"input_tokens"`
-	OutputTokens              int       `json:"output_tokens"`
-	CacheCreationInputTokens  int       `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens      int       `json:"cache_read_input_tokens"`
-	CreatedAt                 time.Time `json:"created_at"`
+	ID                       string    `json:"id"`
+	SessionID                string    `json:"session_id"`
+	ProjectID                string    `json:"project_id"`
+	AccountID                string    `json:"account_id"`
+	Model                    string    `json:"model"`
+	InputTokens              int       `json:"input_tokens"`
+	OutputTokens             int       `json:"output_tokens"`
+	CacheCreationInputTokens int       `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int       `json:"cache_read_input_tokens"`
+	CreatedAt                time.Time `json:"created_at"`
 }
 
 func InsertTurnUsage(db *sql.DB, u TurnUsage) error {
@@ -970,13 +977,13 @@ func nullStr(s string) interface{} {
 // ---- Search ----
 
 type SearchResult struct {
-	Type      string `json:"type"`       // "project" | "session" | "message"
+	Type      string `json:"type"` // "project" | "session" | "message"
 	ID        string `json:"id"`
 	ProjectID string `json:"project_id"`
 	SessionID string `json:"session_id"`
-	Title     string `json:"title"`      // project name, session name, or message snippet
-	Snippet   string `json:"snippet"`    // matched text excerpt (messages only)
-	Seq       int    `json:"seq"`        // message sequence number (messages only)
+	Title     string `json:"title"`   // project name, session name, or message snippet
+	Snippet   string `json:"snippet"` // matched text excerpt (messages only)
+	Seq       int    `json:"seq"`     // message sequence number (messages only)
 }
 
 // Search searches for projects, sessions, and messages by query string.
@@ -1569,7 +1576,6 @@ func DeleteSessionRule(db *sql.DB, sessID, ruleID string) error {
 	return err
 }
 
-
 // ---- Task sessions ----
 
 // GetSessionByCard returns the session that belongs to a kanban card (task).
@@ -1612,7 +1618,6 @@ func UpdateSessionAgent(db *sql.DB, id, agentID, model string) error {
 	return err
 }
 
-
 // backfillKanbanListKinds assigns a workflow role to existing lists whose name
 // matches one of the defaults (case/space/dash-insensitive). Idempotent.
 func backfillKanbanListKinds(db *sql.DB) {
@@ -1637,7 +1642,6 @@ func backfillKanbanListKinds(db *sql.DB) {
 		}
 	}
 }
-
 
 // ---- Card comments ----
 
@@ -1685,5 +1689,15 @@ func ListCardComments(db *sql.DB, cardID string) ([]CardComment, error) {
 // UpdateProjectEnvironment sets the runner and preconfigured AI a project uses.
 func UpdateProjectEnvironment(db *sql.DB, id, runnerID, aiProfileID string) error {
 	_, err := db.Exec(`UPDATE projects SET runner_id=?, ai_profile_id=? WHERE id=?`, runnerID, aiProfileID, id)
+	return err
+}
+
+// UpdateProjectEnvDirs sets the work dirs a project uses on each runner.
+func UpdateProjectEnvDirs(db *sql.DB, id string, envDirs map[string][]string) error {
+	data, _ := json.Marshal(envDirs)
+	if envDirs == nil {
+		data = []byte("{}")
+	}
+	_, err := db.Exec(`UPDATE projects SET env_dirs=? WHERE id=?`, string(data), id)
 	return err
 }

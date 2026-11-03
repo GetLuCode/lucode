@@ -120,8 +120,14 @@ export const listOllamaModels = () =>
 
 // Config & filesystem
 export const getConfig = () => req<{ working_dir: string }>('GET', '/api/config')
-export const listDirs = (path: string) =>
-  req<{ path: string; parent: string; dirs: string[] }>('GET', `/api/fs/dirs?path=${encodeURIComponent(path)}`)
+// runnerId browses the directories of a peer runner instead of this machine.
+export const listDirs = (path: string, runnerId?: string) =>
+  req<{ path: string; parent: string; dirs: string[] }>(
+    'GET',
+    runnerId
+      ? `/api/runners/${runnerId}/dirs?path=${encodeURIComponent(path)}`
+      : `/api/fs/dirs?path=${encodeURIComponent(path)}`,
+  )
 
 // Claude accounts: removed in the MiniMax pivot. The /api/accounts/*
 // endpoints on the backend return 410 Gone. Nothing to call here.

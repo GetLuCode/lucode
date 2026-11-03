@@ -213,7 +213,9 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	m.procs[opts.SessionID] = ps
 	m.mu.Unlock()
 
-	if opts.Executor == "claude" {
+	if opts.Executor == "claude" && opts.RunnerID != "" {
+		go m.runWithRemoteCLI(ctx, ps, opts)
+	} else if opts.Executor == "claude" {
 		go m.runWithCLI(ctx, ps, opts)
 	} else if opts.AIAPIInstanceID != "" {
 		go m.runWithNATSAIAPI(ctx, ps, opts, history)
