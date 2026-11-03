@@ -69,7 +69,7 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
 
   const handleSelectProject = async (id: string) => {
     await setActiveProject(id)
-    navigate(`/projects/${id}`)
+    navigate(`/projects/${id}/kanban`)
   }
 
   const handleWorkspacePickerConfirm = async (name: string, path: string, env: { runnerId: string; aiProfileId: string }) => {
@@ -83,7 +83,7 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
       ...(remote ? { runner_id: env.runnerId, env_dirs: { [env.runnerId]: [path] } } : {}),
     })
     await setActiveProject(p.id)
-    navigate(`/projects/${p.id}`)
+    navigate(`/projects/${p.id}/kanban`)
   }
 
   // Chats now belong to tasks: a "new session" is a new task on the board.
@@ -277,6 +277,14 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
         {activeProject && (
           <div className="nav-panel__section-nav">
             <button
+              className={`nav-panel__section-btn${location.pathname.includes('/kanban') ? ' nav-panel__section-btn--active' : ''}`}
+              onClick={() => navigate(`/projects/${activeProject.id}/kanban`)}
+              title="Kanban"
+              aria-label="Kanban"
+            >
+              <IconLayoutKanban size={14} />
+            </button>
+            <button
               className={`nav-panel__section-btn${!location.pathname.includes('/agents') && !location.pathname.includes('/kanban') && !location.pathname.includes('/checkpoints') ? ' nav-panel__section-btn--active' : ''}`}
               onClick={() => navigate(`/projects/${activeProject.id}`)}
               title="Sessions"
@@ -291,14 +299,6 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
               aria-label="Agents"
             >
               <IconRobot size={14} />
-            </button>
-            <button
-              className={`nav-panel__section-btn${location.pathname.includes('/kanban') ? ' nav-panel__section-btn--active' : ''}`}
-              onClick={() => navigate(`/projects/${activeProject.id}/kanban`)}
-              title="Kanban"
-              aria-label="Kanban"
-            >
-              <IconLayoutKanban size={14} />
             </button>
           </div>
         )}

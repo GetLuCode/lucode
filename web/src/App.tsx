@@ -72,7 +72,8 @@ export default function App() {
     if (activeProjectId && activeSessionId) {
       navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
     } else if (activeProjectId) {
-      navigate(`/projects/${activeProjectId}`, { replace: true })
+      // Opening the app (path "/") lands on the board; /projects/:id stays the sessions view.
+      navigate(location.pathname === '/' ? `/projects/${activeProjectId}/kanban` : `/projects/${activeProjectId}`, { replace: true })
     }
   }, [activeProjectId, activeSessionId, navigate, location.pathname])
 
