@@ -49,7 +49,11 @@ func (b *Bus) StartAIAPIServer(fn func(payload []byte, replySubject string)) err
 // PublishStreamEvent publishes a single SSE event JSON to the given reply subject.
 // Used by aiapi to stream events back to the requesting lucode.
 func (b *Bus) PublishStreamEvent(replySubject string, event []byte) error {
-	return b.nc.Publish(replySubject, event)
+	data, err := b.encodeLarge(event)
+	if err != nil {
+		return err
+	}
+	return b.nc.Publish(replySubject, data)
 }
 
 // PublishStreamDone signals the end of an aiapi stream.
@@ -91,6 +95,12 @@ func (b *Bus) streamExecute(subj string, payload []byte, cb func(event []byte) b
 		if err != nil {
 			return fmt.Errorf("stream receive: %w", err)
 		}
+
+		data, err := b.decodeLarge(msg.Data)
+		if err != nil {
+			return err
+		}
+		msg.Data = data
 
 		// Check for done sentinel before calling cb
 		var peek struct {

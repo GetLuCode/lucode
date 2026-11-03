@@ -76,6 +76,9 @@ type Bus struct {
 	// session a hub runs on this instance as a runner). Nil = own all.
 	OwnsSession func(sessID string) bool
 
+	// large holds the Object Store used for messages above the NATS limit
+	large largeStore
+
 	// discovery
 	peersMu       sync.RWMutex
 	selfInfo      InstanceInfo

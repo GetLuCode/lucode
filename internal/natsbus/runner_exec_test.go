@@ -10,11 +10,13 @@ import (
 
 // These tests talk to a real NATS server (the one lucode uses in development) and
 // are skipped when none is listening.
-func testBus(t *testing.T, id string) *Bus {
+func testBus(t *testing.T, id string) *Bus { return testBusAt(t, "nats://127.0.0.1:4222", id) }
+
+func testBusAt(t *testing.T, url, id string) *Bus {
 	t.Helper()
-	nc, err := nats.Connect("nats://127.0.0.1:4222", nats.Timeout(time.Second))
+	nc, err := nats.Connect(url, nats.Timeout(time.Second))
 	if err != nil {
-		t.Skipf("no NATS server on 4222: %v", err)
+		t.Skipf("no NATS server on %s: %v", url, err)
 	}
 	t.Cleanup(nc.Close)
 	b := NewBus(nc)
@@ -34,7 +36,7 @@ func TestRunnerStreamsEventsAndCancels(t *testing.T) {
 		runner.PublishStreamEvent(reply, []byte(`{"type":"message_ready","role":"assistant","content":"hi from runner"}`))
 		runner.PublishStreamEvent(reply, []byte(`{"type":"heartbeat"}`))
 		runner.PublishStreamDone(reply)
-	}, func(sessID string) { cancelled <- sessID })
+	}, func(sessID string) { cancelled <- sessID }, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}

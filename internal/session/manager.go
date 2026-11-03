@@ -29,6 +29,8 @@ type Manager struct {
 	// Live claude processes by session (agents with Persistent set).
 	liveMu sync.Mutex
 	lives  map[string]*execpkg.Live
+	// remoteRunnerOf: runner holding the persistent process of a session run remotely.
+	remoteRunnerOf map[string]string
 
 	// OnTurnEnd runs after a turn finishes and the session is free again (used to
 	// deliver messages other agents queued for it).
@@ -72,6 +74,7 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 		claudeSettings:     claudeSettings,
 		procs:              make(map[string]*ProcessState),
 		lives:              make(map[string]*execpkg.Live),
+		remoteRunnerOf:     make(map[string]string),
 		turnCounters:       make(map[string]int),
 		pendingApprovals:   make(map[string]chan hookResponse),
 		deniedThisTurn:     make(map[string]bool),

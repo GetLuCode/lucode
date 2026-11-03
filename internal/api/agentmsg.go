@@ -72,7 +72,7 @@ func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpk
 		SystemPrompt:    agentSystemPrompt(agent, card, h.supervisorName(agent)),
 		AgentName:       agent.Name,
 		Tools:           agent.Tools,
-		Persistent:      agent.Persistent && agent.Executor == "claude" && runner == "", // remote turns are one-shot
+		Persistent:      agent.Persistent && agent.Executor == "claude",
 		LucodeTools:     agent.LucodeTools,
 	}, nil
 }

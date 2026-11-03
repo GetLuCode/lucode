@@ -23,14 +23,50 @@ type RemoteTurn struct {
 	// AIProfileID names a preconfigured AI of the runner; the runner resolves its
 	// claude_config_dir because that path only exists there.
 	AIProfileID string `json:"ai_profile_id,omitempty"`
+	// Persistent keeps the claude process alive on the runner between turns.
+	Persistent bool `json:"persistent,omitempty"`
 }
 
 const remoteHeartbeat = 30 * time.Second
 
 var (
-	remoteMu   sync.Mutex
-	remoteRuns = map[string]context.CancelFunc{} // sessions this instance runs for a hub
+	remoteMu    sync.Mutex
+	remoteRuns  = map[string]context.CancelFunc{} // turns this instance runs for a hub
+	remoteLives = map[string]*remoteLive{}        // persistent processes it keeps for a hub
 )
+
+// remoteLive is a persistent claude process of a session a hub owns. Its events
+// go to the inbox of the turn in flight, which changes with every turn.
+type remoteLive struct {
+	live *execpkg.Live
+
+	mu      sync.Mutex
+	sink    func(map[string]any) // publishes to the current turn's inbox
+	ctxSeen chan struct{}        // closed when the turn's context_usage arrives
+}
+
+func (r *remoteLive) setTurn(sink func(map[string]any)) {
+	r.mu.Lock()
+	r.sink = sink
+	r.ctxSeen = make(chan struct{})
+	r.mu.Unlock()
+}
+
+func (r *remoteLive) publish(ev map[string]any) {
+	r.mu.Lock()
+	sink, seen := r.sink, r.ctxSeen
+	r.mu.Unlock()
+	if sink != nil {
+		sink(ev)
+	}
+	if t, _ := ev["type"].(string); t == "context_usage" && seen != nil {
+		select {
+		case <-seen:
+		default:
+			close(seen)
+		}
+	}
+}
 
 // runWithRemoteCLI runs an agent turn on opts.RunnerID and relays its events.
 func (m *Manager) runWithRemoteCLI(ctx context.Context, ps *ProcessState, opts TurnOptions) {
@@ -61,8 +97,14 @@ func (m *Manager) runWithRemoteCLI(ctx context.Context, ps *ProcessState, opts T
 		},
 		LucodeTools: opts.LucodeTools,
 		AIProfileID: opts.AIProfileID,
+		Persistent:  opts.Persistent,
 	}
 	data, _ := json.Marshal(rt)
+	if opts.Persistent {
+		m.liveMu.Lock()
+		m.remoteRunnerOf[sessID] = opts.RunnerID // so CloseLive can reach the process
+		m.liveMu.Unlock()
+	}
 
 	stop := make(chan struct{})
 	defer close(stop)
@@ -155,7 +197,85 @@ func (m *Manager) ServeRemoteTurn(payload []byte, replySubject string) {
 		}
 	}()
 
+	if rt.Persistent {
+		m.serveRemoteLive(ctx, req, send)
+		return
+	}
 	execpkg.Run(ctx, req, send)
+}
+
+// serveRemoteLive runs a turn on the session's persistent process, starting one if
+// there is none (or it is unusable), and returns when the turn ends.
+func (m *Manager) serveRemoteLive(ctx context.Context, req execpkg.TurnRequest, send func(map[string]any)) {
+	sessID := req.SessionID
+
+	remoteMu.Lock()
+	rl := remoteLives[sessID]
+	remoteMu.Unlock()
+
+	var done <-chan struct{}
+	if rl != nil {
+		rl.setTurn(send)
+		d, err := rl.live.Send(req.Message, req.ImageBase64, req.ImageMediaType)
+		if err == nil {
+			done = d
+		} else {
+			log.Printf("[runner] live process for %s unusable (%v); starting a new one", sessID[:8], err)
+			dropRemoteLive(sessID, rl)
+			rl.live.Kill()
+			rl = nil
+		}
+	}
+	if rl == nil {
+		rl = &remoteLive{}
+		rl.setTurn(send)
+		cur := rl
+		live, d, err := execpkg.StartLive(req, rl.publish, func() { dropRemoteLive(sessID, cur) })
+		if err != nil {
+			send(map[string]any{"type": "error", "session_id": sessID, "message": err.Error()})
+			send(map[string]any{"type": "session_status", "session_id": sessID, "status": "error"})
+			return
+		}
+		rl.live, done = live, d
+		remoteMu.Lock()
+		remoteLives[sessID] = rl
+		remoteMu.Unlock()
+	}
+
+	select {
+	case <-done:
+		// claude reports the context usage right after the result; let it through
+		// before the stream is closed, as it would arrive to nobody afterwards.
+		rl.mu.Lock()
+		seen := rl.ctxSeen
+		rl.mu.Unlock()
+		select {
+		case <-seen:
+		case <-time.After(3 * time.Second):
+		}
+	case <-ctx.Done(): // cancelled by the user (or the turn timed out): stop the process
+		rl.live.Kill()
+	}
+}
+
+func dropRemoteLive(sessID string, rl *remoteLive) {
+	remoteMu.Lock()
+	if remoteLives[sessID] == rl {
+		delete(remoteLives, sessID)
+	}
+	remoteMu.Unlock()
+}
+
+// CloseRemoteLive closes the persistent process kept for a hub's session; the
+// next turn starts a fresh one with --resume.
+func (m *Manager) CloseRemoteLive(sessID string) {
+	remoteMu.Lock()
+	rl := remoteLives[sessID]
+	delete(remoteLives, sessID)
+	remoteMu.Unlock()
+	if rl != nil {
+		rl.live.Close()
+	}
 }
 
 // CancelRemoteTurn stops a turn this instance runs for a hub.

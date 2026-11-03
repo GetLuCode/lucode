@@ -119,7 +119,7 @@ func main() {
 	}
 
 	// Accept turns hubs send to this instance as a runner.
-	if err := bus.StartRunnerServer(manager.ServeRemoteTurn, manager.CancelRemoteTurn); err != nil {
+	if err := bus.StartRunnerServer(manager.ServeRemoteTurn, manager.CancelRemoteTurn, manager.CloseRemoteLive); err != nil {
 		log.Printf("[runner] start error: %v", err)
 	}
 
