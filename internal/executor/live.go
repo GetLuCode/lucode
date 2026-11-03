@@ -175,6 +175,16 @@ func (l *Live) loop(stdout io.Reader) {
 			continue // claude exits on its own; the exit path below cleans up
 		}
 
+		if event.EventType == "rate_limit" && event.LimitRejected {
+			accum.resetsAt = event.ResetsAt
+		}
+		if isResult && turnAPIError(event) {
+			publishTurnAPIError(sessID, event, accum.resetsAt, l.publish)
+			accum = newTurnAccum()
+			l.endTurn()
+			continue
+		}
+
 		l.publish(parsedEventToMap(event))
 
 		if event.EventType == "stream_event" && event.Event != nil {

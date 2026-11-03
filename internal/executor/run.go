@@ -100,6 +100,16 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 			continue
 		}
 
+		if event.EventType == "rate_limit" && event.LimitRejected {
+			accum.resetsAt = event.ResetsAt
+		}
+		if isResult && turnAPIError(event) {
+			publishTurnAPIError(req.SessionID, event, accum.resetsAt, publish)
+			turnCompleted = true // already reported; do not report the exit again
+			closeStdin(ps)
+			continue
+		}
+
 		publish(parsedEventToMap(event))
 
 		if event.EventType == "stream_event" && event.Event != nil {
@@ -251,6 +261,12 @@ func parsedEventToMap(e ParsedEvent) map[string]any {
 	if e.ResultText != "" {
 		m["result_text"] = e.ResultText
 	}
+	if e.ResetsAt != 0 {
+		m["resets_at"] = e.ResetsAt
+	}
+	if e.LimitRejected {
+		m["limit_rejected"] = true
+	}
 	if e.Message != "" {
 		m["message"] = e.Message
 	}
@@ -274,6 +290,8 @@ type turnAccum struct {
 	outputTokens             int
 	cacheCreationInputTokens int
 	cacheReadInputTokens     int
+
+	resetsAt int64 // unix seconds from the last rejected rate_limit event
 }
 
 func newTurnAccum() *turnAccum {

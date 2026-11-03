@@ -78,3 +78,23 @@ func TestResumeFailureIsNotATurn(t *testing.T) {
 		t.Errorf("want an error event with code resume_failed then status error, got %v", events)
 	}
 }
+
+func TestUsageLimitResultIsReported(t *testing.T) {
+	rl, _, _ := ParseLine("s", []byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1793670000}}`))
+	if rl.EventType != "rate_limit" || !rl.LimitRejected || rl.ResetsAt != 1793670000 {
+		t.Fatalf("rate limit event not parsed: %+v", rl)
+	}
+	res, isResult, _ := ParseLine("s", []byte(`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"api_error":"usage_limit_reached","result":"You've hit your 5-hour limit"}`))
+	if !isResult || !turnAPIError(res) {
+		t.Fatalf("an is_error result must count as a failed turn: %+v", res)
+	}
+	var events []map[string]any
+	code := publishTurnAPIError("s", res, rl.ResetsAt, func(e map[string]any) { events = append(events, e) })
+	if code != "usage_limit" || events[0]["code"] != "usage_limit" || events[0]["resets_at"] != int64(1793670000) || events[1]["status"] != "error" {
+		t.Errorf("unexpected events: %v", events)
+	}
+	ok, _, _ := ParseLine("s", []byte(`{"type":"result","subtype":"success","is_error":false}`))
+	if turnAPIError(ok) {
+		t.Error("a normal result is not an error")
+	}
+}

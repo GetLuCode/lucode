@@ -15,6 +15,11 @@ type ParsedEvent struct {
 	ResultSubtype string          `json:"result_subtype,omitempty"`
 	ResultText    string          `json:"result_text,omitempty"`
 	Message       string          `json:"message,omitempty"`
+	IsError       bool            `json:"is_error,omitempty"`        // result: the turn ended in an API error
+	APIStatus     int             `json:"api_error_status,omitempty"` // result: HTTP status of that error (429 = limit)
+	APIError      string          `json:"api_error,omitempty"`        // result: e.g. "usage_limit_reached"
+	ResetsAt      int64           `json:"resets_at,omitempty"`        // rate_limit: unix seconds when the limit lifts
+	LimitRejected bool            `json:"limit_rejected,omitempty"`   // rate_limit: the request was rejected
 }
 
 // ParseLine parses one newline-delimited JSON line from claude stdout.
@@ -46,12 +51,32 @@ func ParseLine(sessID string, line []byte) (ParsedEvent, bool, error) {
 		if rt, ok := raw["result"]; ok {
 			json.Unmarshal(rt, &resultText)
 		}
+		var isErr bool
+		var status int
+		json.Unmarshal(raw["is_error"], &isErr)
+		json.Unmarshal(raw["api_error_status"], &status)
 		return ParsedEvent{
 			EventType:     "turn_complete",
 			SessionID:     sessID,
 			ResultSubtype: subtype,
 			ResultText:    resultText,
+			IsError:       isErr,
+			APIStatus:     status,
+			APIError:      jsonStr(raw["api_error"]),
 		}, true, nil
+
+	case "rate_limit_event":
+		var info struct {
+			Status   string `json:"status"`
+			ResetsAt int64  `json:"resetsAt"`
+		}
+		json.Unmarshal(raw["rate_limit_info"], &info)
+		return ParsedEvent{
+			EventType:     "rate_limit",
+			SessionID:     sessID,
+			ResetsAt:      info.ResetsAt,
+			LimitRejected: info.Status == "rejected",
+		}, false, nil
 
 	case "control_response":
 		return ParsedEvent{
