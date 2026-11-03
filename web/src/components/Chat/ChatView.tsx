@@ -6,6 +6,7 @@ import { useSessionWS } from '../../hooks/useSessionWS'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
 import { useCommandDetection } from '../../hooks/useCommandDetection'
 import { tts } from '../../hooks/useTTS'
+import { markSpoken, wasSpoken } from '../../lib/spokenLog'
 import { getVoicePrefs, saveVoicePrefs } from '../../lib/voicePrefs'
 import { MessageBubble } from './MessageBubble'
 import { messageToTurnMap } from '../../store'
@@ -336,6 +337,9 @@ function ChatViewFull() {
 
     const msg = messages.find(m => m.id === liveMessageId)
     if (!msg || msg.role !== 'assistant') return
+    // a reload can re-deliver the last answer as live: never read the same text twice on its own
+    if (wasSpoken(activeSessionId ?? '', msg.content)) return
+    markSpoken(activeSessionId ?? '', msg.content)
 
     // No-echo (speakers): pause mic while TTS plays, restore after
     const wasListening = isListening
@@ -490,6 +494,7 @@ function ChatViewFull() {
   const handleSpeakMessage = (messageId: string, content: string) => {
     // Stop any current playback first
     tts.stop()
+    markSpoken(activeSessionId ?? '', content)
     setSpeakingMessageId(messageId)
     speakingMessageIdRef.current = messageId
     tts.speak(content, voiceLang, voiceURI, {

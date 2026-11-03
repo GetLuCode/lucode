@@ -8,6 +8,7 @@ import { ThinkingIndicator } from '../Chat/ThinkingIndicator'
 import { EnvPicker } from './EnvPicker'
 import { useWorkerMic } from '@/hooks/useWorkerMic'
 import { useWorkerTTS } from '@/hooks/useWorkerTTS'
+import { markSpoken, wasSpoken } from '@/lib/spokenLog'
 import { VoiceSettingsDialog } from './VoiceSettingsDialog'
 import { getHotword } from '@/lib/audioDevices'
 import type { AIProfile, Message, Runner } from '../../types'
@@ -106,6 +107,7 @@ export function OrchestratorPanel() {
   const speakMessage = (id: string, content: string) => {
     if (!ttsConfigured) { setVoiceOpen(true); return }
     setSpeakingId(id)
+    markSpoken(sid ?? '', content)
     void tts.speak(content)
   }
   useEffect(() => { api.getTTSSettings().then(s => setTtsConfigured(s.configured)).catch(() => {}) }, [])
@@ -143,7 +145,11 @@ export function OrchestratorPanel() {
   useEffect(() => {
     if (!autoRead || !liveMessageId) return
     const m = useStore.getState().messages[sid ?? '']?.find(x => x.id === liveMessageId)
-    if (m && m.role === 'assistant' && ttsConfigured) speakMessage(m.id, m.content)
+    if (!m || m.role !== 'assistant' || !ttsConfigured) return
+    // a reload can re-deliver the last answer as live: never read the same text twice on its own
+    if (wasSpoken(sid ?? '', m.content)) return
+    markSpoken(sid ?? '', m.content)
+    speakMessage(m.id, m.content)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveMessageId])
   const { sendHookRespond } = useSessionWS(sid)
