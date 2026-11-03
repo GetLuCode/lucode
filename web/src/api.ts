@@ -239,7 +239,7 @@ export const listAgents = (projectId: string) =>
 export const createAgent = (projectId: string, data: Omit<Agent, 'id' | 'project_id' | 'created_at' | 'updated_at'>) =>
   req<Agent>('POST', `/api/projects/${projectId}/agents`, data)
 export const getAgent = (id: string) => req<Agent>('GET', `/api/agents/${id}`)
-export const updateAgent = (id: string, data: Partial<Omit<Agent, 'id' | 'project_id' | 'created_at' | 'updated_at'>>) =>
+export const updateAgent = (id: string, data: Partial<Omit<Agent, 'id' | 'created_at' | 'updated_at'>>) =>
   req<Agent>('PUT', `/api/agents/${id}`, data)
 export const deleteAgent = (id: string) => req<void>('DELETE', `/api/agents/${id}`)
 // Tasks run as agent sessions: one chat per kanban card, on the card's agent.

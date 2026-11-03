@@ -277,6 +277,7 @@ func (m *Manager) runWithAIAPI(ctx context.Context, ps *ProcessState, opts TurnO
 		"thinking":         opts.Thinking,
 		"system_prompt":    opts.SystemPrompt,
 		"tools":            opts.Tools,
+		"lucode_tools":     opts.LucodeTools,
 		"history":          histMsgs,
 		// Pass our NATS URL so aiapi can lazily connect for the permission gate
 		// even if it wasn't started with --nats-url.
@@ -458,6 +459,7 @@ func (m *Manager) runWithNATSAIAPI(ctx context.Context, ps *ProcessState, opts T
 		"nats_settings":     m.backendNATSURL,
 		"nats_creds":        m.natsCreds,
 		"tools":             opts.Tools,
+		"lucode_tools":      opts.LucodeTools,
 		"ollama_host":       opts.OllamaHost,
 		"image_base64":      opts.ImageBase64,
 		"image_media_type":  opts.ImageMediaType,

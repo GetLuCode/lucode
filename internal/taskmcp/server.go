@@ -28,6 +28,11 @@ const (
 // returns title, description, status and agent.
 var TaskInfoFields = []string{"title", "description", "status", "type", "tags", "agent", "dependencies", "parent", "dates", "comments"}
 
+// Names lists every lucode tool, in display order.
+func Names() []string {
+	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo}
+}
+
 // IsTaskTool reports whether name is one of the task tools, with or without
 // the mcp__lucode__ prefix claude adds.
 func IsTaskTool(name string) bool {
@@ -74,15 +79,16 @@ var tools = []tool{
 		},
 	},
 	{
-		Name:        ToolTaskInfo,
-		Description: "Look up a task of this project, for example the one a message refers to. Returns only the fields you ask for (default: title, description, status, agent). Without task_id it describes your own task.",
+		Name: ToolTaskInfo,
+		Description: "Look up a task of this project when you need a fact you do not already have. Returns only the fields you ask for (default: title and status), so ask for the fewest that answer your question: " +
+			"for example fields=[\"status\"] to tell the user whether a task is done. Do not call it for your own task (it is in your first message) nor just to read the title shown in a message's #Context. Ask for description only when you must understand the work itself.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"task_id": map[string]any{"type": "string", "description": "Id of the task. Defaults to your own task."},
 				"fields": map[string]any{
 					"type":        "array",
-					"description": "Which fields to return.",
+					"description": "Which fields to return. Ask for as few as possible.",
 					"items":       map[string]any{"type": "string", "enum": TaskInfoFields},
 				},
 			},
@@ -127,6 +133,29 @@ type rpcError struct {
 // Run serves MCP requests (newline-delimited JSON-RPC) from r to w until r
 // closes. call executes a tool and returns the text shown to the agent.
 func Run(r io.Reader, w io.Writer, call func(tool string, args json.RawMessage) (string, error)) error {
+	return RunWithTools(r, w, call, nil)
+}
+
+// RunWithTools is Run limited to the given tools: it lists only those and
+// refuses to run any other. nil means all of them; an empty slice means none.
+func RunWithTools(r io.Reader, w io.Writer, call func(tool string, args json.RawMessage) (string, error), allowed []string) error {
+	enabled := func(name string) bool {
+		if allowed == nil {
+			return IsTaskTool(name)
+		}
+		for _, a := range allowed {
+			if a == name {
+				return true
+			}
+		}
+		return false
+	}
+	offered := make([]tool, 0, len(tools)) // never nil: an empty list must encode as [], not null
+	for _, t := range tools {
+		if enabled(t.Name) {
+			offered = append(offered, t)
+		}
+	}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	enc := json.NewEncoder(w)
@@ -162,13 +191,13 @@ func Run(r io.Reader, w io.Writer, call func(tool string, args json.RawMessage) 
 		case "ping":
 			resp.Result = map[string]any{}
 		case "tools/list":
-			resp.Result = map[string]any{"tools": tools}
+			resp.Result = map[string]any{"tools": offered}
 		case "tools/call":
 			var p struct {
 				Name      string          `json:"name"`
 				Arguments json.RawMessage `json:"arguments"`
 			}
-			if err := json.Unmarshal(req.Params, &p); err != nil || !IsTaskTool(p.Name) {
+			if err := json.Unmarshal(req.Params, &p); err != nil || !enabled(p.Name) {
 				resp.Error = &rpcError{Code: -32602, Message: fmt.Sprintf("unknown tool %q", p.Name)}
 				break
 			}

@@ -65,6 +65,7 @@ func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpk
 		AgentName:       agent.Name,
 		Tools:           agent.Tools,
 		Persistent:      agent.Persistent && agent.Executor == "claude",
+		LucodeTools:     agent.LucodeTools,
 	}
 }
 
@@ -79,15 +80,16 @@ func (h *Handler) supervisorName(agent dbpkg.Agent) string {
 	return ""
 }
 
-// activeSession is the task session an agent is working on right now: the most
-// recently active one whose card sits in In Progress.
-func (h *Handler) activeSession(agent dbpkg.Agent) (dbpkg.Session, dbpkg.KanbanCard, bool) {
+// activeSession is the task session an agent is working on right now in a
+// project: the most recently active one whose card sits in In Progress. A global
+// agent can be busy in several projects, so the project narrows it down.
+func (h *Handler) activeSession(agent dbpkg.Agent, projectID string) (dbpkg.Session, dbpkg.KanbanCard, bool) {
 	sessions, err := dbpkg.ListSessionsByAgent(h.db, agent.ID)
 	if err != nil {
 		return dbpkg.Session{}, dbpkg.KanbanCard{}, false
 	}
 	for _, s := range sessions { // newest first
-		if s.CardID == "" {
+		if s.CardID == "" || (projectID != "" && s.ProjectID != projectID) {
 			continue
 		}
 		card, err := dbpkg.GetKanbanCard(h.db, s.CardID)
@@ -102,7 +104,7 @@ func (h *Handler) activeSession(agent dbpkg.Agent) (dbpkg.Session, dbpkg.KanbanC
 }
 
 // findTeammate resolves a recipient by name (or "supervisor") within a project.
-func (h *Handler) findTeammate(from dbpkg.Agent, to string) (dbpkg.Agent, error) {
+func (h *Handler) findTeammate(projectID string, from dbpkg.Agent, to string) (dbpkg.Agent, error) {
 	to = strings.TrimSpace(to)
 	if to == "" {
 		return dbpkg.Agent{}, errors.New("to is required: the name of the agent to message")
@@ -117,7 +119,7 @@ func (h *Handler) findTeammate(from dbpkg.Agent, to string) (dbpkg.Agent, error)
 		}
 		return sup, nil
 	}
-	agents, err := dbpkg.ListAgents(h.db, from.ProjectID)
+	agents, err := dbpkg.ListAgents(h.db, projectID) // the project's agents plus the global ones
 	if err != nil {
 		return dbpkg.Agent{}, err
 	}
@@ -149,8 +151,8 @@ func formatAgentMessage(from dbpkg.Agent, ctxCard dbpkg.KanbanCard, requiresAnsw
 }
 
 // agentList describes the caller's teammates and what each is doing.
-func (h *Handler) agentList(from dbpkg.Agent) (string, error) {
-	agents, err := dbpkg.ListAgents(h.db, from.ProjectID)
+func (h *Handler) agentList(projectID string, from dbpkg.Agent) (string, error) {
+	agents, err := dbpkg.ListAgents(h.db, projectID)
 	if err != nil {
 		return "", err
 	}
@@ -169,7 +171,7 @@ func (h *Handler) agentList(from dbpkg.Agent) (string, error) {
 			role = role[:140] + "…"
 		}
 		status := "idle (no task in progress)"
-		if _, card, ok := h.activeSession(a); ok {
+		if _, card, ok := h.activeSession(a, projectID); ok {
 			status = fmt.Sprintf("working on %q (task %s)", card.Title, card.ID)
 		}
 		fmt.Fprintf(&sb, "- %s — %s [%s, %s]\n", a.Name, role, a.Model, status)
@@ -205,7 +207,7 @@ func (h *Handler) allowSend(senderSession string) bool {
 // deliverToAgent posts a message into the recipient's in-progress task chat,
 // starting a turn for it (or queueing it when the recipient is mid-turn).
 func (h *Handler) deliverToAgent(from dbpkg.Agent, ctxCard dbpkg.KanbanCard, to dbpkg.Agent, text string, requiresAnswer bool) (string, error) {
-	sess, card, ok := h.activeSession(to)
+	sess, card, ok := h.activeSession(to, ctxCard.ProjectID)
 	if !ok {
 		return "", fmt.Errorf("%s has no task in progress, so it cannot receive messages right now", to.Name)
 	}

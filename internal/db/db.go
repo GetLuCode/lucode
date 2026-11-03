@@ -373,6 +373,13 @@ CREATE INDEX IF NOT EXISTS idx_card_comments_card ON card_comments(card_id, crea
 	db.Exec(`ALTER TABLE agents ADD COLUMN persistent INTEGER NOT NULL DEFAULT 0`)
 	// agents.reports_to — the supervising agent that is told when this one finishes, blocks or fails
 	db.Exec(`ALTER TABLE agents ADD COLUMN reports_to TEXT NOT NULL DEFAULT ''`)
+	// agents.project_id "" = a global agent shared by every project, which a foreign key
+	// cannot express, so drop it (rebuilds the table once)
+	if err := rebuildAgentsWithoutProjectFK(db); err != nil {
+		return err
+	}
+	// agents.lucode_tools — which lucode tools (task_*, agent_list, send_to_agent, task_info) the agent has
+	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info"]'`)
 
 	return nil
 }

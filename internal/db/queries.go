@@ -66,6 +66,11 @@ func GetProject(db *sql.DB, id string) (Project, error) {
 }
 
 func DeleteProject(db *sql.DB, id string) error {
+	// Agents are not tied to projects by a foreign key (global ones have no project),
+	// so remove the project's own agents here. Global agents are kept.
+	if _, err := db.Exec(`DELETE FROM agents WHERE project_id=? AND project_id<>''`, id); err != nil {
+		return err
+	}
 	_, err := db.Exec(`DELETE FROM projects WHERE id=?`, id)
 	return err
 }
@@ -1200,32 +1205,74 @@ func ListRawEvents(db *sql.DB, sessionID string) ([]RawEvent, error) {
 // ---- Agent ----
 
 type Agent struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id"`
-	Name        string    `json:"name"`
-	Model       string    `json:"model"`
-	AccountID   string    `json:"account_id"`
-	Personality string    `json:"personality"`
-	Tools       []string  `json:"tools"`
-	Executor    string    `json:"executor"` // "aiapi" | "claude"
+	ID string `json:"id"`
+	// ProjectID is the project the agent belongs to; "" means a global agent,
+	// available in every project (see Scope).
+	ProjectID   string `json:"project_id"`
+	Scope       string `json:"scope"` // "project" | "global" (derived from ProjectID)
+	Name        string `json:"name"`
+	Model       string `json:"model"`
+	AccountID   string `json:"account_id"`
+	Personality string `json:"personality"`
+	// Tools are the built-in Claude Code tools the agent may use (empty = all).
+	Tools []string `json:"tools"`
+	// LucodeTools are the lucode tools (task_*, agent_list, send_to_agent,
+	// task_info) the agent has. nil in memory means all of them; an empty list
+	// means none.
+	LucodeTools []string  `json:"lucode_tools"`
+	Executor    string    `json:"executor"`   // "aiapi" | "claude"
 	Persistent  bool      `json:"persistent"` // keep the claude -p process alive between turns
 	ReportsTo   string    `json:"reports_to"` // id of the supervising agent ("" = none)
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// DefaultLucodeTools is every lucode tool; new agents start with all of them.
+var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info"}
+
+const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, created_at, updated_at`
+
+func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
+	var a Agent
+	var toolsJSON, lucodeJSON, createdAt, updatedAt string
+	if err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &lucodeJSON,
+		&a.Executor, &a.Persistent, &a.ReportsTo, &createdAt, &updatedAt); err != nil {
+		return a, err
+	}
+	json.Unmarshal([]byte(toolsJSON), &a.Tools)
+	if err := json.Unmarshal([]byte(lucodeJSON), &a.LucodeTools); err != nil || a.LucodeTools == nil {
+		a.LucodeTools = append([]string{}, DefaultLucodeTools...)
+	}
+	a.Scope = "project"
+	if a.ProjectID == "" {
+		a.Scope = "global"
+	}
+	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	return a, nil
+}
+
+func lucodeToolsJSON(tools []string) string {
+	if tools == nil {
+		tools = DefaultLucodeTools
+	}
+	b, _ := json.Marshal(tools)
+	return string(b)
+}
+
 func InsertAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, executor, persistent, reports_to) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.Executor, a.Persistent, a.ReportsTo,
+		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo,
 	)
 	return err
 }
 
+// ListAgents returns the agents available in a project: its own plus the global ones.
 func ListAgents(db *sql.DB, projectID string) ([]Agent, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, account_id, personality, tools, executor, persistent, reports_to, created_at, updated_at FROM agents WHERE project_id=? ORDER BY created_at ASC`,
+		`SELECT `+agentCols+` FROM agents WHERE project_id=? OR project_id='' ORDER BY created_at ASC`,
 		projectID,
 	)
 	if err != nil {
@@ -1234,39 +1281,24 @@ func ListAgents(db *sql.DB, projectID string) ([]Agent, error) {
 	defer rows.Close()
 	var out []Agent
 	for rows.Next() {
-		var a Agent
-		var toolsJSON, createdAt, updatedAt string
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &a.Executor, &a.Persistent, &a.ReportsTo, &createdAt, &updatedAt); err != nil {
+		a, err := scanAgent(rows)
+		if err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(toolsJSON), &a.Tools)
-		a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-		a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 		out = append(out, a)
 	}
 	return out, rows.Err()
 }
 
 func GetAgent(db *sql.DB, id string) (Agent, error) {
-	var a Agent
-	var toolsJSON, createdAt, updatedAt string
-	err := db.QueryRow(
-		`SELECT id, project_id, name, model, account_id, personality, tools, executor, persistent, reports_to, created_at, updated_at FROM agents WHERE id=?`, id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &a.Executor, &a.Persistent, &a.ReportsTo, &createdAt, &updatedAt)
-	if err != nil {
-		return a, err
-	}
-	json.Unmarshal([]byte(toolsJSON), &a.Tools)
-	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-	a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
-	return a, nil
+	return scanAgent(db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE id=?`, id))
 }
 
 func UpdateAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`UPDATE agents SET name=?, model=?, account_id=?, personality=?, tools=?, executor=?, persistent=?, reports_to=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		a.Name, a.Model, a.AccountID, a.Personality, string(tools), a.Executor, a.Persistent, a.ReportsTo, a.ID,
+		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.ID,
 	)
 	return err
 }
@@ -1275,7 +1307,6 @@ func DeleteAgent(db *sql.DB, id string) error {
 	_, err := db.Exec(`DELETE FROM agents WHERE id=?`, id)
 	return err
 }
-
 
 // ---- KanbanList ----
 

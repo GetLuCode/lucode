@@ -51,7 +51,58 @@ const ALL_TOOLS = [
   { name: 'DesignSync',           desc: 'Sync designs' },
 ]
 
+// The tools lucode itself gives an agent, as opposed to the built-in Claude Code ones above.
+const LUCODE_TOOLS = [
+  { name: 'task_comment',  desc: 'Post a progress note on the task' },
+  { name: 'task_done',     desc: 'Mark the task as done (moves it to Done)' },
+  { name: 'task_blocked',  desc: 'Mark the task as blocked (moves it to Blocked)' },
+  { name: 'agent_list',    desc: 'See the other agents and what they are working on' },
+  { name: 'send_to_agent', desc: 'Send a message to another agent' },
+  { name: 'task_info',     desc: 'Look up a task of the project' },
+]
+
 const DEFAULT_TOOLS = ['Bash', 'Edit', 'Read', 'Write']
+
+// One category of tools with its own on/off switches.
+function ToolGroup({ title, hint, tools, enabled, onToggle }: {
+  title: string
+  hint: string
+  tools: { name: string; desc: string }[]
+  enabled: string[]
+  onToggle: (name: string) => void
+}) {
+  return (
+    <div className="agent-form__tool-group">
+      <div className="agent-form__tool-group-title">
+        {title}
+        <span className="agent-form__tab-badge">{tools.filter(t => enabled.includes(t.name)).length}/{tools.length}</span>
+      </div>
+      <p className="agent-form__tools-hint">{hint}</p>
+      <div className="agent-form__tools-list">
+        {tools.map(t => {
+          const on = enabled.includes(t.name)
+          return (
+            <label key={t.name} className="agent-form__tool-row">
+              <div className="agent-form__tool-info">
+                <span className="agent-form__tool-name">{t.name}</span>
+                <span className="agent-form__tool-desc">{t.desc}</span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                className={`agent-form__switch${on ? ' agent-form__switch--on' : ''}`}
+                onClick={() => onToggle(t.name)}
+              >
+                <span className="agent-form__switch-thumb" />
+              </button>
+            </label>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 interface AgentFormData {
   name: string
@@ -62,6 +113,8 @@ interface AgentFormData {
   executor: 'aiapi' | 'claude'
   persistent: boolean
   reports_to: string
+  scope: 'project' | 'global'
+  lucode_tools: string[]
 }
 
 const EMPTY_FORM: AgentFormData = {
@@ -73,6 +126,8 @@ const EMPTY_FORM: AgentFormData = {
   executor: 'aiapi',
   persistent: false,
   reports_to: '',
+  scope: 'project',
+  lucode_tools: LUCODE_TOOLS.map(t => t.name),
 }
 
 function AgentForm({
@@ -88,7 +143,7 @@ function AgentForm({
   onSave: (data: AgentFormData) => Promise<void>
   onCancel: () => void
 }) {
-  const supervisors = teammates.filter(a => a.id !== selfId)
+  const supervisors = teammates.filter(a => a.id !== selfId && (form.scope !== 'global' || a.scope === 'global'))
   const [form, setForm] = useState<AgentFormData>(initial ?? EMPTY_FORM)
   const [activeTab, setActiveTab] = useState<'general' | 'tools'>('general')
   const [saving, setSaving] = useState(false)
@@ -104,6 +159,15 @@ function AgentForm({
       tools: f.tools.includes(tool)
         ? f.tools.filter(t => t !== tool)
         : [...f.tools, tool],
+    }))
+  }
+
+  function toggleLucodeTool(tool: string) {
+    setForm(f => ({
+      ...f,
+      lucode_tools: f.lucode_tools.includes(tool)
+        ? f.lucode_tools.filter(t => t !== tool)
+        : [...f.lucode_tools, tool],
     }))
   }
 
@@ -132,7 +196,7 @@ function AgentForm({
           type="button"
           className={`agent-form__tab${activeTab === 'tools' ? ' agent-form__tab--active' : ''}`}
           onClick={() => setActiveTab('tools')}
-        >Tools <span className="agent-form__tab-badge">{form.tools.length}</span></button>
+        >Tools <span className="agent-form__tab-badge">{form.tools.length + form.lucode_tools.length}</span></button>
       </div>
 
       {activeTab === 'general' && (
@@ -146,6 +210,28 @@ function AgentForm({
               placeholder="e.g. Code Reviewer"
               autoFocus
             />
+          </div>
+
+          <div className="agent-form__field">
+            <label className="agent-form__label">Available in</label>
+            <select
+              className="agent-form__select"
+              value={form.scope}
+              onChange={e => {
+                const scope = e.target.value as AgentFormData['scope']
+                setField('scope', scope)
+                // a global agent can only report to another global agent
+                if (scope === 'global' && teammates.find(a => a.id === form.reports_to)?.scope === 'project') setField('reports_to', '')
+              }}
+            >
+              <option value="project">This project only</option>
+              <option value="global">All projects (shared)</option>
+            </select>
+            {form.scope === 'global' && (
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+                Shared by every project: editing or deleting it affects all of them.
+              </p>
+            )}
           </div>
 
           <div className="agent-form__row">
@@ -230,34 +316,20 @@ function AgentForm({
 
       {activeTab === 'tools' && (
         <div className="agent-form__body">
-          <p className="agent-form__tools-hint">Enable the tools this agent can use.</p>
-          <div className="agent-form__tools-list">
-            {ALL_TOOLS.map(t => {
-              const enabled = form.tools.includes(t.name)
-              return (
-                <label key={t.name} className="agent-form__tool-row">
-                  <div className="agent-form__tool-info">
-                    <span className="agent-form__tool-name">{t.name}</span>
-                    <span className="agent-form__tool-desc">{t.desc}</span>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={enabled}
-                    className={`agent-form__switch${enabled ? ' agent-form__switch--on' : ''}`}
-                    onClick={() => toggleTool(t.name)}
-                  >
-                    <span className="agent-form__switch-thumb" />
-                  </button>
-                </label>
-              )
-            })}
-          </div>
-          <p className="agent-form__hint" style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0 0' }}>
-            Only these built-in tools are offered to the agent (none selected = all of them). The lucode
-            task tools and ToolSearch are always available. With &quot;aiapi&quot;, tools map onto its own set
-            (Read, Glob, Grep, Edit/Write, Bash/PowerShell).
-          </p>
+          <ToolGroup
+            title="Claude tools"
+            hint="Built-in Claude Code tools. Only the ones switched on are offered to the agent (none selected = all of them). With aiapi they map onto its own set: Read, Glob, Grep, Edit/Write, Bash/PowerShell."
+            tools={ALL_TOOLS}
+            enabled={form.tools}
+            onToggle={toggleTool}
+          />
+          <ToolGroup
+            title="Lucode tools"
+            hint="Provided by lucode so the agent can report on its task and work with other agents. Switch off what this agent should not do, for example send_to_agent to keep it from messaging others."
+            tools={LUCODE_TOOLS}
+            enabled={form.lucode_tools}
+            onToggle={toggleLucodeTool}
+          />
         </div>
       )}
 
@@ -307,6 +379,7 @@ function AgentCard({
           <span className="agent-card__name">{agent.name}</span>
           <span className="agent-card__model">{modelLabel}</span>
           <span className="agent-card__model">{agent.executor === 'claude' ? 'claude -p' : 'aiapi'}</span>
+          {agent.scope === 'global' && <span className="agent-card__model" title="Available in every project">global</span>}
           {agent.persistent && <span className="agent-card__model" title="Process stays alive between messages">live</span>}
           {supervisor && <span className="agent-card__model" title="Reports to">→ {supervisor}</span>}
         </div>
@@ -379,13 +452,17 @@ export function AgentsView() {
   }
 
   async function handleUpdate(id: string, data: AgentFormData) {
-    const agent = await api.updateAgent(id, data)
+    // project_id only matters when a global agent is made project-only: it says which project
+    const agent = await api.updateAgent(id, { ...data, project_id: activeProjectId ?? undefined })
     setAgents(prev => prev.map(a => a.id === id ? agent : a))
     setView('list')
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this agent?')) return
+    const target = agents.find(a => a.id === id)
+    if (!confirm(target?.scope === 'global'
+      ? 'Delete this global agent? It will disappear from every project.'
+      : 'Delete this agent?')) return
     setDeleted(id)
     try {
       await api.deleteAgent(id)
@@ -443,6 +520,8 @@ export function AgentsView() {
             executor: view.edit.executor ?? 'aiapi',
             persistent: view.edit.persistent ?? false,
             reports_to: view.edit.reports_to ?? '',
+            scope: view.edit.scope ?? 'project',
+            lucode_tools: view.edit.lucode_tools ?? LUCODE_TOOLS.map(t => t.name),
           }}
           selfId={view.edit.id}
           teammates={agents}

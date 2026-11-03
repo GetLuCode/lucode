@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	dbpkg "claude-orchestrator/internal/db"
 	execpkg "claude-orchestrator/internal/executor"
@@ -59,7 +60,10 @@ func InstallHookSettings(hookBinary []byte) string {
 // writeTaskMCPConfig writes the MCP config that starts `lucode mcp-task` for
 // this session, giving the agent the task and teammate tools. Returns "" when it
 // cannot be written (the agent then just has no lucode tools).
-func (m *Manager) writeTaskMCPConfig(sessID string) string {
+func (m *Manager) writeTaskMCPConfig(sessID string, lucodeTools []string) string {
+	if lucodeTools != nil && len(lucodeTools) == 0 {
+		return "" // the agent has no lucode tools: do not start the MCP server at all
+	}
 	exe, err := os.Executable()
 	home, herr := os.UserHomeDir()
 	if err != nil || herr != nil {
@@ -75,6 +79,9 @@ func (m *Manager) writeTaskMCPConfig(sessID string) string {
 	}
 	if m.natsCreds != "" {
 		env["LUCODE_NATS_CREDS"] = m.natsCreds
+	}
+	if lucodeTools != nil {
+		env["LUCODE_TOOLS"] = strings.Join(lucodeTools, ",")
 	}
 	cfg := map[string]any{"mcpServers": map[string]any{"lucode": map[string]any{
 		"command": filepath.ToSlash(exe),
@@ -106,7 +113,7 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 	}
 
 	req := execpkg.TurnRequest{
-		MCPConfig:          m.writeTaskMCPConfig(sessID),
+		MCPConfig:          m.writeTaskMCPConfig(sessID, opts.LucodeTools),
 		SessionID:          sessID,
 		ProjectID:          opts.ProjectID,
 		AccountID:          opts.AccountID,

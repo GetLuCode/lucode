@@ -430,7 +430,18 @@ func runMCPTask() {
 		return reply.Message, nil
 	}
 
-	err := taskmcp.Run(os.Stdin, os.Stdout, call)
+	// LUCODE_TOOLS (comma separated) limits which lucode tools this agent has; unset
+	// means all of them and an empty value means none.
+	var allowed []string
+	if v, ok := os.LookupEnv("LUCODE_TOOLS"); ok {
+		allowed = []string{}
+		for _, name := range strings.Split(v, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				allowed = append(allowed, name)
+			}
+		}
+	}
+	err := taskmcp.RunWithTools(os.Stdin, os.Stdout, call, allowed)
 	if nc != nil {
 		nc.Close()
 	}

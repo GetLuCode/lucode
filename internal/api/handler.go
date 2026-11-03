@@ -25,6 +25,7 @@ import (
 	sessionpkg "claude-orchestrator/internal/session"
 
 	"github.com/google/uuid"
+	"claude-orchestrator/internal/taskmcp"
 )
 
 // toolNameRe matches valid Anthropic tool names: ^[a-zA-Z0-9_-]{1,128}$
@@ -538,6 +539,7 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		opts.AgentName = agent.Name
 		opts.Tools = agent.Tools
 		opts.Persistent = agent.Persistent && agent.Executor == "claude"
+		opts.LucodeTools = agent.LucodeTools
 		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
 			opts.SystemPrompt = agentSystemPrompt(*agent, card, h.supervisorName(*agent))
 		} else {
@@ -2210,6 +2212,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Executor    string   `json:"executor"`
 		Persistent  bool     `json:"persistent"`
 		ReportsTo   string   `json:"reports_to"`
+		Scope       string   `json:"scope"`        // "project" (default) or "global"
+		LucodeTools []string `json:"lucode_tools"` // nil = all
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -2218,7 +2222,11 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	if body.Executor != "claude" {
 		body.Executor = "aiapi"
 	}
-	if err := h.validateReportsTo("", pid, body.ReportsTo); err != nil {
+	agentProject := pid
+	if body.Scope == "global" {
+		agentProject = "" // shared by every project
+	}
+	if err := h.validateReportsTo("", agentProject, body.ReportsTo); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -2234,12 +2242,13 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	a := dbpkg.Agent{
 		ID:          uuid.New().String(),
-		ProjectID:   pid,
+		ProjectID:   agentProject,
 		Name:        body.Name,
 		Model:       body.Model,
 		Executor:    body.Executor,
 		Persistent:  body.Persistent && body.Executor == "claude",
 		ReportsTo:   body.ReportsTo,
+		LucodeTools: sanitizeLucodeTools(body.LucodeTools),
 		AccountID:   body.AccountID,
 		Personality: body.Personality,
 		Tools:       body.Tools,
@@ -2279,6 +2288,9 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Executor    *string  `json:"executor"`
 		Persistent  *bool    `json:"persistent"`
 		ReportsTo   *string  `json:"reports_to"`
+		Scope       *string  `json:"scope"`      // "project" | "global"
+		ProjectID   *string  `json:"project_id"` // needed when a global agent becomes project-only
+		LucodeTools []string `json:"lucode_tools"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -2294,12 +2306,36 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	if body.Persistent != nil {
 		a.Persistent = *body.Persistent
 	}
-	if body.ReportsTo != nil {
-		if err := h.validateReportsTo(a.ID, a.ProjectID, *body.ReportsTo); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+	if body.Scope != nil {
+		switch *body.Scope {
+		case "global":
+			a.ProjectID = ""
+		case "project":
+			if a.ProjectID == "" {
+				if body.ProjectID == nil || *body.ProjectID == "" {
+					http.Error(w, "project_id is required to make a global agent project-only", http.StatusBadRequest)
+					return
+				}
+				a.ProjectID = *body.ProjectID
+				if n := h.globalSubordinates(a.ID); n > 0 {
+					http.Error(w, fmt.Sprintf("%d global agent(s) report to this one; they must stay global", n), http.StatusBadRequest)
+					return
+				}
+			}
+		default:
+			http.Error(w, `scope must be "project" or "global"`, http.StatusBadRequest)
 			return
 		}
+	}
+	if body.ReportsTo != nil {
 		a.ReportsTo = *body.ReportsTo
+	}
+	if err := h.validateReportsTo(a.ID, a.ProjectID, a.ReportsTo); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.LucodeTools != nil {
+		a.LucodeTools = sanitizeLucodeTools(body.LucodeTools)
 	}
 	if body.Name != nil {
 		a.Name = *body.Name
@@ -2636,9 +2672,12 @@ func (h *Handler) listAgentSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 
-// validateReportsTo checks a supervisor id: it must be another agent of the same
-// project and must not close a reporting loop.
-func (h *Handler) validateReportsTo(agentID, projectID, reportsTo string) error {
+// validateReportsTo checks a supervisor id for an agent of agentProject ("" =
+// global). The supervisor must be an agent the subordinate can reach in every
+// project it works in: a global agent can only report to another global agent, a
+// project agent to one of its own project or to a global one. It must not be the
+// agent itself nor close a reporting loop.
+func (h *Handler) validateReportsTo(agentID, agentProject, reportsTo string) error {
 	if reportsTo == "" {
 		return nil
 	}
@@ -2646,8 +2685,14 @@ func (h *Handler) validateReportsTo(agentID, projectID, reportsTo string) error 
 		return errors.New("an agent cannot report to itself")
 	}
 	sup, err := dbpkg.GetAgent(h.db, reportsTo)
-	if err != nil || sup.ProjectID != projectID {
-		return errors.New("supervisor must be an agent of the same project")
+	if err != nil {
+		return errors.New("supervisor not found")
+	}
+	if agentProject == "" && sup.ProjectID != "" {
+		return errors.New("a global agent can only report to another global agent")
+	}
+	if agentProject != "" && sup.ProjectID != "" && sup.ProjectID != agentProject {
+		return errors.New("supervisor must be a global agent or belong to the same project")
 	}
 	for i, cur := 0, sup; cur.ReportsTo != "" && i < 32; i++ {
 		if cur.ReportsTo == agentID {
@@ -2660,4 +2705,32 @@ func (h *Handler) validateReportsTo(agentID, projectID, reportsTo string) error 
 		cur = next
 	}
 	return nil
+}
+
+// globalSubordinates counts the global agents that report to agentID.
+func (h *Handler) globalSubordinates(agentID string) int {
+	var n int
+	h.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE reports_to=? AND project_id=''`, agentID).Scan(&n)
+	return n
+}
+
+// sanitizeLucodeTools keeps only known lucode tools, once each, in the given
+// order. nil stays nil (meaning "all of them"); an empty list stays empty ("none").
+func sanitizeLucodeTools(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	known := map[string]bool{}
+	for _, n := range taskmcp.Names() {
+		known[n] = true
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, n := range in {
+		if known[n] && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
 }

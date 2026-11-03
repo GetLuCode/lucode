@@ -6797,3 +6797,15 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 .kmodal__comment-body { color: var(--text); white-space: pre-wrap; }
 
 .kmodal__comment--error { border-left-color: #f59e0b; }
+
+.agent-form__tool-group + .agent-form__tool-group { margin-top: 18px; }
+.agent-form__tool-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}

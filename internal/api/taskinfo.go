@@ -9,15 +9,17 @@ import (
 	"claude-orchestrator/internal/taskmcp"
 )
 
-// DefaultTaskInfoFields is what task_info returns when no fields are asked for.
-var defaultTaskInfoFields = []string{"title", "description", "status", "agent"}
+// defaultTaskInfoFields is what task_info returns when no fields are asked for:
+// the cheap ones. The description (the long one) and the rest are opt-in, so an
+// agent that only wants to know whether a task is done does not pay for them.
+var defaultTaskInfoFields = []string{"title", "status"}
 
 const recentCommentsInInfo = 5
 
 // taskInfo describes a task to an agent so it can understand what a message or a
 // teammate's work refers to. taskID defaults to the caller's own task. Only tasks
 // of the caller's project are visible. fields limits the answer; empty means the
-// defaults (title, description, status, agent).
+// defaults (title, status).
 func (h *Handler) taskInfo(caller dbpkg.Session, taskID string, fields []string) (string, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {

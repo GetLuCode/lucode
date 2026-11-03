@@ -295,13 +295,31 @@ func TestTaskInfoDefaultsAndFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"task: " + card.ID, "title: Dev task", "Build the API.", "status: IN PROGRESS", "agent: Dev"} {
+	for _, want := range []string{"task: " + card.ID, "title: Dev task", "status: IN PROGRESS"} {
 		if !strings.Contains(strings.ToUpper(out), strings.ToUpper(want)) {
 			t.Errorf("default task_info should contain %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "dependencies") || strings.Contains(out, "comments") {
-		t.Error("fields that were not asked for must not appear")
+	for _, unwanted := range []string{"Build the API.", "description", "agent:", "dependencies", "comments"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("the default is only title and status, but the answer has %q:\n%s", unwanted, out)
+		}
+	}
+
+	out, err = h.HandleTaskTool(dev.sess.ID, "task_info", []byte(`{"fields":["status"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "title:") || !strings.Contains(strings.ToUpper(out), "STATUS: IN PROGRESS") {
+		t.Errorf("fields=[status] should return only the status, got:\n%s", out)
+	}
+
+	out, err = h.HandleTaskTool(dev.sess.ID, "task_info", []byte(`{"fields":["description","agent"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Build the API.") || !strings.Contains(out, "agent: Dev") || strings.Contains(out, "status:") {
+		t.Errorf("description and agent are returned when asked for, and only those, got:\n%s", out)
 	}
 
 	out, err = h.HandleTaskTool(dev.sess.ID, "task_info", []byte(`{"task_id":"`+card.ID+`","fields":["dependencies","tags","comments"]}`))
