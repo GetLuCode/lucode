@@ -22,7 +22,29 @@ const (
 	ToolAgentList   = "agent_list"
 	ToolSendToAgent = "send_to_agent"
 	ToolTaskInfo    = "task_info"
+
+	// ToolGetTaskImage returns a picture attached to a task (referenced as @imageN in its description).
+	ToolGetTaskImage = "get_task_image"
 )
+
+// imagePrefix marks a tool result that is a picture, not text: the callback
+// returns ImageResult(...) and the server turns it into an MCP image block.
+const imagePrefix = "lucode-image:"
+
+// ImageResult encodes a picture (base64 data) as a tool result.
+func ImageResult(mediaType, b64 string) string {
+	return imagePrefix + mediaType + "\n" + b64
+}
+
+// content turns a tool result into MCP content blocks.
+func content(text string) []map[string]any {
+	if rest, ok := strings.CutPrefix(text, imagePrefix); ok {
+		if mime, data, ok := strings.Cut(rest, "\n"); ok && mime != "" && data != "" {
+			return []map[string]any{{"type": "image", "mimeType": mime, "data": data}}
+		}
+	}
+	return []map[string]any{{"type": "text", "text": text}}
+}
 
 // TaskInfoFields are the fields task_info can return. With none requested it
 // returns title, description, status and agent.
@@ -30,14 +52,14 @@ var TaskInfoFields = []string{"title", "description", "status", "type", "tags", 
 
 // Names lists every lucode tool, in display order.
 func Names() []string {
-	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo}
+	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage}
 }
 
 // IsTaskTool reports whether name is one of the task tools, with or without
 // the mcp__lucode__ prefix claude adds.
 func IsTaskTool(name string) bool {
 	switch strings.TrimPrefix(name, "mcp__lucode__") {
-	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo:
+	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage:
 		return true
 	}
 	return false
@@ -92,6 +114,19 @@ var tools = []tool{
 					"items":       map[string]any{"type": "string", "enum": TaskInfoFields},
 				},
 			},
+		},
+	},
+	{
+		Name: ToolGetTaskImage,
+		Description: "Get a picture attached to a task. A task description refers to its pictures as @image1, @image2... (a line at the top of the task message lists them). " +
+			"Call it when you need to look at one; the picture comes back as an image.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"task_id": map[string]any{"type": "string", "description": "Id of the task. Defaults to your own task."},
+				"name":    map[string]any{"type": "string", "description": "Name of the picture, e.g. \"image1\" (the @ is optional)."},
+			},
+			"required": []string{"name"},
 		},
 	},
 	{
@@ -202,7 +237,7 @@ func RunWithTools(r io.Reader, w io.Writer, call func(tool string, args json.Raw
 				break
 			}
 			text, err := call(p.Name, p.Arguments)
-			result := map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}
+			result := map[string]any{"content": content(text)}
 			if err != nil {
 				result["content"] = []map[string]any{{"type": "text", "text": err.Error()}}
 				result["isError"] = true

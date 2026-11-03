@@ -6603,6 +6603,40 @@ html, body, #root {
 .kmodal__input:focus,
 .kmodal__select:focus,
 .kmodal__textarea:focus { border-color: var(--accent); }
+
+/* images pasted into the description, shown above it */
+.kmodal__images { display: flex; flex-wrap: wrap; gap: 8px; }
+.kmodal__image {
+  position: relative;
+  margin: 0;
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kmodal__image img {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.kmodal__image figcaption { font-size: 11px; color: var(--text-muted, var(--text)); text-align: center; }
+.kmodal__image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 1;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+}
 input[type="date"].kmodal__input { color-scheme: dark; }
 
 .kmodal__tags {

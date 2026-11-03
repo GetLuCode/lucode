@@ -3,11 +3,49 @@ import { useNavigate } from 'react-router-dom'
 import {
   IconPlus, IconX, IconTrash, IconArchive,
   IconArchiveOff, IconRobot, IconCalendar, IconLink,
-  IconTag, IconGripVertical,
+  IconTag, IconGripVertical, IconRefresh,
 } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import type { Agent, CardComment, KanbanCard, KanbanList } from '../../types'
 import * as api from '../../api'
+
+// ---- pasted images -----------------------------------------------------------
+
+const MAX_IMAGE_BYTES = 550 * 1024 // the server accepts up to 600 KB
+const MAX_IMAGE_SIDE = 1600
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result).split(',')[1] ?? '')
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(blob)
+  })
+}
+
+// Small images go up as they are; bigger ones are shrunk to JPEG until they fit,
+// because the agent receives them through a size-limited channel.
+async function fitImage(file: Blob): Promise<{ type: string; blob: Blob }> {
+  const okType = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)
+  if (okType && file.size <= MAX_IMAGE_BYTES) return { type: file.type, blob: file }
+  const bmp = await createImageBitmap(file)
+  const base = Math.min(1, MAX_IMAGE_SIDE / Math.max(bmp.width, bmp.height))
+  for (const shrink of [1, 0.7, 0.5, 0.35, 0.25]) {
+    const scale = base * shrink
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bmp.width * scale))
+    canvas.height = Math.max(1, Math.round(bmp.height * scale))
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = '#fff' // JPEG has no transparency
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height)
+    for (const quality of [0.85, 0.7, 0.55]) {
+      const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', quality))
+      if (blob && blob.size <= MAX_IMAGE_BYTES) return { type: 'image/jpeg', blob }
+    }
+  }
+  throw new Error('image too large')
+}
 
 // ---- constants ---------------------------------------------------------------
 
@@ -56,10 +94,73 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
   const [activeTab, setActiveTab] = useState<'details' | 'relations'>('details')
   const [comments, setComments] = useState<CardComment[]>([])
   const boardVersion = useStore(s => s.boardVersion)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [images, setImages] = useState<api.CardImage[]>([])
+  const [imageError, setImageError] = useState('')
+  const descRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (card) setForm({ ...card })
+    setMenuOpen(false)
+    setImageError('')
+    setImages([])
+    if (card) api.listCardImages(card.id).then(setImages).catch(() => setImages([]))
   }, [card?.id])
+
+  // Insert text at the cursor of the description (or at its end).
+  function insertInDescription(text: string) {
+    const el = descRef.current
+    const cur = form.description ?? ''
+    const start = el?.selectionStart ?? cur.length
+    const end = el?.selectionEnd ?? cur.length
+    const pad = start > 0 && !/\s$/.test(cur.slice(0, start)) ? ' ' : ''
+    const next = cur.slice(0, start) + pad + text + ' ' + cur.slice(end)
+    setForm(f => ({ ...f, description: next }))
+    const pos = start + pad.length + text.length + 1
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(pos, pos) })
+  }
+
+  // Pasting an image into the description attaches it to the task and writes its
+  // @imageN reference at the cursor.
+  async function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (!card) return
+    const files = Array.from(e.clipboardData.items)
+      .filter(i => i.kind === 'file' && i.type.startsWith('image/'))
+      .map(i => i.getAsFile())
+      .filter((f): f is File => !!f)
+    if (files.length === 0) return
+    e.preventDefault()
+    setImageError('')
+    for (const f of files) {
+      try {
+        const { type, blob } = await fitImage(f)
+        const saved = await api.addCardImage(card.id, type, await blobToBase64(blob))
+        setImages(list => [...list, saved])
+        insertInDescription('@' + saved.name)
+      } catch (err) {
+        setImageError(err instanceof Error ? err.message : 'Could not attach the image')
+      }
+    }
+  }
+
+  async function removeImage(name: string) {
+    if (!card) return
+    await api.deleteCardImage(card.id, name)
+    setImages(list => list.filter(i => i.name !== name))
+  }
+
+  // Detach the task from its session(s): the old chats stay as history and the
+  // next run starts a new conversation.
+  async function handleReset() {
+    if (!card) return
+    setMenuOpen(false)
+    if (!confirm('Reset this task? Its current session is detached (kept as history) and the next run starts a new one.')) return
+    await api.resetKanbanCard(card.id)
+    useStore.setState(s => ({
+      sessions: s.sessions.map(x => x.card_id === card.id ? { ...x, card_id: '', status: x.status === 'waiting_hook' ? 'idle' : x.status } : x),
+      boardVersion: s.boardVersion + 1,
+    }))
+  }
 
   // Notes the agent posted on this task; re-read when the board changes.
   useEffect(() => {
@@ -134,6 +235,21 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
             </select>
           </div>
           <div className="kmodal__header-actions">
+            <div style={{ position: 'relative' }}>
+              <button
+                className="kmodal__action-btn"
+                title="More"
+                onClick={() => setMenuOpen(v => !v)}
+              >⋯</button>
+              {menuOpen && (
+                <div className="nav-tree__dropdown" style={{ right: 0, left: 'auto' }}>
+                  <button className="nav-tree__menu-item" onClick={handleReset}>
+                    <IconRefresh size={14} />
+                    <span>Reset</span>
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               className="kmodal__action-btn"
               title={card.archived ? 'Unarchive' : 'Archive'}
@@ -180,13 +296,37 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
               {/* description */}
               <div className="kmodal__field">
                 <label className="kmodal__label">Description</label>
+                {images.length > 0 && (
+                  <div className="kmodal__images">
+                    {images.map(im => (
+                      <figure key={im.name} className="kmodal__image">
+                        <img
+                          src={`data:${im.media_type};base64,${im.data}`}
+                          alt={im.name}
+                          title={`Click to insert @${im.name}`}
+                          onClick={() => insertInDescription('@' + im.name)}
+                        />
+                        <figcaption>@{im.name}</figcaption>
+                        <button
+                          type="button"
+                          className="kmodal__image-remove"
+                          title="Remove image"
+                          onClick={() => removeImage(im.name)}
+                        >×</button>
+                      </figure>
+                    ))}
+                  </div>
+                )}
                 <textarea
+                  ref={descRef}
                   className="kmodal__textarea"
                   rows={4}
                   value={form.description ?? ''}
                   onChange={e => patch('description', e.target.value)}
-                  placeholder="Add a description…"
+                  onPaste={handlePaste}
+                  placeholder="Add a description… paste an image to attach it (referenced as @image1)"
                 />
+                {imageError && <p className="kmodal__empty-hint" style={{ color: '#ef4444' }}>{imageError}</p>}
               </div>
 
               {/* dates */}

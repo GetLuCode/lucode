@@ -160,6 +160,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{pid}/kanban/cards", h.createKanbanCard)
 	mux.HandleFunc("PUT /api/kanban/cards/{id}", h.updateKanbanCard)
 	mux.HandleFunc("DELETE /api/kanban/cards/{id}", h.deleteKanbanCard)
+	mux.HandleFunc("POST /api/kanban/cards/{id}/reset", h.resetKanbanCard)
+	mux.HandleFunc("GET /api/kanban/cards/{id}/images", h.listCardImages)
+	mux.HandleFunc("POST /api/kanban/cards/{id}/images", h.addCardImage)
+	mux.HandleFunc("DELETE /api/kanban/cards/{id}/images/{name}", h.deleteCardImage)
 
 	// Agents
 	mux.HandleFunc("GET /api/projects/{pid}/agents", h.listAgents)
@@ -2667,6 +2671,30 @@ func (h *Handler) updateKanbanCard(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) deleteKanbanCard(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := dbpkg.DeleteKanbanCard(h.db, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resetKanbanCard detaches a task from its session(s) so the next run starts a new
+// conversation (the old one may be unresumable if claude lost its transcript). The
+// old sessions are kept as chat history; the task's error notes are cleared.
+func (h *Handler) resetKanbanCard(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := dbpkg.GetKanbanCard(h.db, id); err != nil {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+	ids, err := dbpkg.DetachCardSessions(h.db, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, sid := range ids {
+		h.manager.CloseLive(sid)
+	}
+	if err := dbpkg.DeleteCardErrorComments(h.db, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

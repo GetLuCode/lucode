@@ -225,6 +225,9 @@ func (h *Handler) taskPrompt(card dbpkg.KanbanCard) string {
 			fmt.Fprintf(&sb, "Completed dependencies: %s\n", strings.Join(titles, ", "))
 		}
 	}
+	if names, _ := dbpkg.ListCardImageNames(h.db, card.ID); len(names) > 0 {
+		fmt.Fprintf(&sb, "Attached images: %s (the description refers to them as @name; get one with get_task_image(name))\n", strings.Join(names, ", "))
+	}
 	if strings.TrimSpace(card.Description) != "" {
 		fmt.Fprintf(&sb, "\n%s\n", card.Description)
 	}
@@ -303,6 +306,9 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
   - add "description" only when you must understand the work itself, and "dependencies", "parent", "agent", "tags", "dates" or "comments" only when your reasoning depends on them;
   - do not call it twice for the same task in a turn; reuse what you got.`)
 	}
+	if has("get_task_image") {
+		sb.WriteString("\n- get_task_image(name, task_id?): see a picture attached to a task. The task description refers to its pictures as @image1, @image2...; fetch one when the text depends on what it shows.")
+	}
 	sb.WriteString("\n- Messages from other agents start with three header lines: \"#From: <name>/<id>\", \"#Context: task <id> <title>\"")
 	if has("task_info") {
 		sb.WriteString(" (use task_info on that id if you need the details)")
@@ -347,6 +353,7 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		TaskID         string   `json:"task_id"`
 		RequiresAnswer bool     `json:"requires_answer"`
 		Fields         []string `json:"fields"`
+		Name           string   `json:"name"`
 	}
 	_ = json.Unmarshal(args, &a)
 
@@ -403,6 +410,9 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 
 	case taskmcp.ToolTaskInfo:
 		return h.taskInfo(sess, a.TaskID, a.Fields)
+
+	case taskmcp.ToolGetTaskImage:
+		return h.taskImage(sess, a.TaskID, a.Name)
 
 	case taskmcp.ToolSendToAgent:
 		if agentErr != nil {

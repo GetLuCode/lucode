@@ -59,6 +59,7 @@ const LUCODE_TOOLS = [
   { name: 'agent_list',    desc: 'See the other agents and what they are working on' },
   { name: 'send_to_agent', desc: 'Send a message to another agent' },
   { name: 'task_info',     desc: 'Look up a task of the project' },
+  { name: 'get_task_image', desc: 'See a picture attached to a task (@image1…)' },
 ]
 
 const DEFAULT_TOOLS = ['Bash', 'Edit', 'Read', 'Write']

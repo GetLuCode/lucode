@@ -65,6 +65,15 @@ func main() {
 	}
 	defer db.Close()
 
+	// Approvals waiting when the previous run ended are orphans: their state lived
+	// in memory and their hook process is gone, so nobody can answer them. Clear them
+	// or the task stays "needs approval" with no request to approve.
+	if n, err := dbpkg.ClearOrphanedApprovals(db); err != nil {
+		log.Printf("[startup] clear orphaned approvals: %v", err)
+	} else if n > 0 {
+		log.Printf("[startup] cleared orphaned approvals of %d session(s)", n)
+	}
+
 	// Connect to external NATS server.
 	natsOpts := []nats.Option{
 		nats.Timeout(10 * time.Second),

@@ -102,3 +102,13 @@ func TestIsTaskTool(t *testing.T) {
 		}
 	}
 }
+
+func TestImageResultBecomesAnImageBlock(t *testing.T) {
+	call := func(string, json.RawMessage) (string, error) { return ImageResult("image/png", "QUJD"), nil }
+	in := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_task_image","arguments":{"name":"image1"}}}`
+	resps := roundTrip(t, in, call)
+	block := resps[0]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if block["type"] != "image" || block["mimeType"] != "image/png" || block["data"] != "QUJD" {
+		t.Errorf("want an image block, got %v", block)
+	}
+}

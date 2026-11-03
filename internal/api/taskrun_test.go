@@ -2,6 +2,7 @@ package api
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	dbpkg "claude-orchestrator/internal/db"
@@ -211,4 +212,31 @@ func contains2(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestGetTaskImageReturnsAnImageAndListsOnMiss(t *testing.T) {
+	h, pid, lists := newTaskTestHandler(t)
+	card := newCard(t, h, pid, lists["inprogress"], "task")
+	sess := taskSession(t, h, card)
+
+	im, err := dbpkg.InsertCardImage(h.db, card.ID, "image/png", []byte("PNGDATA"))
+	if err != nil || im.Name != "image1" {
+		t.Fatalf("first image should be image1, got %q %v", im.Name, err)
+	}
+	if im2, _ := dbpkg.InsertCardImage(h.db, card.ID, "image/png", []byte("x")); im2.Name != "image2" {
+		t.Errorf("second image should be image2, got %q", im2.Name)
+	}
+
+	for _, name := range []string{"image1", "@image1"} {
+		out, err := h.HandleTaskTool(sess.ID, "get_task_image", []byte(`{"name":"`+name+`"}`))
+		if err != nil || !strings.HasPrefix(out, "lucode-image:image/png\n") {
+			t.Fatalf("get_task_image(%s) = %q, %v", name, out, err)
+		}
+	}
+	if _, err := h.HandleTaskTool(sess.ID, "get_task_image", []byte(`{"name":"image9"}`)); err == nil || !strings.Contains(err.Error(), "image1, image2") {
+		t.Errorf("a missing image should list the available ones, got %v", err)
+	}
+	if p := h.taskPrompt(card); !strings.Contains(p, "Attached images: image1, image2") {
+		t.Errorf("the task prompt should list the images, got %q", p)
+	}
 }

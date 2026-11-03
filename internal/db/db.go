@@ -385,6 +385,20 @@ CREATE INDEX IF NOT EXISTS idx_card_comments_card ON card_comments(card_id, crea
 		return fmt.Errorf("create card_comments: %w", err)
 	}
 
+	// card_images — pictures pasted into a task's description, referenced there as @image1, @image2...
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS card_images (
+    card_id    TEXT NOT NULL REFERENCES kanban_cards(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    data       BLOB NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (card_id, name)
+);
+`); err != nil {
+		return fmt.Errorf("create card_images: %w", err)
+	}
+
 	// Column additions for tables created above (idempotent).
 	// kanban_lists.kind — the workflow role of a list ("backlog", "todo", "inprogress",
 	// "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
@@ -402,7 +416,9 @@ CREATE INDEX IF NOT EXISTS idx_card_comments_card ON card_comments(card_id, crea
 		return err
 	}
 	// agents.lucode_tools — which lucode tools (task_*, agent_list, send_to_agent, task_info) the agent has
-	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info"]'`)
+	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info","get_task_image"]'`)
+	// get_task_image came after task_info: agents that already look tasks up get it too.
+	db.Exec(`UPDATE agents SET lucode_tools = REPLACE(lucode_tools, '"task_info"', '"task_info","get_task_image"') WHERE lucode_tools LIKE '%"task_info"%' AND lucode_tools NOT LIKE '%get_task_image%'`)
 
 	// After the rebuild above, which only copies the columns it knows.
 	// agents.runner_id / ai_profile_id: environment and preconfigured AI that override the project's (empty = inherit)

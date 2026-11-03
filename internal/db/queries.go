@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -190,6 +191,40 @@ func UpdateSessionName(db *sql.DB, id, name string) error {
 		`UPDATE sessions SET name=? WHERE id=?`,
 		name, id,
 	)
+	return err
+}
+
+// DetachCardSessions unlinks every session of a task and returns their ids. The
+// sessions stay as plain chats (history); the task gets a fresh one the next time
+// it runs or is opened. Sessions left waiting on an approval go back to idle.
+func DetachCardSessions(db *sql.DB, cardID string) ([]string, error) {
+	rows, err := db.Query(`SELECT id FROM sessions WHERE card_id=?`, cardID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`UPDATE sessions SET card_id='', status=CASE WHEN status='waiting_hook' THEN 'idle' ELSE status END WHERE card_id=?`, cardID); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// DeleteCardErrorComments removes the error notes of a task (they describe a
+// session that is being replaced).
+func DeleteCardErrorComments(db *sql.DB, cardID string) error {
+	_, err := db.Exec(`DELETE FROM card_comments WHERE card_id=? AND kind='error'`, cardID)
 	return err
 }
 
@@ -459,6 +494,21 @@ func DeletePendingHook(db *sql.DB, sessionID, toolUseID string) (int64, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+// ClearOrphanedApprovals drops every pending approval and puts the sessions that
+// were waiting on one back to idle. Call it at startup only: approvals are held in
+// memory, so after a restart none of them can be answered any more. It returns the
+// number of sessions that were reset.
+func ClearOrphanedApprovals(db *sql.DB) (int64, error) {
+	if _, err := db.Exec(`DELETE FROM pending_hooks`); err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE sessions SET status='idle' WHERE status='waiting_hook'`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func CountPendingHooks(db *sql.DB, sessionID string) (int, error) {
@@ -1247,7 +1297,7 @@ type Agent struct {
 }
 
 // DefaultLucodeTools is every lucode tool; new agents start with all of them.
-var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info"}
+var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image"}
 
 const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, created_at, updated_at`
 
@@ -1645,6 +1695,83 @@ func backfillKanbanListKinds(db *sql.DB) {
 			db.Exec(`UPDATE kanban_lists SET kind=? WHERE id=?`, key, r.id)
 		}
 	}
+}
+
+// ---- Card images ----
+
+// CardImage is a picture attached to a task. Name is how the description refers
+// to it ("image1" for @image1).
+type CardImage struct {
+	CardID    string `json:"card_id"`
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	Data      []byte `json:"-"`
+}
+
+// InsertCardImage stores a picture and returns it with the next free name
+// (image<N>, N one more than the highest in use).
+func InsertCardImage(db *sql.DB, cardID, mediaType string, data []byte) (CardImage, error) {
+	names, err := ListCardImageNames(db, cardID)
+	if err != nil {
+		return CardImage{}, err
+	}
+	next := 1
+	for _, n := range names {
+		var i int
+		if _, err := fmt.Sscanf(n, "image%d", &i); err == nil && i >= next {
+			next = i + 1
+		}
+	}
+	img := CardImage{CardID: cardID, Name: fmt.Sprintf("image%d", next), MediaType: mediaType, Data: data}
+	_, err = db.Exec(`INSERT INTO card_images (card_id, name, media_type, data) VALUES (?,?,?,?)`,
+		img.CardID, img.Name, img.MediaType, img.Data)
+	return img, err
+}
+
+func ListCardImageNames(db *sql.DB, cardID string) ([]string, error) {
+	rows, err := db.Query(`SELECT name FROM card_images WHERE card_id=? ORDER BY created_at ASC, rowid ASC`, cardID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func ListCardImages(db *sql.DB, cardID string) ([]CardImage, error) {
+	rows, err := db.Query(`SELECT card_id, name, media_type, data FROM card_images WHERE card_id=? ORDER BY created_at ASC, rowid ASC`, cardID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CardImage{}
+	for rows.Next() {
+		var im CardImage
+		if err := rows.Scan(&im.CardID, &im.Name, &im.MediaType, &im.Data); err != nil {
+			return nil, err
+		}
+		out = append(out, im)
+	}
+	return out, rows.Err()
+}
+
+func GetCardImage(db *sql.DB, cardID, name string) (CardImage, error) {
+	var im CardImage
+	err := db.QueryRow(`SELECT card_id, name, media_type, data FROM card_images WHERE card_id=? AND name=?`, cardID, name).
+		Scan(&im.CardID, &im.Name, &im.MediaType, &im.Data)
+	return im, err
+}
+
+func DeleteCardImage(db *sql.DB, cardID, name string) error {
+	_, err := db.Exec(`DELETE FROM card_images WHERE card_id=? AND name=?`, cardID, name)
+	return err
 }
 
 // ---- Card comments ----

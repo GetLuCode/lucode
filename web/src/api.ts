@@ -283,6 +283,14 @@ export const updateKanbanCard = (id: string, data: Partial<KanbanCard>) =>
   req<KanbanCard>('PUT', `/api/kanban/cards/${id}`, data)
 export const deleteKanbanCard = (id: string) =>
   req<void>('DELETE', `/api/kanban/cards/${id}`)
+export interface CardImage { name: string; media_type: string; data: string } // data is base64
+export const listCardImages = (cardId: string) => req<CardImage[]>('GET', `/api/kanban/cards/${cardId}/images`)
+export const addCardImage = (cardId: string, media_type: string, data: string) =>
+  req<CardImage>('POST', `/api/kanban/cards/${cardId}/images`, { media_type, data })
+export const deleteCardImage = (cardId: string, name: string) =>
+  req<void>('DELETE', `/api/kanban/cards/${cardId}/images/${name}`)
+export const resetKanbanCard = (id: string) =>
+  req<void>('POST', `/api/kanban/cards/${id}/reset`)
 
 // ── Checkpoints / Versioning (aiapi:8091) ────────────────────────────────
 
