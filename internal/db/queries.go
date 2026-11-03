@@ -24,6 +24,19 @@ type Project struct {
 	AIProfileID     string              `json:"ai_profile_id"` // preconfigured AI of that runner ("" = default account)
 	EnvDirs         map[string][]string `json:"env_dirs"`      // work dirs on each runner other than this one
 	CreatedAt       time.Time           `json:"created_at"`
+	// LastUsedAt is the latest activity of its sessions or tasks (zero when it has none);
+	// only ListProjects fills it, for the start page.
+	LastUsedAt time.Time `json:"last_used_at"`
+}
+
+// parseDBTime reads the timestamp formats the tables use.
+func parseDBTime(s string) time.Time {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 func InsertProject(db *sql.DB, p Project) error {
@@ -40,7 +53,13 @@ func InsertProject(db *sql.DB, p Project) error {
 }
 
 func ListProjects(db *sql.DB) ([]Project, error) {
-	rows, err := db.Query(`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, env_dirs, created_at FROM projects ORDER BY created_at DESC`)
+	rows, err := db.Query(`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, env_dirs, created_at,
+		COALESCE((SELECT MAX(t) FROM (
+			SELECT last_active AS t FROM sessions WHERE project_id = projects.id
+			UNION ALL
+			SELECT updated_at FROM kanban_cards WHERE project_id = projects.id
+		)), '')
+		FROM projects ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -48,13 +67,14 @@ func ListProjects(db *sql.DB) ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		var dirsJSON, envJSON, createdAt string
-		if err := rows.Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &p.RunnerID, &p.AIProfileID, &envJSON, &createdAt); err != nil {
+		var dirsJSON, envJSON, createdAt, lastUsed string
+		if err := rows.Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &p.RunnerID, &p.AIProfileID, &envJSON, &createdAt, &lastUsed); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(dirsJSON), &p.WorkDirs)
 		json.Unmarshal([]byte(envJSON), &p.EnvDirs)
 		p.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		p.LastUsedAt = parseDBTime(lastUsed)
 		out = append(out, p)
 	}
 	return out, rows.Err()

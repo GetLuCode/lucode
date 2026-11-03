@@ -728,6 +728,13 @@ export function KanbanView() {
       .finally(() => setLoading(false))
   }, [activeProjectId, showArchived])
 
+  // An agent finished, blocked or commented on a task: re-read the board.
+  // (Hooks must run on every render, so this stays above the early return below.)
+  const boardVersion = useStore(s => s.boardVersion)
+  useEffect(() => {
+    if (boardVersion > 0) reloadBoard().catch(console.error)
+  }, [boardVersion])
+
   if (!activeProjectId) {
     return <div className="kanban-view kanban-view--empty">Select a project to view the board.</div>
   }
@@ -783,12 +790,6 @@ export function KanbanView() {
     setCards(cs)
     useStore.setState({ sessions: sess })
   }
-
-  // An agent finished, blocked or commented on a task: re-read the board.
-  const boardVersion = useStore(s => s.boardVersion)
-  useEffect(() => {
-    if (boardVersion > 0) reloadBoard().catch(console.error)
-  }, [boardVersion])
 
   async function handleSaveCard(id: string, patch: Partial<KanbanCard>) {
     const before = cards.find(c => c.id === id)
@@ -866,28 +867,6 @@ export function KanbanView() {
 
   return (
     <div className="kanban-view">
-      {/* toolbar */}
-      <div className="kanban-view__toolbar">
-        <h2 className="kanban-view__title">Kanban</h2>
-        <div className="kanban-view__toolbar-actions">
-          <button
-            className={`kanban-view__filter-btn${showArchived ? ' kanban-view__filter-btn--active' : ''}`}
-            onClick={() => setShowArchived(v => !v)}
-            title="Toggle archived cards"
-          >
-            <IconArchive size={14} />
-            {showArchived ? 'Hide archived' : 'Show archived'}
-          </button>
-          <button
-            className="kanban-view__add-list-btn"
-            onClick={() => setAddingList(true)}
-          >
-            <IconPlus size={14} />
-            Add list
-          </button>
-        </div>
-      </div>
-
       {/* board */}
       <div className="kanban-board">
         {loading && <div className="kanban-board__loading">Loading…</div>}
@@ -935,6 +914,25 @@ export function KanbanView() {
             </div>
           )
         )}
+      </div>
+
+      {/* board actions live under the board */}
+      <div className="kanban-view__footer">
+        <button
+          className={`kanban-view__filter-btn${showArchived ? ' kanban-view__filter-btn--active' : ''}`}
+          onClick={() => setShowArchived(v => !v)}
+          title="Toggle archived cards"
+        >
+          <IconArchive size={14} />
+          {showArchived ? 'Hide archived' : 'Show archived'}
+        </button>
+        <button
+          className="kanban-view__add-list-btn"
+          onClick={() => setAddingList(true)}
+        >
+          <IconPlus size={14} />
+          Add list
+        </button>
       </div>
 
       {/* card modal */}

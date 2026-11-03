@@ -1,4 +1,4 @@
-import { IconBrandApple, IconBrandUbuntu, IconBrandWindows, IconRefresh, IconTrash, IconX } from '@tabler/icons-react'
+import { IconBrandApple, IconBrandUbuntu, IconBrandWindows, IconRefresh, IconServer, IconTrash, IconX } from '@tabler/icons-react'
 import { useCallback, useEffect, useState } from 'react'
 import * as api from '../../api'
 import { useStore } from '../../store'
@@ -11,11 +11,13 @@ function osIcon(os: string) {
   return <IconBrandUbuntu size={14} />
 }
 
-// Runners: the machines a project can work on. Clicking one opens its settings
-// (the preconfigured AIs it offers); it never changes the active project.
-export function RunnersList() {
+// Runners: the machines a project can work on. An icon button (top right) lists
+// them; picking one opens its settings (the preconfigured AIs it offers). It never
+// changes the active project.
+export function RunnersButton() {
   const [runners, setRunners] = useState<Runner[]>([])
   const [open, setOpen] = useState<Runner | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
   // Bumped by the server when a runner shows up or leaves: refetch right away.
   const peersVersion = useStore(s => s.peersVersion)
 
@@ -29,19 +31,34 @@ export function RunnersList() {
   if (runners.length === 0) return null
 
   return (
-    <div className="spaces-list">
-      <div className="spaces-list__header">Runners</div>
-      {runners.map(r => (
-        <button
-          key={r.id}
-          className="space-item"
-          onClick={() => setOpen(r)}
-          title={`${r.hostname} · ${r.os}`}
-        >
-          <span className="space-item__icon">{osIcon(r.os)}</span>
-          <span className="space-item__label">{r.self ? `${r.hostname} (this)` : r.hostname}</span>
-        </button>
-      ))}
+    <div className="header-menu">
+      <button
+        className={`header-icon-btn${menuOpen ? ' header-icon-btn--active' : ''}`}
+        onClick={() => setMenuOpen(v => !v)}
+        title="Runners"
+        aria-label="Runners"
+      >
+        <IconServer size={16} />
+        {runners.length > 1 && <span className="header-icon-btn__badge">{runners.length}</span>}
+      </button>
+      {menuOpen && (
+        <>
+          <div className="header-menu__backdrop" onClick={() => setMenuOpen(false)} />
+          <div className="nav-tree__dropdown header-menu__dropdown">
+            {runners.map(r => (
+              <button
+                key={r.id}
+                className="nav-tree__menu-item"
+                onClick={() => { setOpen(r); setMenuOpen(false) }}
+                title={`${r.hostname} · ${r.os}`}
+              >
+                {osIcon(r.os)}
+                <span>{r.self ? `${r.hostname} (this)` : r.hostname}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {open && <RunnerPanel runner={open} onClose={() => setOpen(null)} />}
     </div>
   )

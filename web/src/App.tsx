@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useStore } from './store'
+import * as api from './api'
 import { NavPanel } from './components/Sidebar/NavPanel'
 import { ChatView } from './components/Chat/ChatView'
 import { HookToastContainer } from './components/Toast/HookToastContainer'
@@ -12,6 +13,10 @@ import { useGlobalWS } from './hooks/useGlobalWS'
 import { AgentsView } from './components/Agents/AgentsView'
 import { KanbanView } from './components/Kanban/KanbanView'
 import { CheckpointsView } from './components/Checkpoints/CheckpointsView'
+import { ProjectHeader } from './components/Header/ProjectHeader'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { HomeView } from './components/Home/HomeView'
+import { RunningView } from './components/Running/RunningView'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
@@ -44,41 +49,73 @@ export default function App() {
   // Route events from every session into the store (tasks run in the background)
   useGlobalWS()
 
-  // Load projects on mount
+  // Deep links (reload, bookmark, a project or session that was deleted): the ids in
+  // the URL are checked before they reach the store, so a stale URL falls back to a
+  // page that exists instead of leaving a blank UI.
   useEffect(() => {
-    loadProjects()
-  }, [loadProjects])
+    let cancelled = false
+    ;(async () => {
+      try {
+        await loadProjects()
+        if (cancelled || !projectId) return
+        if (!useStore.getState().projects.some(p => p.id === projectId)) {
+          navigate('/', { replace: true }) // the project is gone
+          return
+        }
+        // In-app navigation already selected it; only a reload or a deep link gets here unselected.
+        if (useStore.getState().activeProjectId !== projectId) await setActiveProject(projectId)
+      } catch (err) {
+        console.error('[App] could not open project', projectId, err)
+        if (!cancelled) navigate('/', { replace: true })
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
 
-  // Sync URL params to store
   useEffect(() => {
-    console.log('[App] projectId from URL:', projectId)
-    if (projectId) {
-      setActiveProject(projectId)
-    }
-  }, [projectId, setActiveProject])
+    if (!projectId || !sessionId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        // Only a URL that was typed or reloaded needs this: clicking a session in the
+        // app already made it the active one.
+        if (sessionId === useStore.getState().activeSessionId) return
+        const known = useStore.getState().sessions.some(s => s.id === sessionId)
+        const exists = known || (await api.listSessions(projectId)).some(s => s.id === sessionId)
+        if (cancelled) return
+        if (!exists) {
+          navigate(`/projects/${projectId}/running`, { replace: true }) // the session is gone
+          return
+        }
+        await setActiveSession(sessionId)
+      } catch (err) {
+        console.error('[App] could not open session', sessionId, err)
+        if (!cancelled) navigate(`/projects/${projectId}/running`, { replace: true })
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, sessionId])
 
+  // Sync store changes to URL — skip if already on a sub-route like /agents or /kanban.
+  // A bare /projects/:id lands on the board; "/" is the start page.
   useEffect(() => {
-    // Only call setActiveSession when sessionId comes from URL navigation (reload/deep link),
-    // not when the store itself just changed activeSessionId (which triggered the URL update).
-    console.log('[App] sessionId from URL:', sessionId, 'activeSessionId in store:', activeSessionId)
-    if (sessionId && sessionId !== activeSessionId) {
-      setActiveSession(sessionId)
+    const path = location.pathname
+    if (path === '/') return // the start page
+    if (['/agents', '/kanban', '/running', '/checkpoints'].some(p => path.includes(p))) return
+    if (!activeProjectId) return
+    if (path.includes('/sessions/')) {
+      if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
+      return // a deep link: wait for the store to pick the session up
     }
-  }, [sessionId, setActiveSession]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Sync store changes to URL — skip if already on a sub-route like /agents or /kanban
-  useEffect(() => {
-    if (location.pathname.includes('/agents') || location.pathname.includes('/kanban') || location.pathname.includes('/checkpoints')) return
-    if (activeProjectId && activeSessionId) {
-      navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
-    } else if (activeProjectId) {
-      // Opening the app (path "/") lands on the board; /projects/:id stays the sessions view.
-      navigate(location.pathname === '/' ? `/projects/${activeProjectId}/kanban` : `/projects/${activeProjectId}`, { replace: true })
-    }
+    navigate(`/projects/${activeProjectId}/kanban`, { replace: true })
   }, [activeProjectId, activeSessionId, navigate, location.pathname])
 
+  const isHome = location.pathname === '/'
   const isAgentsRoute = location.pathname.includes('/agents')
   const isKanbanRoute = location.pathname.includes('/kanban')
+  const isRunningRoute = location.pathname.includes('/running')
   const isCheckpointsOpen = location.pathname.includes('/checkpoints')
 
   return (
@@ -90,8 +127,14 @@ export default function App() {
       <div className="app-content">
         <NavPanel onOpenSearch={() => setSearchOpen(true)} />
         <main className={`main${isCheckpointsOpen ? ' main--with-drawer' : ''}`}>
-          {/* Agents and Kanban still replace the chat (full-page views). */}
-          {isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : <ChatView />}
+          {!isHome && <ProjectHeader />}
+          {/* Agents, Kanban and Running replace the chat (full-page views). */}
+          <div className="main__content">
+            {/* a render error stays inside the page and clears when the route changes */}
+            <ErrorBoundary key={location.pathname}>
+              {isHome ? <HomeView /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : <ChatView />}
+            </ErrorBoundary>
+          </div>
         </main>
         <aside
           className={`checkpoints-drawer${isCheckpointsOpen ? ' checkpoints-drawer--open' : ''}`}

@@ -13,6 +13,7 @@ export interface Project {
   ai_profile_id?: string
   env_dirs?: Record<string, string[]>
   created_at: string
+  last_used_at?: string // latest activity of its sessions or tasks; zero date when none
 }
 
 // A lucode instance that can run projects (this one or a peer found over NATS).
