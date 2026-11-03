@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ func (h *Handler) createAIProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	dir := strings.TrimSpace(body.ClaudeConfigDir)
+	dir := expandConfigDir(body.ClaudeConfigDir)
 	if dir == "" {
 		http.Error(w, "claude_config_dir is required", http.StatusBadRequest)
 		return
@@ -70,6 +71,38 @@ func (h *Handler) createAIProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusCreated, p)
+}
+
+var winEnvVar = regexp.MustCompile(`%([^%\\/]+)%`)
+
+// expandConfigDir turns what the user typed into the path on this runner: a leading
+// "~", %VAR% (Windows style) and $VAR / ${VAR} are replaced with the runner's own
+// environment, so "%USERPROFILE%\.claude-work" works. The stored path is the
+// expanded one because claude receives it as CLAUDE_CONFIG_DIR, which nobody expands.
+// An unknown variable is left as typed so the error shows what was meant.
+func expandConfigDir(in string) string {
+	dir := strings.TrimSpace(in)
+	if dir == "" {
+		return ""
+	}
+	if dir == "~" || strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			dir = home + dir[1:]
+		}
+	}
+	dir = winEnvVar.ReplaceAllStringFunc(dir, func(m string) string {
+		if v := os.Getenv(m[1 : len(m)-1]); v != "" {
+			return v
+		}
+		return m
+	})
+	dir = os.Expand(dir, func(name string) string {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+		return "$" + name
+	})
+	return filepath.Clean(dir)
 }
 
 func (h *Handler) refreshAIProfile(w http.ResponseWriter, r *http.Request) {
