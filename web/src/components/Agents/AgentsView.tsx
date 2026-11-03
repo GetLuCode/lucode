@@ -147,8 +147,8 @@ function AgentForm({
   onSave: (data: AgentFormData) => Promise<void>
   onCancel: () => void
 }) {
-  const supervisors = teammates.filter(a => a.id !== selfId && (form.scope !== 'global' || a.scope === 'global'))
   const [form, setForm] = useState<AgentFormData>(initial ?? EMPTY_FORM)
+  const supervisors = teammates.filter(a => a.id !== selfId && (form.scope !== 'global' || a.scope === 'global'))
   const [activeTab, setActiveTab] = useState<'general' | 'tools'>('general')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
