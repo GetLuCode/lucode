@@ -45,7 +45,7 @@ func main() {
 	if err := bus.StartDiscovery(natspkg.InstanceInfo{ID: uuid.New().String(), Type: "probe"}); err != nil {
 		log.Fatalf("discovery: %v", err)
 	}
-	time.Sleep(17 * time.Second) // peers announce themselves every 15 s
+	time.Sleep(2 * time.Second) // instances answer a discovery query within ~100 ms
 
 	var runner *natspkg.InstanceInfo
 	fmt.Println("peers:")

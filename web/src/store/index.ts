@@ -89,6 +89,7 @@ interface AppState {
   deleteUserTool: (id: string) => Promise<void>
   // Remote spaces / discovery
   instances: { self: InstanceInfo | null; peers: InstanceInfo[] }
+  peersVersion: number // bumped when a runner appears or leaves, so lists of runners refetch
   activeRemoteId: string | null
   loadInstances: () => Promise<void>
   setActiveRemote: (id: string | null) => void
@@ -262,6 +263,7 @@ function replayStoredMessages(raw: Message[]): Message[] {
 
 export const useStore = create<AppState>((set, get) => ({
   instances: { self: null, peers: [] },
+  peersVersion: 0,
   activeRemoteId: null,
   projects: [],
   sessions: [],
@@ -1009,6 +1011,11 @@ export const useStore = create<AppState>((set, get) => ({
         })
         break
       }
+
+      case 'peers_changed':
+        set(s => ({ peersVersion: s.peersVersion + 1 }))
+        void get().loadInstances()
+        break
 
       case 'error':
         set(s => ({

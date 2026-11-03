@@ -1,6 +1,7 @@
 import { IconBrandApple, IconBrandUbuntu, IconBrandWindows, IconRefresh, IconTrash, IconX } from '@tabler/icons-react'
 import { useCallback, useEffect, useState } from 'react'
 import * as api from '../../api'
+import { useStore } from '../../store'
 import type { AIProfile, Runner } from '../../types'
 import './SpacesList.css'
 
@@ -15,13 +16,15 @@ function osIcon(os: string) {
 export function RunnersList() {
   const [runners, setRunners] = useState<Runner[]>([])
   const [open, setOpen] = useState<Runner | null>(null)
+  // Bumped by the server when a runner shows up or leaves: refetch right away.
+  const peersVersion = useStore(s => s.peersVersion)
 
   useEffect(() => {
     const load = () => api.listRunners().then(setRunners).catch(() => {})
     load()
     const id = setInterval(load, 20_000)
     return () => clearInterval(id)
-  }, [])
+  }, [peersVersion])
 
   if (runners.length === 0) return null
 

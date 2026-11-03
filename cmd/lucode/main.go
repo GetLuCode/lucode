@@ -82,6 +82,8 @@ func main() {
 
 	bus := natspkg.NewBus(nc)
 	bus.OnBroadcast = apipkg.BroadcastToWS
+	// A runner appearing or leaving: tell the browsers so the lists refresh at once.
+	bus.OnPeersChange = func([]natspkg.InstanceInfo) { bus.Broadcast("", map[string]any{"type": "peers_changed"}) }
 
 	_ = hookBinary // the hook is extracted from the embedded copy below
 

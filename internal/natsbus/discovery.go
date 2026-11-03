@@ -13,9 +13,16 @@ import (
 )
 
 const (
-	discoverySubject  = "lucode.discovery"
-	heartbeatInterval = 15 * time.Second
-	peerTTL           = 45 * time.Second
+	discoverySubject = "lucode.discovery"
+	// discoveryQuerySubject: a starting instance publishes here to make everyone
+	// announce itself at once instead of making it wait for the next heartbeat.
+	discoveryQuerySubject = "lucode.discovery.query"
+	heartbeatInterval     = 15 * time.Second
+	peerTTL               = 45 * time.Second
+	// queryReplyDelay is how long an instance waits before answering a query. Queries
+	// that arrive meanwhile are covered by that same answer (a heartbeat reaches every
+	// subscriber), so instances starting together do not trigger one answer each.
+	queryReplyDelay = 100 * time.Millisecond
 )
 
 // InstanceInfo describes a discovered service on the NATS network.
@@ -69,13 +76,25 @@ func (b *Bus) StartDiscovery(info InstanceInfo) error {
 	b.selfInfo = info
 	b.peersMu.Unlock()
 
-	// Subscribe to peer heartbeats
+	// Subscribe to peer heartbeats, and to queries asking everyone to announce itself
 	if _, err := b.nc.Subscribe(discoverySubject, b.handleDiscovery); err != nil {
 		return err
 	}
+	if _, err := b.nc.Subscribe(discoveryQuerySubject, b.handleDiscoveryQuery); err != nil {
+		return err
+	}
+	// The server must know both subscriptions before we ask, or the answers are lost.
+	if err := b.nc.Flush(); err != nil {
+		return err
+	}
 
-	// Publish own heartbeat immediately, then every interval
+	// Publish own heartbeat immediately, ask the others to do the same, then repeat
+	// the heartbeat every interval
 	b.publishHeartbeat()
+	query, _ := json.Marshal(map[string]string{"id": info.ID})
+	if err := b.nc.Publish(discoveryQuerySubject, query); err != nil {
+		log.Printf("[discovery] query error: %v", err)
+	}
 	go func() {
 		t := time.NewTicker(heartbeatInterval)
 		defer t.Stop()
@@ -117,6 +136,30 @@ func (b *Bus) publishHeartbeat() {
 	}
 }
 
+// handleDiscoveryQuery answers a newcomer's query with our own heartbeat, after a
+// short delay shared by every query that arrives in the meantime.
+func (b *Bus) handleDiscoveryQuery(msg *nats.Msg) {
+	var q struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(msg.Data, &q)
+
+	b.peersMu.Lock()
+	if q.ID == b.selfInfo.ID || b.queryReplyPending { // our own query, or an answer is already on its way
+		b.peersMu.Unlock()
+		return
+	}
+	b.queryReplyPending = true
+	b.peersMu.Unlock()
+
+	time.AfterFunc(queryReplyDelay, func() {
+		b.peersMu.Lock()
+		b.queryReplyPending = false
+		b.peersMu.Unlock()
+		b.publishHeartbeat()
+	})
+}
+
 func (b *Bus) handleDiscovery(msg *nats.Msg) {
 	var info InstanceInfo
 	if err := json.Unmarshal(msg.Data, &info); err != nil || info.ID == "" {
@@ -131,16 +174,16 @@ func (b *Bus) handleDiscovery(msg *nats.Msg) {
 	}
 
 	b.peersMu.Lock()
-	_, isNew := b.peers[info.ID]
+	_, known := b.peers[info.ID]
 	b.peers[info.ID] = peerEntry{info: info, lastSeen: time.Now()}
 	cb := b.OnPeersChange
 	b.peersMu.Unlock()
 
-	if !isNew {
+	if !known {
 		log.Printf("[discovery] new peer id=%s type=%s host=%s", info.ID, info.Type, info.Hostname)
-	}
-	if cb != nil {
-		cb(b.Peers())
+		if cb != nil { // only a peer showing up is a change; a heartbeat is not
+			cb(b.Peers())
+		}
 	}
 }
 
@@ -161,4 +204,3 @@ func (b *Bus) evictStalePeers() {
 		cb(b.Peers())
 	}
 }
-

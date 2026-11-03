@@ -80,10 +80,11 @@ type Bus struct {
 	large largeStore
 
 	// discovery
-	peersMu       sync.RWMutex
-	selfInfo      InstanceInfo
-	peers         map[string]peerEntry
-	OnPeersChange func([]InstanceInfo)
+	peersMu           sync.RWMutex
+	selfInfo          InstanceInfo
+	peers             map[string]peerEntry
+	OnPeersChange     func([]InstanceInfo)
+	queryReplyPending bool // a delayed answer to a discovery query is scheduled (guarded by peersMu)
 }
 
 // NewBus wraps an existing nats.Conn (the embedded server's internal connection).
