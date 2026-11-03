@@ -1,3 +1,4 @@
+import { withPendingHooks } from './pendingHooks'
 import { create } from 'zustand'
 import type { Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo, RawEventEntry, ToolInputField } from '../types'
 import * as api from '../api'
@@ -404,7 +405,7 @@ export const useStore = create<AppState>((set, get) => ({
     if (session && session.message_count === 0) {
       // Brand-new empty session — no messages to load, WS will deliver them
       set(s => ({
-        messages: { ...s.messages, [id]: [] },
+        messages: { ...s.messages, [id]: withPendingHooks([], s.pendingHooks[id] ?? []) },
         messagePagination: {
           ...s.messagePagination,
           [id]: { hasMore: false, oldestSeq: null, isLoadingMore: false },
@@ -563,7 +564,8 @@ export const useStore = create<AppState>((set, get) => ({
       new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     )
     set(s => ({
-      messages: { ...s.messages, [id]: sorted },
+      // The API has no pending approvals (they are stored once answered): put them back.
+      messages: { ...s.messages, [id]: withPendingHooks(sorted, s.pendingHooks[id] ?? []) },
       messagePagination: {
         ...s.messagePagination,
         [id]: { hasMore: page.has_more, oldestSeq: page.oldest_seq, isLoadingMore: false },
@@ -927,36 +929,21 @@ export const useStore = create<AppState>((set, get) => ({
           tool_use_id: event.tool_use_id,
           tool_name: event.tool_name,
           tool_input: event.tool_input,
+          tool_input_schema: (event as { tool_input_schema?: ToolInputField[] | null }).tool_input_schema ?? null,
           created_at: event.created_at,
         }
         set(s => {
           const existing = s.pendingHooks[event.session_id] ?? []
-          // Avoid duplicates (reconnect replay)
-          if (existing.some(h => h.tool_use_id === event.tool_use_id)) return s
-
-          // Create virtual hook message in chat
-          const hookMsgId = `hook-${event.tool_use_id}`
-          const hookMessage: Message = {
-            id: hookMsgId,
-            session_id: event.session_id,
-            role: 'hook',
-            content: JSON.stringify({
-              tool_use_id: event.tool_use_id,
-              tool_name: event.tool_name,
-              tool_input: event.tool_input,
-              tool_input_schema: (event as { tool_input_schema?: ToolInputField[] | null }).tool_input_schema ?? null,
-              decision: 'pending',
-            }),
-            seq: (s.messages[event.session_id]?.length ?? 0),
-            created_at: new Date().toISOString(),
-          }
-
+          const known = existing.some(h => h.tool_use_id === event.tool_use_id)
+          const hooks = known ? existing : [...existing, newHook]
+          // Also covers a replay for a hook we already know whose chat message was lost
+          // when the session's messages were reloaded.
+          const current = s.messages[event.session_id] ?? []
+          const messages = withPendingHooks(current, hooks)
+          if (known && messages === current) return s // reconnect replay, nothing to do
           return {
-            pendingHooks: { ...s.pendingHooks, [event.session_id]: [...existing, newHook] },
-            messages: {
-              ...s.messages,
-              [event.session_id]: [...(s.messages[event.session_id] ?? []), hookMessage],
-            },
+            pendingHooks: known ? s.pendingHooks : { ...s.pendingHooks, [event.session_id]: hooks },
+            messages: { ...s.messages, [event.session_id]: messages },
           }
         })
         break
