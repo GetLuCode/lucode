@@ -73,12 +73,14 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
   }
 
   const handleWorkspacePickerConfirm = async (name: string, path: string, env: { runnerId: string; aiProfileId: string }) => {
+    // work_dirs are folders of THIS machine; a project on a peer runner keeps its folder
+    // only in env_dirs, which is where that runner looks.
+    const remote = env.runnerId !== ''
     const p = await createProject({
       name,
-      work_dirs: [path],
+      work_dirs: remote ? [] : [path],
       ...(env.aiProfileId ? { ai_profile_id: env.aiProfileId } : {}),
-      // on a peer runner the path belongs to that machine
-      ...(env.runnerId ? { runner_id: env.runnerId, env_dirs: { [env.runnerId]: [path] } } : {}),
+      ...(remote ? { runner_id: env.runnerId, env_dirs: { [env.runnerId]: [path] } } : {}),
     })
     await setActiveProject(p.id)
     navigate(`/projects/${p.id}`)

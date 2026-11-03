@@ -73,9 +73,8 @@ func (m *Manager) runWithRemoteCLI(ctx context.Context, ps *ProcessState, opts T
 	sessID := ps.SessionID
 	defer m.finishTurn(sessID, ps)
 
-	if len(opts.WorkDirs) > 0 {
-		m.SetWorkDir(sessID, opts.WorkDirs[0])
-	}
+	// No SetWorkDir: opts.WorkDirs are folders of the runner, and the hub uses that
+	// cache to find settings files on its own disk.
 	publish := m.cliPublisher(sessID, opts)
 
 	rt := RemoteTurn{

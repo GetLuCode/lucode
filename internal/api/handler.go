@@ -379,6 +379,9 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 	if body.DefaultModel == "" {
 		body.DefaultModel = "haiku"
 	}
+	if body.WorkDirs == nil {
+		body.WorkDirs = []string{} // stored as [], not null
+	}
 	p := dbpkg.Project{
 		ID:              uuid.New().String(),
 		Name:            body.Name,
@@ -1137,6 +1140,9 @@ func (h *Handler) resolveFsRoot(r *http.Request) (string, error) {
 			return "", fmt.Errorf("project not found: %w", err)
 		}
 		if len(proj.WorkDirs) == 0 || proj.WorkDirs[0] == "" {
+			if h.isRemoteRunner(proj.RunnerID) {
+				return "", fmt.Errorf("this project lives on another runner: its files cannot be browsed from here")
+			}
 			return "", fmt.Errorf("project has no working directory")
 		}
 		return proj.WorkDirs[0], nil
