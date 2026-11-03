@@ -104,12 +104,35 @@ function TokenPlanBadge() {
 
 interface ContextBarProps {
   sessionId: string
+  // Where the details window opens, always centered and without an overlay:
+  // 'viewport' (default) in the middle of the screen, 'panel' in the middle of the
+  // nearest positioned ancestor (the orchestrator panel).
+  placement?: 'viewport' | 'panel'
 }
 
-export function ContextBar({ sessionId }: ContextBarProps) {
+export function ContextBar({ sessionId, placement = 'viewport' }: ContextBarProps) {
   const contextUsage = useStore(s => s.contextUsage[sessionId])
   const sessionUsage = useStore(s => s.sessionUsage[sessionId])
   const [detailOpen, setDetailOpen] = useState(false)
+  const barRef = useRef<HTMLDivElement>(null)
+  const modalRef = useRef<HTMLDivElement>(null)
+
+  // No overlay to click on, so the window closes with Escape or a click anywhere outside it.
+  useEffect(() => {
+    if (!detailOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDetailOpen(false) }
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (modalRef.current?.contains(t) || barRef.current?.contains(t)) return // the bar itself toggles it
+      setDetailOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [detailOpen])
   const [tooltip, setTooltip] = useState<{ name: string; tokens: number; pct: number; x: number } | null>(null)
 
   if (!contextUsage) return <TokenPlanBadge />
@@ -123,11 +146,11 @@ export function ContextBar({ sessionId }: ContextBarProps) {
   const dangerLevel = pctUsed >= 90 ? 'danger' : pctUsed >= 70 ? 'warning' : 'normal'
 
   return (
-    <div className="context-bar">
+    <div className="context-bar" ref={barRef}>
       <div
         className="context-bar__track context-bar__track--clickable"
         onMouseLeave={() => setTooltip(null)}
-        onClick={() => setDetailOpen(true)}
+        onClick={() => setDetailOpen(v => !v)}
         title="Click for context details"
       >
         {usedCategories.map((cat) => {
@@ -194,8 +217,7 @@ export function ContextBar({ sessionId }: ContextBarProps) {
 
       {detailOpen && (
         <>
-          <div className="voice-modal-backdrop" onClick={() => setDetailOpen(false)} />
-          <div className="voice-modal context-detail" role="dialog" aria-label="Context details">
+          <div ref={modalRef} className={`voice-modal context-detail${placement === 'panel' ? ' context-detail--panel' : ''}`} role="dialog" aria-label="Context details">
             <div className="voice-modal__header">
               <h3 className="voice-modal__title">Context window</h3>
               <button className="voice-modal__close" onClick={() => setDetailOpen(false)} title="Close" aria-label="Close">

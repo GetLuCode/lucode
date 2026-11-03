@@ -463,6 +463,9 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		}
 		return h.agentDelete(agent, args)
 
+	case taskmcp.ToolProjectInfo:
+		return h.projectInfo(sess)
+
 	case taskmcp.ToolTaskList:
 		return h.taskList(sess, args)
 

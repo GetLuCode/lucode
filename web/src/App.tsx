@@ -126,9 +126,9 @@ export default function App() {
       <SpotlightSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
       <RawEventsModal />
       <div className="app-content">
-        <NavPanel onOpenSearch={() => setSearchOpen(true)} />
+        <NavPanel />
         <main className={`main${isCheckpointsOpen ? ' main--with-drawer' : ''}`}>
-          {!isHome && <ProjectHeader />}
+          {!isHome && <ProjectHeader onOpenSearch={() => setSearchOpen(true)} />}
           {/* Agents, Kanban and Running replace the chat (full-page views). */}
           <div className="main__content">
             {/* a render error stays inside the page and clears when the route changes */}

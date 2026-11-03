@@ -152,6 +152,7 @@ export type WSEvent =
   | { type: 'session_updated'; session: Session }
   | { type: 'error'; session_id: string; message: string }
   | { type: 'info'; session_id: string; message: string }
+  | { type: 'claude_process'; session_id: string; alive: boolean; pid?: number; runner?: string }
   | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
   | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
   | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
@@ -216,6 +217,7 @@ export interface KanbanList {
   project_id: string
   name: string
   position: number
+  kind?: string  // workflow role: backlog, todo, inprogress, done, blocked (custom lists have none)
   created_at: string
 }
 
@@ -349,4 +351,11 @@ export interface DiffResponse {
   from: string
   to: string
   changes: CheckpointChange[]
+}
+
+// Whether a session keeps a persistent claude process alive between turns.
+export interface ClaudeProcess {
+  alive: boolean
+  pid?: number     // local processes only
+  runner?: string  // the runner holding it, when it is not this instance
 }

@@ -1,4 +1,4 @@
-import type { AIProfile, Runner, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { AIProfile, Runner, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -95,6 +95,8 @@ export const sendTurn = (id: string, message: string, model?: string, provider?:
   req<void>('POST', `/api/sessions/${id}/turn`, { message, model, provider, effort, thinking, image })
 // The project's orchestrator chat (created on first use).
 export const getOrchestrator = (pid: string) => req<Session>('GET', `/api/projects/${pid}/orchestrator`)
+// Closes the current orchestrator conversation and starts an empty one.
+export const newOrchestratorSession = (pid: string) => req<Session>('POST', `/api/projects/${pid}/orchestrator/new`)
 export const sendOrchestratorTurn = (id: string, message: string, env: { runnerId: string; aiProfileId: string; model?: string }) =>
   req<void>('POST', `/api/sessions/${id}/turn`, { message, runner_id: env.runnerId, ai_profile_id: env.aiProfileId, model: env.model })
 // Voice output (Fish Audio through the voice worker). The key is write-only.
@@ -109,6 +111,9 @@ export const speakRequest = (text: string, signal: AbortSignal) => {
   if (token) headers['Authorization'] = `Bearer ${token}`
   return fetch(`${BASE}/api/tts`, { method: 'POST', headers, body: JSON.stringify({ text }), signal })
 }
+// The persistent claude process of a session: is it alive, and close it (the next message starts a new one).
+export const getSessionProcess = (id: string) => req<ClaudeProcess>('GET', `/api/sessions/${id}/process`)
+export const closeSessionProcess = (id: string) => req<void>('DELETE', `/api/sessions/${id}/process`)
 export const cancelTurn = (id: string) =>
   req<void>('DELETE', `/api/sessions/${id}/turn`)
 export const forkSession = (id: string, name: string, message?: string) =>

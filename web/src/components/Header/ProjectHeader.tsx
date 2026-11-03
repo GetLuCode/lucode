@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { IconCpu, IconEdit, IconRobot, IconTrash, IconUpload } from '@tabler/icons-react'
+import { IconCpu, IconEdit, IconRobot, IconSearch, IconTrash, IconUpload } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import { RunnersButton } from '../Sidebar/RunnersList'
 import { ProjectEnvironmentModal } from '../Sidebar/ProjectEnvironmentModal'
@@ -8,7 +8,7 @@ import { ProjectEnvInfo } from './ProjectEnvInfo'
 
 // Top bar of a project: its name and menu, the Kanban | Running tabs, and the
 // Runners / Agents actions at the right.
-export function ProjectHeader() {
+export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const projects = useStore(s => s.projects)
@@ -117,6 +117,9 @@ export function ProjectHeader() {
       </nav>
 
       <div className="project-header__actions">
+        <button className="header-icon-btn" onClick={onOpenSearch} title="Search (Ctrl+K)" aria-label="Search">
+          <IconSearch size={16} />
+        </button>
         <RunnersButton />
         <button
           className={`header-icon-btn${onAgents ? ' header-icon-btn--active' : ''}`}

@@ -1,26 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings } from '@tabler/icons-react'
+import { useLocation } from 'react-router-dom'
+import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from '../Chat/MessageBubble'
 import { ThinkingIndicator } from '../Chat/ThinkingIndicator'
+import { ContextBar } from '../Chat/ContextBar'
+import { CacheBadge, useCacheCountdown } from '../Chat/CacheBadge'
+import { ClaudeProcess } from '../Chat/ClaudeProcess'
 import { EnvPicker } from './EnvPicker'
 import { useWorkerMic } from '@/hooks/useWorkerMic'
 import { useWorkerTTS } from '@/hooks/useWorkerTTS'
 import { markSpoken, wasSpoken } from '@/lib/spokenLog'
 import { VoiceSettingsDialog } from './VoiceSettingsDialog'
 import { getHotword } from '@/lib/audioDevices'
-import type { AIProfile, Message, Runner } from '../../types'
+import type { AIProfile, Message, Runner, Session } from '../../types'
 import './OrchestratorPanel.css'
 
 const EMPTY_MESSAGES: Message[] = []
-// Anthropic's prompt cache lives 5 minutes after the last request.
-const CACHE_TTL_MS = 5 * 60 * 1000
 // The runner and the AI are remembered per project (and the AI per runner, since an
 // AI belongs to its runner); a project without a choice starts from the last runner used.
 const LS = {
-  open: 'orch_open',
   autoRead: 'orch_autoread',
   runner: (pid: string) => `orch_runner:${pid}`,
   lastRunner: 'orch_runner',
@@ -41,54 +42,25 @@ const lsSet = (k: string, v: string) => {
   try { localStorage.setItem(k, v) } catch { /* private mode */ }
 }
 
-function fmtClock(ms: number) {
-  const s = Math.max(0, Math.ceil(ms / 1000))
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
-}
-
-// Counts the prompt cache down from the end of the last turn. While a turn runs the
-// cache is being refreshed, so the clock is held at the full 5 minutes.
-function useCacheCountdown(status: string, lastActive: string | undefined) {
-  const [endsAt, setEndsAt] = useState<number | null>(null)
-  const [now, setNow] = useState(() => Date.now())
-  const prev = useRef(status)
-
-  // Chat opened with an earlier conversation: its cache ends 5 min after it was last active.
-  useEffect(() => {
-    if (lastActive && status === 'idle') {
-      const t = new Date(lastActive).getTime()
-      if (!Number.isNaN(t)) setEndsAt(t + CACHE_TTL_MS)
-    } else if (!lastActive) {
-      setEndsAt(null)
+// The context window of an earlier conversation, as last measured, so the bar is there on load.
+function seedContextUsage(s: Session) {
+  if (!s.context_usage) return
+  try {
+    const cu = JSON.parse(s.context_usage)
+    if (cu && cu.totalTokens != null) {
+      useStore.setState(st => ({ contextUsage: { ...st.contextUsage, [s.id]: { ...cu, session_id: s.id } } }))
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastActive])
-
-  useEffect(() => {
-    if (prev.current !== 'idle' && status === 'idle') setEndsAt(Date.now() + CACHE_TTL_MS)
-    prev.current = status
-  }, [status])
-
-  const running = status === 'running' || status === 'waiting_hook'
-  useEffect(() => {
-    if (running || endsAt === null) return
-    setNow(Date.now())
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [running, endsAt])
-
-  if (running) return { label: fmtClock(CACHE_TTL_MS), state: 'busy' as const, fraction: 1 }
-  if (endsAt === null) return { label: '—', state: 'none' as const, fraction: 0 }
-  const left = endsAt - now
-  if (left <= 0) return { label: 'cache expired', state: 'expired' as const, fraction: 0 }
-  return { label: fmtClock(left), state: left < 60_000 ? ('low' as const) : ('ok' as const), fraction: left / CACHE_TTL_MS }
+  } catch { /* malformed: the next turn measures it again */ }
 }
 
 export function OrchestratorPanel() {
   const projectId = useStore(s => s.activeProjectId)
   const peersVersion = useStore(s => s.peersVersion)
   const loadMessages = useStore(s => s.loadMessages)
-  const [open, setOpen] = useState(() => lsGet(LS.open, '1') === '1')
+  const open = useStore(s => s.orchOpen)
+  const setOpen = useStore(s => s.setOrchOpen)
+  const setOrchCache = useStore(s => s.setOrchCache)
+  const onKanban = useLocation().pathname.includes('/kanban')
   const [session, setSession] = useState<{ id: string; last_active: string } | null>(null)
   const [error, setError] = useState('')
   const [input, setInput] = useState('')
@@ -162,9 +134,11 @@ export function OrchestratorPanel() {
   const { sendHookRespond } = useSessionWS(sid)
 
   const running = sending || status === 'running' || status === 'waiting_hook'
-  const cache = useCacheCountdown(status, session?.last_active)
+  const cache = useCacheCountdown(status, session?.last_active, sid ?? '')
+  // the button that reopens the panel (wherever it is drawn) shows this clock
+  useEffect(() => { setOrchCache(cache) }, [cache, setOrchCache])
 
-  const toggle = (v: boolean) => { setOpen(v); lsSet(LS.open, v ? '1' : '0') }
+  const toggle = (v: boolean) => setOpen(v)
 
   // The project's orchestrator chat.
   useEffect(() => {
@@ -176,6 +150,7 @@ export function OrchestratorPanel() {
       .then(async s => {
         if (cancelled) return
         await loadMessages(s.id)
+        seedContextUsage(s)
         if (!cancelled) setSession({ id: s.id, last_active: s.message_count > 0 ? s.last_active : '' })
       })
       .catch(e => { if (!cancelled) setError(String(e?.message ?? e)) })
@@ -264,9 +239,27 @@ export function OrchestratorPanel() {
 
   const cancel = () => { if (sid) api.cancelTurn(sid).catch(console.error) }
 
+  // A fresh conversation with an empty context window; the old one is closed.
+  const startNewSession = async () => {
+    if (!projectId || running) return
+    if (messages.length > 0 && !confirm('Start a new orchestrator session?\n\nThe current conversation is closed and its context is cleared.')) return
+    tts.stop()
+    setError('')
+    try {
+      const s = await api.newOrchestratorSession(projectId)
+      await loadMessages(s.id)
+      setInput('')
+      dictBase.current = ''
+      setSession({ id: s.id, last_active: '' })
+    } catch (e) {
+      setError(String((e as Error)?.message ?? e))
+    }
+  }
+
   if (!projectId) return null
 
   if (!open) {
+    if (onKanban) return null // the board has its own button, after "Add list"
     return (
       <button className="orch-tab" onClick={() => toggle(true)} title="Open the orchestrator chat">
         <IconLayoutSidebarRightExpand size={16} />
@@ -281,6 +274,16 @@ export function OrchestratorPanel() {
       <header className="orch__header">
         <span className="orch__title">Orchestrator</span>
         <CacheBadge cache={cache} />
+        {sid && <ClaudeProcess sessionId={sid} />}
+        <button
+          className="orch__icon-btn"
+          onClick={startNewSession}
+          disabled={!sid || running}
+          title={running ? 'Stop the current turn before starting a new session' : 'New session (empty context)'}
+          aria-label="New session"
+        >
+          <IconMessagePlus size={16} />
+        </button>
         <button
           className={`orch__icon-btn${autoRead ? ' orch__icon-btn--on' : ''}`}
           onClick={() => { const v = !autoRead; setAutoRead(v); lsSet(LS.autoRead, v ? '1' : '0'); if (!v) tts.stop(); if (v && !ttsConfigured) setVoiceOpen(true) }}
@@ -296,6 +299,8 @@ export function OrchestratorPanel() {
           <IconLayoutSidebarRightCollapse size={16} />
         </button>
       </header>
+
+      {sid && <ContextBar sessionId={sid} placement="panel" />}
 
       <div className="orch__messages" ref={scrollRef}>
         {error && <div className="orch__error">{error}</div>}
@@ -383,12 +388,3 @@ export function OrchestratorPanel() {
   )
 }
 
-function CacheBadge({ cache, compact }: { cache: ReturnType<typeof useCacheCountdown>; compact?: boolean }) {
-  const title = 'Prompt cache: time left before the 5-minute cache expires. A new message within it is cheaper and faster.'
-  return (
-    <span className={`orch-cache orch-cache--${cache.state}${compact ? ' orch-cache--compact' : ''}`} title={title}>
-      <span className="orch-cache__bar"><span style={{ transform: `scaleX(${cache.fraction.toFixed(3)})` }} /></span>
-      <span className="orch-cache__time">{cache.label}</span>
-    </span>
-  )
-}

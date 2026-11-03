@@ -19,6 +19,9 @@ import { FileBrowser } from './FileBrowser'
 import { ChatSideRail } from './ChatSideRail'
 import { StarredPanel } from './StarredPanel'
 import { ContextBar } from './ContextBar'
+import { CacheBadge, useCacheCountdown } from './CacheBadge'
+import { ClaudeProcess } from './ClaudeProcess'
+import { TaskStatus } from './TaskStatus'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import { listOllamaModels, cancelTurn } from '../../api'
 import type { Message } from '../../types'
@@ -276,7 +279,10 @@ function ChatViewFull() {
 
 
   const session = sessions.find(s => s.id === activeSessionId)
-  const isRunning = isSending || sessionStatus === 'running' || sessionStatus === 'waiting_hook'
+  // the 5-minute prompt cache only exists for Claude models (not Ollama or MiniMax)
+  const isClaudeModel = /^(haiku|sonnet|opus|claude)/i.test(session?.model ?? model)
+  const cache = useCacheCountdown(sessionStatus, session?.last_active, activeSessionId ?? '')
+  const isRunning =isSending || sessionStatus === 'running' || sessionStatus === 'waiting_hook'
   isRunningRef.current = isRunning
   const hasStreamingText = streamingText.length > 0
   const hasStreamingThinking = streamingThinking.length > 0
@@ -557,6 +563,7 @@ function ChatViewFull() {
             onClick={() => setHeaderMenuOpen(v => !v)}
           >
             <span className="chat__session-name">{headerName}</span>
+            {session?.card_id && activeProjectId && <TaskStatus projectId={activeProjectId} cardId={session.card_id} />}
             <span className="chat__header-model-badge">
               {[...CLAUDE_MODELS, ...MINIMAX_MODELS].find(m => m.value === model)?.label
                 ?? ollamaModels.find(m => `ollama:${m.name}` === model)?.label
@@ -663,17 +670,20 @@ function ChatViewFull() {
           )}
         </div>
         <div className="chat__header-right">
+          {activeSessionId && !pendingSession && isClaudeModel && <CacheBadge cache={cache} />}
+          {activeSessionId && !pendingSession && isClaudeModel && <ClaudeProcess sessionId={activeSessionId} />}
           {sessionUsage && (
             <span className="chat__usage-total">
               ↑{fmt(sessionUsage.input_tokens)} ↓{fmt(sessionUsage.output_tokens)} tokens
             </span>
           )}
-          <span className={`chat__status chat__status--${isSending ? 'running' : sessionStatus}`}>
+          <span className={`chat__status chat__status--${isSending ? 'running' : sessionStatus}`} title={!isSending && (isPending || sessionStatus === 'idle') ? 'ready' : undefined}>
             {isSending && 'sending…'}
             {!isSending && sessionStatus === 'running' && 'thinking…'}
             {!isSending && sessionStatus === 'waiting_hook' && 'awaiting approval'}
-            {!isSending && isPending && 'ready'}
-            {!isSending && !isPending && sessionStatus === 'idle' && 'ready'}
+            {!isSending && (isPending || sessionStatus === 'idle') && (
+              <IconCheck size={15} className="chat__status-ready" aria-label="ready" />
+            )}
             {!isSending && !isPending && sessionStatus === 'error' && 'error'}
           </span>
         </div>

@@ -1,0 +1,18 @@
+.claude-proc { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.claude-proc__badge {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+}
+.claude-proc__dot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid currentColor; box-sizing: border-box; }
+.claude-proc__badge--alive { color: var(--accent); }
+.claude-proc__badge--alive .claude-proc__dot { background: currentColor; }
+.claude-proc__badge--turn { color: var(--accent); }
+.claude-proc__badge--turn .claude-proc__dot { background: currentColor; animation: claude-proc-pulse 1.2s ease-in-out infinite; }
+@keyframes claude-proc-pulse { 50% { opacity: 0.35; } }
+.claude-proc__menu-btn {
+  display: grid; place-items: center; padding: 3px; border: none; border-radius: 5px;
+  background: none; color: var(--text-muted); cursor: pointer;
+}
+.claude-proc__menu-btn:hover { background: var(--bg-hover); color: var(--text); }
+.claude-proc .nav-tree__menu-item:disabled { opacity: 0.45; cursor: default; }
+.claude-proc__hint { padding: 4px 10px 6px; font-size: 11px; color: var(--text-muted); max-width: 220px; white-space: normal; }

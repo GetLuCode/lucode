@@ -1,0 +1,9 @@
+.task-status {
+  flex-shrink: 0; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 500; white-space: nowrap;
+  color: var(--text-muted); background: var(--bg-hover); border: 1px solid var(--border);
+}
+.task-status--backlog { color: #9ca3af; }
+.task-status--todo { color: #60a5fa; }
+.task-status--inprogress { color: #f59e0b; }
+.task-status--done { color: #22c55e; }
+.task-status--blocked { color: #ef4444; }

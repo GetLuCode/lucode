@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project } from '../../types'
-import { IconSearch, IconAdjustments, IconChartBar, IconLogout, IconCpu } from '@tabler/icons-react'
+import { IconAdjustments, IconChartBar, IconLogout, IconCpu } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 import { getProjectColor, getProjectInitials } from './projectStyle'
 import { SettingsModal } from '../Settings/SettingsModal'
@@ -11,13 +11,9 @@ import { TaskManagerPanel } from '../TaskManager/TaskManagerPanel'
 import { useAuthStore } from '../../store/auth'
 import * as api from '../../api'
 
-interface NavPanelProps {
-  onOpenSearch?: () => void
-}
-
-// The icon rail: projects, search, usage, task manager, settings and sign out.
-// Everything about the active project lives in the project header.
-export function NavPanel({ onOpenSearch }: NavPanelProps) {
+// The icon rail: projects, usage, task manager, settings and sign out.
+// Everything about the active project, and the search, live in the project header.
+export function NavPanel() {
   const navigate = useNavigate()
   const projects = useStore(s => s.projects)
   const activeProjectId = useStore(s => s.activeProjectId)
@@ -79,9 +75,6 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
         </div>
 
         <div className="nav-panel__rail-spacer" />
-        <button className="nav-panel__rail-btn" onClick={onOpenSearch} title="Search (Ctrl+K)">
-          <IconSearch size={16} />
-        </button>
         <button className="nav-panel__rail-btn" onClick={() => navigate('/usage')} title="Usage metrics">
           <IconChartBar size={16} />
         </button>

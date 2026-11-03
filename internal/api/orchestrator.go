@@ -49,6 +49,7 @@ const orchestratorPrompt = `# You are the lucode orchestrator
 You are the main chat of this project in lucode. The user talks to you to plan and run the work; you do not do the project's work yourself unless it is small: you organise it on the board and hand it to the project's agents.
 
 Your tools (in Claude Code they appear as mcp__lucode__<name>):
+- project_info(): where you are: this project's name, work folders, runner, AI, board counts and agents. Call it first when you need to know the project's context.
 - task_list(status?, limit?): see the board. Check it before creating a task so you do not duplicate one.
 - task_info(task_id, fields?): look up one task; ask for the fewest fields that answer your question.
 - task_create(title, description?, status?, type?, tags?, agent?, depends_on?, parent_id?): create a task. It goes to Todo by default, or straight to In Progress (the agent starts) when you assign an agent that is free and nothing blocks it; status=backlog just parks it. Write a description that lets whoever takes it work without asking you.
@@ -80,15 +81,45 @@ func (h *Handler) getOrchestrator(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := dbpkg.GetOrchestratorSession(h.db, pid)
 	if errors.Is(err, sql.ErrNoRows) {
-		sess = dbpkg.Session{
-			ID: uuid.New().String(), ProjectID: pid, Name: "Orchestrator", Model: "sonnet",
-			Status: string(sessionpkg.StatusIdle), Kind: dbpkg.SessionKindOrchestrator,
-		}
-		err = dbpkg.InsertSession(h.db, sess)
-		if err == nil {
-			sess, err = dbpkg.GetSession(h.db, sess.ID)
-		}
+		sess, err = h.createOrchestrator(pid)
 	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, sess)
+}
+
+func (h *Handler) createOrchestrator(pid string) (dbpkg.Session, error) {
+	sess := dbpkg.Session{
+		ID: uuid.New().String(), ProjectID: pid, Name: "Orchestrator", Model: "sonnet",
+		Status: string(sessionpkg.StatusIdle), Kind: dbpkg.SessionKindOrchestrator,
+	}
+	if err := dbpkg.InsertSession(h.db, sess); err != nil {
+		return sess, err
+	}
+	return dbpkg.GetSession(h.db, sess.ID)
+}
+
+// newOrchestrator starts a fresh orchestrator conversation: the old one stops (its live
+// claude process is closed) and a new session, with an empty context, takes its place.
+func (h *Handler) newOrchestrator(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	if _, err := dbpkg.GetProject(h.db, pid); err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	if old, err := dbpkg.GetOrchestratorSession(h.db, pid); err == nil {
+		if h.manager != nil {
+			h.manager.CancelTurn(old.ID)
+			h.manager.CloseLive(old.ID)
+		}
+		orchEnvMu.Lock()
+		delete(orchEnvs, old.ID)
+		delete(orchModels, old.ID)
+		orchEnvMu.Unlock()
+	}
+	sess, err := h.createOrchestrator(pid)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -171,6 +202,8 @@ func (h *Handler) handleOrchestratorTool(sessID string, sess dbpkg.Session, tool
 	caller := orchestratorCaller(sess.ProjectID)
 
 	switch toolName {
+	case taskmcp.ToolProjectInfo:
+		return h.projectInfo(sess)
 	case taskmcp.ToolTaskList:
 		return h.taskList(sess, args)
 	case taskmcp.ToolTaskCreate:

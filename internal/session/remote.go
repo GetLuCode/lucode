@@ -103,6 +103,7 @@ func (m *Manager) runWithRemoteCLI(ctx context.Context, ps *ProcessState, opts T
 		m.liveMu.Lock()
 		m.remoteRunnerOf[sessID] = opts.RunnerID // so CloseLive can reach the process
 		m.liveMu.Unlock()
+		m.emitProcess(sessID)
 	}
 
 	stop := make(chan struct{})

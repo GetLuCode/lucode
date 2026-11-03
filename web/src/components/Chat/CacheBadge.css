@@ -1,0 +1,13 @@
+/* 5-minute prompt cache countdown */
+.cache-badge {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+}
+.cache-badge__bar { width: 48px; height: 4px; background: var(--border-bright); border-radius: 2px; overflow: hidden; }
+.cache-badge__bar > span { display: block; height: 100%; background: currentColor; transform-origin: left; transition: transform 1s linear; }
+.cache-badge--busy { color: var(--accent); }
+.cache-badge--low { color: var(--warning); }
+.cache-badge--expired, .cache-badge--none { color: var(--text-muted); }
+.cache-badge--compact { flex-direction: column; gap: 3px; }
+.cache-badge--compact .cache-badge__bar { width: 24px; }
+.cache-badge--compact .cache-badge__time { font-size: 10px; }

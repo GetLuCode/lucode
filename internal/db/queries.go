@@ -144,10 +144,11 @@ type Session struct {
 
 const SessionKindOrchestrator = "orchestrator"
 
-// GetOrchestratorSession returns the project's orchestrator chat (sql.ErrNoRows if none yet).
+// GetOrchestratorSession returns the project's current orchestrator chat, the newest one
+// (older ones stay stored but are no longer shown); sql.ErrNoRows if none yet.
 func GetOrchestratorSession(db *sql.DB, projectID string) (Session, error) {
 	var id string
-	err := db.QueryRow(`SELECT id FROM sessions WHERE project_id=? AND kind=? ORDER BY created_at LIMIT 1`, projectID, SessionKindOrchestrator).Scan(&id)
+	err := db.QueryRow(`SELECT id FROM sessions WHERE project_id=? AND kind=? ORDER BY created_at DESC, rowid DESC LIMIT 1`, projectID, SessionKindOrchestrator).Scan(&id)
 	if err != nil {
 		return Session{}, err
 	}
@@ -1332,7 +1333,7 @@ type Agent struct {
 }
 
 // DefaultLucodeTools is every lucode tool; new agents start with all of them.
-var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete"}
+var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete", "project_info"}
 
 const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, created_at, updated_at`
 

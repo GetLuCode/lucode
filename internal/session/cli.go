@@ -183,10 +183,14 @@ func (m *Manager) runLiveTurn(ctx context.Context, req execpkg.TurnRequest, opts
 
 func (m *Manager) getLive(sessID string) *execpkg.Live {
 	m.liveMu.Lock()
-	defer m.liveMu.Unlock()
 	l := m.lives[sessID]
-	if l != nil && !l.Alive() {
+	dead := l != nil && !l.Alive()
+	if dead {
 		delete(m.lives, sessID)
+	}
+	m.liveMu.Unlock()
+	if dead {
+		m.emitProcess(sessID) // it exited on its own (idle timeout or crash)
 		return nil
 	}
 	return l
@@ -196,6 +200,7 @@ func (m *Manager) setLive(sessID string, l *execpkg.Live) {
 	m.liveMu.Lock()
 	m.lives[sessID] = l
 	m.liveMu.Unlock()
+	m.emitProcess(sessID)
 }
 
 // dropLive forgets l if it is still the registered process for the session.
@@ -204,10 +209,14 @@ func (m *Manager) dropLive(sessID string, l *execpkg.Live) {
 		return
 	}
 	m.liveMu.Lock()
-	if m.lives[sessID] == l {
+	dropped := m.lives[sessID] == l
+	if dropped {
 		delete(m.lives, sessID)
 	}
 	m.liveMu.Unlock()
+	if dropped {
+		m.emitProcess(sessID)
+	}
 }
 
 // CloseLive gracefully stops a session's live process, if it has one. The next
@@ -225,6 +234,7 @@ func (m *Manager) CloseLive(sessID string) {
 	if l != nil {
 		l.Close()
 	}
+	m.emitProcess(sessID)
 }
 
 // cliPublisher returns the event sink for a claude process: it persists

@@ -9,6 +9,7 @@ import { useStore } from '../../store'
 import type { Agent, CardComment, KanbanCard, KanbanList } from '../../types'
 import * as api from '../../api'
 import { backdropClose } from '../../lib/backdropClose'
+import { OrchestratorOpenButton } from '../Orchestrator/OrchestratorOpenButton'
 
 // ---- pasted images -----------------------------------------------------------
 
@@ -934,6 +935,7 @@ export function KanbanView() {
           <IconPlus size={14} />
           Add list
         </button>
+        <OrchestratorOpenButton />
       </div>
 
       {/* card modal */}

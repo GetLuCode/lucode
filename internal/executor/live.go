@@ -66,6 +66,14 @@ func StartLive(req TurnRequest, publish func(map[string]any), onExit func()) (*L
 	return l, first, nil
 }
 
+// PID is the operating-system id of the claude process (0 if unknown).
+func (l *Live) PID() int {
+	if l.ps == nil || l.ps.Cmd == nil || l.ps.Cmd.Process == nil {
+		return 0
+	}
+	return l.ps.Cmd.Process.Pid
+}
+
 // Alive reports whether the process can still take messages.
 func (l *Live) Alive() bool {
 	l.mu.Lock()

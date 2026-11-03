@@ -35,6 +35,9 @@ const (
 	ToolAgentCreate = "agent_create"
 	ToolAgentUpdate = "agent_update"
 	ToolAgentDelete = "agent_delete"
+
+	// ToolProjectInfo describes the project the session belongs to.
+	ToolProjectInfo = "project_info"
 )
 
 // imagePrefix marks a tool result that is a picture, not text: the callback
@@ -62,14 +65,14 @@ var TaskInfoFields = []string{"title", "description", "status", "type", "tags", 
 
 // Names lists every lucode tool, in display order.
 func Names() []string {
-	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete}
+	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete, ToolProjectInfo}
 }
 
 // IsTaskTool reports whether name is one of the task tools, with or without
 // the mcp__lucode__ prefix claude adds.
 func IsTaskTool(name string) bool {
 	switch strings.TrimPrefix(name, "mcp__lucode__") {
-	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete:
+	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete, ToolProjectInfo:
 		return true
 	}
 	return false
@@ -90,6 +93,12 @@ func textArg(name, desc string) map[string]any {
 }
 
 var tools = []tool{
+	{
+		Name: ToolProjectInfo,
+		Description: "Describe the project you are working in: its name and id, work directories (and the ones on each runner), runner, AI account, default model, the tasks per board list, and its agents. " +
+			"Call it when you need to know where you are (which folders, which machine, how much is on the board) before planning or touching files.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
 	{
 		Name:        ToolAgentList,
 		Description: "List the other agents of this project: what each one does and whether it is working on a task right now. Use it to find who to ask for help.",

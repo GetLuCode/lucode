@@ -95,8 +95,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/sessions/{id}", h.updateSessionName)
 
 	mux.HandleFunc("GET /api/projects/{pid}/orchestrator", h.getOrchestrator)
+	mux.HandleFunc("POST /api/projects/{pid}/orchestrator/new", h.newOrchestrator)
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)
 	mux.HandleFunc("DELETE /api/sessions/{id}/turn", h.cancelTurn)
+	mux.HandleFunc("GET /api/sessions/{id}/process", h.getSessionProcess)
+	mux.HandleFunc("DELETE /api/sessions/{id}/process", h.closeSessionProcess)
 	mux.HandleFunc("POST /api/sessions/{id}/fork", h.forkSession)
 
 	mux.HandleFunc("GET /api/sessions/{id}/messages", h.listMessages)

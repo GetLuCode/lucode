@@ -1,7 +1,8 @@
 import { withPendingHooks } from './pendingHooks'
 import { create } from 'zustand'
-import type { Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, InstanceInfo, RawEventEntry, ToolInputField } from '../types'
+import type { Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, ClaudeProcess, InstanceInfo, RawEventEntry, ToolInputField } from '../types'
 import * as api from '../api'
+import type { CacheCountdown } from '../components/Chat/CacheBadge'
 
 export interface TokenUsage {
   input_tokens: number
@@ -56,10 +57,17 @@ interface AppState {
   filePreview: FilePreview | null
   starredMessages: Record<string, Message[]>
   starredPanelOpen: boolean
+  // The orchestrator chat panel: open or collapsed (remembered), and its prompt-cache clock so the
+  // button that reopens it can show the time left wherever that button is.
+  orchOpen: boolean
+  setOrchOpen: (open: boolean) => void
+  orchCache: CacheCountdown | null
+  setOrchCache: (c: CacheCountdown) => void
   jumpToMessageId: string | null
   userTools: UserTool[]
   // Context window usage per session (updated after each turn via WS)
   contextUsage: Record<string, ContextUsage>
+  claudeProcess: Record<string, ClaudeProcess>
 
   // Raw event modal state — which session/turn to inspect
   rawEventsModal: { sessionId: string; turnIndex?: number } | null
@@ -284,9 +292,17 @@ export const useStore = create<AppState>((set, get) => ({
   filePreview: null,
   starredMessages: {},
   starredPanelOpen: false,
+  orchOpen: (() => { try { return localStorage.getItem('orch_open') !== '0' } catch { return true } })(),
+  setOrchOpen: (open) => {
+    try { localStorage.setItem('orch_open', open ? '1' : '0') } catch { /* private mode */ }
+    set({ orchOpen: open })
+  },
+  orchCache: null,
+  setOrchCache: (c) => set(s => (s.orchCache && s.orchCache.label === c.label && s.orchCache.state === c.state ? s : { orchCache: c })),
   jumpToMessageId: null,
   userTools: [],
   contextUsage: {},
+  claudeProcess: {},
   rawEventsModal: null,
   rawEventsRevision: {},
 
@@ -1106,6 +1122,11 @@ export const useStore = create<AppState>((set, get) => ({
           },
         }))
         break
+
+      case 'claude_process': {
+        set(s => ({ claudeProcess: { ...s.claudeProcess, [event.session_id]: { alive: event.alive, pid: event.pid, runner: event.runner } } }))
+        break
+      }
 
       case 'context_usage': {
         set(s => ({
