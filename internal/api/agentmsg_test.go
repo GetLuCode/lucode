@@ -361,3 +361,105 @@ func TestTaskInfoValidation(t *testing.T) {
 		t.Error("tasks of other projects must not be readable")
 	}
 }
+
+func TestAgentManagementTools(t *testing.T) {
+	h, pid, lists := newTaskTestHandler(t)
+	alice := addMember(t, h, pid, lists, "Alice", "", "todo") // Tools: Read only, every lucode tool
+	bob := addMember(t, h, pid, lists, "Bob", "", "inprogress")
+	call := func(tool, args string) (string, error) { return h.HandleTaskTool(alice.sess.ID, tool, []byte(args)) }
+	find := func(name string) dbpkg.Agent {
+		t.Helper()
+		agents, _ := dbpkg.ListAgents(h.db, pid)
+		for _, a := range agents {
+			if a.Name == name {
+				return a
+			}
+		}
+		t.Fatalf("agent %q not found", name)
+		return dbpkg.Agent{}
+	}
+
+	// A new agent never gets a tool its creator lacks.
+	if _, err := call("agent_create", `{"name":"Dev","tools":["Bash"]}`); err == nil || !strings.Contains(err.Error(), "Bash") {
+		t.Errorf("giving a built-in tool the creator lacks must fail, got %v", err)
+	}
+	if _, err := call("agent_create", `{"name":"Dev","model":"MiniMax-M3"}`); err == nil {
+		t.Error("a MiniMax model needs executor aiapi")
+	}
+	if _, err := call("agent_create", `{"name":"Dev","personality":"You write Go.","reports_to":"me"}`); err != nil {
+		t.Fatalf("agent_create: %v", err)
+	}
+	dev := find("Dev")
+	if strings.Join(dev.Tools, ",") != "Read" || dev.ReportsTo != alice.agent.ID || dev.Executor != "claude" || dev.Model != "sonnet" {
+		t.Errorf("defaults: tools %v reports_to %q executor %q model %q", dev.Tools, dev.ReportsTo, dev.Executor, dev.Model)
+	}
+	for _, banned := range []string{"agent_create", "agent_update", "agent_delete"} {
+		if contains(dev.LucodeTools, banned) {
+			t.Errorf("agent management is not inherited by default, but Dev has %s", banned)
+		}
+	}
+	if !contains(dev.LucodeTools, "task_done") {
+		t.Errorf("Dev should inherit the ordinary lucode tools, has %v", dev.LucodeTools)
+	}
+	if _, err := call("agent_create", `{"name":"dev"}`); err == nil {
+		t.Error("names are unique, ignoring case")
+	}
+
+	// A restricted creator cannot hand out what it does not have.
+	h.db.Exec(`UPDATE agents SET lucode_tools='["task_done","agent_create"]' WHERE id=?`, alice.agent.ID)
+	if _, err := call("agent_create", `{"name":"Sneaky","lucode_tools":["agent_delete"]}`); err == nil || !strings.Contains(err.Error(), "agent_delete") {
+		t.Errorf("lucode tools are capped to the creator's, got %v", err)
+	}
+	if _, err := call("agent_create", `{"name":"Mini","lucode_tools":["task_done"]}`); err != nil {
+		t.Errorf("a subset is fine: %v", err)
+	}
+
+	h.db.Exec(`UPDATE agents SET lucode_tools='["task_done","agent_create","agent_update","agent_delete"]' WHERE id=?`, alice.agent.ID)
+
+	// update: others yes; itself, global agents and unknown ones no
+	if _, err := call("agent_update", `{"agent":"Dev","personality":"You write Rust.","persistent":true}`); err != nil {
+		t.Fatalf("agent_update: %v", err)
+	}
+	if got := find("Dev"); got.Personality != "You write Rust." || !got.Persistent {
+		t.Errorf("update not applied: %+v", got)
+	}
+	if _, err := call("agent_update", `{"agent":"Alice","model":"opus"}`); err == nil {
+		t.Error("an agent cannot edit itself")
+	}
+	if _, err := call("agent_update", `{"agent":"Dev"}`); err == nil {
+		t.Error("update with no fields must fail")
+	}
+	if _, err := call("agent_update", `{"agent":"Dev","tools":["Bash"]}`); err == nil {
+		t.Error("update must not grant tools the caller lacks")
+	}
+	global := dbpkg.Agent{ID: "g1", ProjectID: "", Name: "Shared", Model: "haiku", Executor: "claude", Tools: []string{"Read"}}
+	if err := dbpkg.InsertAgent(h.db, global); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call("agent_update", `{"agent":"Shared","model":"opus"}`); err == nil || !strings.Contains(err.Error(), "global") {
+		t.Errorf("global agents are not editable by agents, got %v", err)
+	}
+
+	// delete: not while working or supervising; the task is unassigned afterwards
+	if _, err := call("agent_delete", `{"agent":"Bob"}`); err == nil || !strings.Contains(err.Error(), "working") {
+		t.Errorf("a working agent cannot be deleted, got %v", err)
+	}
+	_ = bob
+	if _, err := call("agent_delete", `{"agent":"Alice"}`); err == nil {
+		t.Error("an agent cannot delete itself")
+	}
+	h.db.Exec(`UPDATE agents SET reports_to=? WHERE name='Mini'`, dev.ID)
+	if _, err := call("agent_delete", `{"agent":"Dev"}`); err == nil || !strings.Contains(err.Error(), "Mini") {
+		t.Errorf("an agent with subordinates cannot be deleted, got %v", err)
+	}
+	h.db.Exec(`UPDATE agents SET reports_to='' WHERE name='Mini'`)
+	task := newCard(t, h, pid, lists["todo"], "for dev")
+	task.AgentID = dev.ID
+	dbpkg.UpdateKanbanCard(h.db, task)
+	if _, err := call("agent_delete", `{"agent":"Dev"}`); err != nil {
+		t.Fatalf("agent_delete: %v", err)
+	}
+	if got, _ := dbpkg.GetKanbanCard(h.db, task.ID); got.AgentID != "" {
+		t.Errorf("tasks of a deleted agent are unassigned, still %q", got.AgentID)
+	}
+}

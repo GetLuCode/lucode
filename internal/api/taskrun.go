@@ -309,6 +309,30 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 	if has("get_task_image") {
 		sb.WriteString("\n- get_task_image(name, task_id?): see a picture attached to a task. The task description refers to its pictures as @image1, @image2...; fetch one when the text depends on what it shows.")
 	}
+	if has("task_list") || has("task_create") || has("task_update") {
+		sb.WriteString("\n\nManaging the board (tasks of this project):")
+		if has("task_list") {
+			sb.WriteString("\n- task_list(status?, limit?): see the tasks and their ids. Check it before creating a task so you do not duplicate one.")
+		}
+		if has("task_create") {
+			sb.WriteString("\n- task_create(title, description?, status?, type?, tags?, agent?, depends_on?, parent_id?): create a task. It goes to Todo by default, or straight to In Progress (the agent starts) when you assign an agent that is free and nothing blocks the task; use status=backlog to just park it. Write a description that lets whoever takes it work without asking you.")
+		}
+		if has("task_update") {
+			sb.WriteString("\n- task_update(task_id, ...fields): change a task; only the fields you pass change. Moving it to in_progress starts its agent. Never use it for the status of your own task: that is task_done / task_blocked.")
+		}
+	}
+	if has("agent_create") || has("agent_update") || has("agent_delete") {
+		sb.WriteString("\n\nManaging agents (of this project):")
+		if has("agent_create") {
+			sb.WriteString("\n- agent_create(name, personality?, model?, executor?, tools?, lucode_tools?, reports_to?): create an agent. Use agent_list first to see who exists. Give it a clear role in personality; you cannot give it tools you do not have.")
+		}
+		if has("agent_update") {
+			sb.WriteString("\n- agent_update(agent, ...fields): change an agent; only the fields you pass change. Not yourself, not global agents.")
+		}
+		if has("agent_delete") {
+			sb.WriteString("\n- agent_delete(agent): delete an agent that is idle and has nobody reporting to it. Its tasks become unassigned.")
+		}
+	}
 	sb.WriteString("\n- Messages from other agents start with three header lines: \"#From: <name>/<id>\", \"#Context: task <id> <title>\"")
 	if has("task_info") {
 		sb.WriteString(" (use task_info on that id if you need the details)")
@@ -413,6 +437,27 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 
 	case taskmcp.ToolGetTaskImage:
 		return h.taskImage(sess, a.TaskID, a.Name)
+
+	case taskmcp.ToolAgentCreate, taskmcp.ToolAgentUpdate, taskmcp.ToolAgentDelete:
+		if agentErr != nil {
+			return "", errNoAgent
+		}
+		switch toolName {
+		case taskmcp.ToolAgentCreate:
+			return h.agentCreate(agent, args)
+		case taskmcp.ToolAgentUpdate:
+			return h.agentUpdate(agent, args)
+		}
+		return h.agentDelete(agent, args)
+
+	case taskmcp.ToolTaskList:
+		return h.taskList(sess, args)
+
+	case taskmcp.ToolTaskCreate:
+		return h.taskCreate(sessID, sess, args)
+
+	case taskmcp.ToolTaskUpdate:
+		return h.taskUpdate(sessID, sess, args)
 
 	case taskmcp.ToolSendToAgent:
 		if agentErr != nil {

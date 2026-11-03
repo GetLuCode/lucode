@@ -25,6 +25,16 @@ const (
 
 	// ToolGetTaskImage returns a picture attached to a task (referenced as @imageN in its description).
 	ToolGetTaskImage = "get_task_image"
+
+	// Task management: list, create and update the tasks of the project.
+	ToolTaskList   = "task_list"
+	ToolTaskCreate = "task_create"
+	ToolTaskUpdate = "task_update"
+
+	// Agent management: create, edit and delete the agents of the project.
+	ToolAgentCreate = "agent_create"
+	ToolAgentUpdate = "agent_update"
+	ToolAgentDelete = "agent_delete"
 )
 
 // imagePrefix marks a tool result that is a picture, not text: the callback
@@ -52,14 +62,14 @@ var TaskInfoFields = []string{"title", "description", "status", "type", "tags", 
 
 // Names lists every lucode tool, in display order.
 func Names() []string {
-	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage}
+	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete}
 }
 
 // IsTaskTool reports whether name is one of the task tools, with or without
 // the mcp__lucode__ prefix claude adds.
 func IsTaskTool(name string) bool {
 	switch strings.TrimPrefix(name, "mcp__lucode__") {
-	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage:
+	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete:
 		return true
 	}
 	return false
@@ -114,6 +124,101 @@ var tools = []tool{
 					"items":       map[string]any{"type": "string", "enum": TaskInfoFields},
 				},
 			},
+		},
+	},
+	{
+		Name: ToolAgentCreate,
+		Description: "Create an agent in this project. You cannot give it tools you do not have; by default it gets the usual built-in tools and your lucode tools except the agent-management ones. " +
+			"Write its personality as a role brief: what it does, how it works and when it should ask or report. Then assign it work with task_create / task_update.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":         map[string]any{"type": "string", "description": "Unique name in the project; other agents address it by this name."},
+				"personality":  map[string]any{"type": "string", "description": "System prompt of the agent: its role and how it should work."},
+				"model":        map[string]any{"type": "string", "description": "haiku, sonnet (default), opus, or MiniMax-M3 / MiniMax-M2.7 (executor aiapi only)."},
+				"executor":     map[string]any{"type": "string", "enum": []string{"claude", "aiapi"}, "description": "claude (default, runs the Claude Code CLI) or aiapi."},
+				"persistent":   map[string]any{"type": "boolean", "description": "Keep its claude process alive between turns (executor claude only)."},
+				"tools":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Built-in tools, e.g. Bash, Edit, Read, Write. Must be a subset of yours."},
+				"lucode_tools": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "lucode tools it gets (task_done, send_to_agent, ...). Must be a subset of yours."},
+				"reports_to":   map[string]any{"type": "string", "description": "Name of its supervisor, \"me\" for you, or empty for none."},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		Name: ToolAgentUpdate,
+		Description: "Change an agent of this project. Only the fields you give change. You cannot edit yourself or global agents, and you cannot give an agent tools you do not have. " +
+			"A running agent restarts to pick the change up.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"agent":        map[string]any{"type": "string", "description": "Name of the agent to change."},
+				"name":         map[string]any{"type": "string"},
+				"personality":  map[string]any{"type": "string"},
+				"model":        map[string]any{"type": "string"},
+				"executor":     map[string]any{"type": "string", "enum": []string{"claude", "aiapi"}},
+				"persistent":   map[string]any{"type": "boolean"},
+				"tools":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replaces its built-in tools."},
+				"lucode_tools": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replaces its lucode tools."},
+				"reports_to":   map[string]any{"type": "string", "description": "Supervisor name, \"me\", or \"none\"."},
+			},
+			"required": []string{"agent"},
+		},
+	},
+	{
+		Name: ToolAgentDelete,
+		Description: "Delete an agent of this project. Refused while it is working or other agents report to it. Its tasks become unassigned. You cannot delete yourself or global agents. This cannot be undone.",
+		InputSchema: textArg("agent", "Name of the agent to delete."),
+	},
+	{
+		Name:        ToolTaskList,
+		Description: "List the tasks of this project (id, status, title, type, agent), optionally only one status. Use it to find a task id before updating it, or to check what already exists before creating a task.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"status": map[string]any{"type": "string", "description": "Only this status: backlog, todo, in_progress, done, blocked, or the name of a list."},
+				"limit":  map[string]any{"type": "integer", "description": "Maximum number of tasks (default and maximum 100)."},
+			},
+		},
+	},
+	{
+		Name: ToolTaskCreate,
+		Description: "Create a task in this project. Without a status it goes to Todo; if you assign an agent that is free (nothing in progress or running) and the task has no pending dependencies, it goes straight to In Progress and that agent starts. Set status=backlog to just park it. " +
+			"Describe the task so whoever takes it can work without asking you: what to do and what done looks like.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"title":       map[string]any{"type": "string", "description": "Short title."},
+				"description": map[string]any{"type": "string", "description": "What to do and the acceptance criteria."},
+				"status":      map[string]any{"type": "string", "description": "todo (default; in_progress when its agent is free), backlog, in_progress, done, blocked, or the name of a list."},
+				"type":        map[string]any{"type": "string", "description": "task (default), bug, feature, epic, or a custom type."},
+				"tags":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"agent":       map[string]any{"type": "string", "description": "Name of the agent that will do it (see agent_list)."},
+				"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Ids of tasks that must be Done first."},
+				"parent_id":   map[string]any{"type": "string", "description": "Id of the epic this task belongs to."},
+			},
+			"required": []string{"title"},
+		},
+	},
+	{
+		Name: ToolTaskUpdate,
+		Description: "Change a task of this project. Only the fields you give change. Changing the status runs the board's workflow: in_progress starts the task's agent (or parks it in Blocked if its dependencies are not Done), done releases the tasks that depend on it. " +
+			"For your own task use task_done / task_blocked to change the status, not this.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"task_id":     map[string]any{"type": "string", "description": "Id of the task (see task_list)."},
+				"title":       map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"status":      map[string]any{"type": "string", "description": "backlog, todo, in_progress, done, blocked, or the name of a list."},
+				"type":        map[string]any{"type": "string"},
+				"tags":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replaces all the tags."},
+				"agent":       map[string]any{"type": "string", "description": "Agent name, or \"none\" to unassign."},
+				"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replaces all the dependencies."},
+				"parent_id":   map[string]any{"type": "string", "description": "Epic id, or empty to detach."},
+				"archived":    map[string]any{"type": "boolean"},
+			},
+			"required": []string{"task_id"},
 		},
 	},
 	{

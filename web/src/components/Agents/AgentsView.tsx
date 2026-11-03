@@ -60,6 +60,12 @@ const LUCODE_TOOLS = [
   { name: 'send_to_agent', desc: 'Send a message to another agent' },
   { name: 'task_info',     desc: 'Look up a task of the project' },
   { name: 'get_task_image', desc: 'See a picture attached to a task (@image1…)' },
+  { name: 'task_list',     desc: 'List the tasks of the project' },
+  { name: 'task_create',   desc: 'Create a task (can start an agent on it)' },
+  { name: 'task_update',   desc: 'Edit a task or move it to another status' },
+  { name: 'agent_create',  desc: 'Create an agent (never with tools the creator lacks)' },
+  { name: 'agent_update',  desc: 'Edit another agent of the project' },
+  { name: 'agent_delete',  desc: 'Delete an idle agent of the project' },
 ]
 
 const DEFAULT_TOOLS = ['Bash', 'Edit', 'Read', 'Write']

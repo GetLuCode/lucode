@@ -1317,7 +1317,7 @@ type Agent struct {
 }
 
 // DefaultLucodeTools is every lucode tool; new agents start with all of them.
-var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image"}
+var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete"}
 
 const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, created_at, updated_at`
 
@@ -1850,5 +1850,11 @@ func UpdateProjectEnvDirs(db *sql.DB, id string, envDirs map[string][]string) er
 		data = []byte("{}")
 	}
 	_, err := db.Exec(`UPDATE projects SET env_dirs=? WHERE id=?`, string(data), id)
+	return err
+}
+
+// UnassignAgentCards clears the agent of every task assigned to it (before the agent is deleted).
+func UnassignAgentCards(db *sql.DB, agentID string) error {
+	_, err := db.Exec(`UPDATE kanban_cards SET agent_id='' WHERE agent_id=?`, agentID)
 	return err
 }

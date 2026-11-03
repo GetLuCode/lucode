@@ -240,3 +240,120 @@ func TestGetTaskImageReturnsAnImageAndListsOnMiss(t *testing.T) {
 		t.Errorf("the task prompt should list the images, got %q", p)
 	}
 }
+
+func TestTaskManagementTools(t *testing.T) {
+	h, pid, lists := newTaskTestHandler(t)
+	mine := newCard(t, h, pid, lists["inprogress"], "mine")
+	sess := taskSession(t, h, mine)
+	call := func(tool, args string) (string, error) { return h.HandleTaskTool(sess.ID, tool, []byte(args)) }
+
+	// create: Backlog by default, any status by name
+	if _, err := call("task_create", `{"title":"  "}`); err == nil {
+		t.Error("task_create without a title must fail")
+	}
+	out, err := call("task_create", `{"title":"Backlog one","status":"backlog","description":"d","tags":["x"]}`)
+	if err != nil || !strings.Contains(out, "Backlog") {
+		t.Fatalf("task_create = %q, %v", out, err)
+	}
+	if _, err := call("task_create", `{"title":"To do one","status":"To Do"}`); err != nil {
+		t.Fatalf("status by list name must work: %v", err)
+	}
+	if _, err := call("task_create", `{"title":"x","status":"nowhere"}`); err == nil || !strings.Contains(err.Error(), "Backlog") {
+		t.Errorf("an unknown status should list the lists, got %v", err)
+	}
+	if _, err := call("task_create", `{"title":"x","agent":"ghost"}`); err == nil {
+		t.Error("an unknown agent must fail")
+	}
+	if _, err := call("task_create", `{"title":"x","depends_on":["nope"]}`); err == nil {
+		t.Error("an unknown dependency must fail")
+	}
+
+	// list
+	all, _ := call("task_list", `{}`)
+	if !strings.Contains(all, "Backlog one") || !strings.Contains(all, "To do one") || !strings.Contains(all, "mine") {
+		t.Errorf("task_list should show every task, got:\n%s", all)
+	}
+	onlyTodo, _ := call("task_list", `{"status":"todo"}`)
+	if strings.Contains(onlyTodo, "Backlog one") || !strings.Contains(onlyTodo, "To do one") {
+		t.Errorf("task_list(status=todo) = %s", onlyTodo)
+	}
+
+	// update: fields, status through the workflow, own-task guard, validation
+	cards, _ := dbpkg.ListKanbanCards(h.db, pid, false)
+	var backlogID string
+	for _, c := range cards {
+		if c.Title == "Backlog one" {
+			backlogID = c.ID
+		}
+	}
+	if _, err := call("task_update", `{"task_id":"`+backlogID+`","title":"Renamed","status":"done"}`); err != nil {
+		t.Fatalf("task_update: %v", err)
+	}
+	got, _ := dbpkg.GetKanbanCard(h.db, backlogID)
+	if got.Title != "Renamed" || got.ListID != lists["done"].ID {
+		t.Errorf("update should rename and move to Done, got %q in %q", got.Title, got.ListID)
+	}
+	if _, err := call("task_update", `{"task_id":"`+mine.ID+`","status":"done"}`); err == nil {
+		t.Error("an agent must not change its own task's status with task_update")
+	}
+	if _, err := call("task_update", `{"task_id":"`+mine.ID+`","description":"more detail"}`); err != nil {
+		t.Errorf("other fields of the own task may change: %v", err)
+	}
+	if _, err := call("task_update", `{"task_id":"`+backlogID+`","depends_on":["`+backlogID+`"]}`); err == nil {
+		t.Error("a task cannot depend on itself")
+	}
+	if _, err := call("task_update", `{"task_id":"`+backlogID+`"}`); err == nil {
+		t.Error("update with no fields must fail")
+	}
+	if _, err := call("task_update", `{"task_id":"missing","title":"x"}`); err == nil {
+		t.Error("an unknown task must fail")
+	}
+}
+
+func TestTaskCreateDefaultsToTodoOrInProgressWhenTheAgentIsFree(t *testing.T) {
+	h, pid, lists := newTaskTestHandler(t)
+	alice := addMember(t, h, pid, lists, "Alice", "", "inprogress") // busy: a task in progress
+	carol := addMember(t, h, pid, lists, "Carol", "", "todo")       // free: her task waits in Todo
+	c := &capture{}
+	h.startTurnFn = c.fn
+	create := func(args string) dbpkg.KanbanCard {
+		t.Helper()
+		out, err := h.HandleTaskTool(alice.sess.ID, "task_create", []byte(args))
+		if err != nil {
+			t.Fatalf("task_create %s: %v", args, err)
+		}
+		cards, _ := dbpkg.ListKanbanCards(h.db, pid, false)
+		for _, card := range cards {
+			if strings.Contains(out, card.ID) {
+				return card
+			}
+		}
+		t.Fatalf("created task not found in %q", out)
+		return dbpkg.KanbanCard{}
+	}
+	inList := func(card dbpkg.KanbanCard, kind string) bool { return card.ListID == lists[kind].ID }
+
+	if got := create(`{"title":"no agent"}`); !inList(got, "todo") {
+		t.Error("a task with no agent goes to Todo")
+	}
+	if got := create(`{"title":"busy","agent":"Alice"}`); !inList(got, "todo") {
+		t.Error("a task for a busy agent goes to Todo")
+	}
+	dep := newCard(t, h, pid, lists["backlog"], "dep")
+	if got := create(`{"title":"waits","agent":"Carol","depends_on":["` + dep.ID + `"]}`); !inList(got, "todo") {
+		t.Error("a task with pending dependencies goes to Todo")
+	}
+	if len(c.opts) != 0 {
+		t.Fatalf("nothing should have started yet, got %d turns", len(c.opts))
+	}
+	if got := create(`{"title":"now","agent":"Carol","status":"backlog"}`); !inList(got, "backlog") {
+		t.Error("an explicit status wins")
+	}
+	if got := create(`{"title":"go","agent":"Carol"}`); !inList(got, "inprogress") {
+		t.Errorf("a free agent starts the task in In Progress, got list %q", got.ListID)
+	}
+	if len(c.opts) != 1 {
+		t.Errorf("the free agent should have started a turn, got %d", len(c.opts))
+	}
+	_ = carol
+}

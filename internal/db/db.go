@@ -416,7 +416,7 @@ CREATE TABLE IF NOT EXISTS card_images (
 		return err
 	}
 	// agents.lucode_tools — which lucode tools (task_*, agent_list, send_to_agent, task_info) the agent has
-	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info","get_task_image"]'`)
+	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info","get_task_image","task_list","task_create","task_update","agent_create","agent_update","agent_delete"]'`)
 	// get_task_image came after task_info: agents that already look tasks up get it too.
 	db.Exec(`UPDATE agents SET lucode_tools = REPLACE(lucode_tools, '"task_info"', '"task_info","get_task_image"') WHERE lucode_tools LIKE '%"task_info"%' AND lucode_tools NOT LIKE '%get_task_image%'`)
 
