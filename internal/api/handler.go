@@ -274,6 +274,13 @@ func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// A request another lucode instance sent over NATS: that instance authenticated
+		// the user already, and this instance's own auth service may not know them.
+		if natspkg.IsRPC(r.Context()) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Auth routes are proxied to authapi — no local auth check needed
 		if strings.HasPrefix(path, "/api/auth/") || path == "/api/apikeys" || strings.HasPrefix(path, "/api/apikeys/") {
 			next.ServeHTTP(w, r)

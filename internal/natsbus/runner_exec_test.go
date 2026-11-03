@@ -2,6 +2,7 @@ package natsbus
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
@@ -86,5 +87,31 @@ func TestOwnsSessionGatesTaskTools(t *testing.T) {
 	}
 	if len(called) != 1 {
 		t.Errorf("OnTaskTool called %d times, want 1", len(called))
+	}
+}
+
+func TestRPCRequestsAreMarkedAsFromNATS(t *testing.T) {
+	id := "rpc-peer-" + time.Now().Format("150405.000")
+	peer := testBus(t, id)
+	hub := testBus(t, "rpc-hub-"+id)
+	seen := make(chan bool, 1)
+	peer.StartRPCServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- IsRPC(r.Context())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	nc := hub.nc
+	nc.Flush()
+
+	req, _ := http.NewRequest("GET", "http://x/api/anything", http.NoBody)
+	req.Header.Set("Authorization", "Bearer not-valid-on-the-peer")
+	if _, err := hub.RPCRequest(id, req); err != nil {
+		t.Fatal(err)
+	}
+	if !<-seen {
+		t.Error("IsRPC must be true for a request delivered over NATS")
+	}
+	plain, _ := http.NewRequest("GET", "http://x/", nil)
+	if IsRPC(plain.Context()) {
+		t.Error("an ordinary request must not look like a NATS one")
 	}
 }

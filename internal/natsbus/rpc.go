@@ -2,6 +2,7 @@ package natsbus
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,15 @@ import (
 )
 
 const rpcTimeout = 30 * time.Second
+
+type rpcKey struct{}
+
+// IsRPC reports whether a request was delivered by StartRPCServer, that is, sent by
+// another lucode instance over NATS, as opposed to arriving on the HTTP port.
+func IsRPC(ctx context.Context) bool {
+	v, _ := ctx.Value(rpcKey{}).(bool)
+	return v
+}
 
 type rpcEnvelope struct {
 	Method   string              `json:"method"`
@@ -81,7 +91,11 @@ func (b *Bus) serveRPC(msg *nats.Msg, handler http.Handler) {
 	req.Header.Del("X-Lucode-Remote")
 
 	rw := &captureWriter{header: make(http.Header), code: 200}
-	handler.ServeHTTP(rw, req)
+	// Mark the request as one that came over NATS. The hub already authenticated the
+	// user before forwarding it, and reaching this subject takes NATS access, so the
+	// runner must not ask for a token of its own auth service. A context value (not a
+	// header) so that nothing a client sends can fake it.
+	handler.ServeHTTP(rw, req.WithContext(context.WithValue(req.Context(), rpcKey{}, true)))
 
 	reply := rpcReply{
 		Status:  rw.code,
@@ -152,3 +166,7 @@ func replyErr(nc interface{ Publish(string, []byte) error }, replySubj, msg stri
 	data, _ := json.Marshal(rpcReply{Status: 502, Err: msg})
 	nc.Publish(replySubj, data)
 }
+
+// WithRPC marks ctx as that of a request delivered over NATS (used by tests of
+// code that checks IsRPC).
+func WithRPC(ctx context.Context) context.Context { return context.WithValue(ctx, rpcKey{}, true) }

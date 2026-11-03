@@ -9,19 +9,23 @@ import (
 	"time"
 
 	dbpkg "claude-orchestrator/internal/db"
+	"claude-orchestrator/internal/fakeclaude/fakeclaudetest"
 	natspkg "claude-orchestrator/internal/natsbus"
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
-// Runs two turns of one session through ServeRemoteTurn with the real claude CLI
-// (haiku) and checks the second turn reuses the same persistent process.
-// Opt in with LUCODE_E2E_CLAUDE=1; it needs NATS on 4222 and a logged-in claude.
+func TestMain(m *testing.M) {
+	fakeclaudetest.Intercept()
+	os.Exit(m.Run())
+}
+
+// Runs two turns of one session through ServeRemoteTurn and checks the second turn
+// reuses the same persistent process. claude is replayed from a recording (no
+// tokens spent); it needs a NATS server on 4222 and is skipped without one.
 func TestRemotePersistentProcessIsReused(t *testing.T) {
-	if os.Getenv("LUCODE_E2E_CLAUDE") != "1" {
-		t.Skip("set LUCODE_E2E_CLAUDE=1 to run against the real claude CLI")
-	}
+	fakeclaudetest.Use(t, "two_turns.jsonl")
 	nc, err := nats.Connect("nats://127.0.0.1:4222", nats.Timeout(time.Second))
 	if err != nil {
 		t.Skipf("no NATS: %v", err)

@@ -218,6 +218,11 @@ func buildEnv(req TurnRequest) []string {
 }
 
 func findClaude() (string, error) {
+	// LUCODE_CLAUDE_BIN replaces the CLI, e.g. with internal/fakeclaude to replay a
+	// recorded session without spending tokens.
+	if p := os.Getenv("LUCODE_CLAUDE_BIN"); p != "" {
+		return p, nil
+	}
 	if path, err := exec.LookPath("claude"); err == nil {
 		return path, nil
 	}
