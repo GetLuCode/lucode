@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"claude-orchestrator/internal/aimode"
 	dbpkg "claude-orchestrator/internal/db"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
@@ -118,6 +119,7 @@ func (h *Handler) newOrchestrator(w http.ResponseWriter, r *http.Request) {
 		delete(orchEnvs, old.ID)
 		delete(orchModels, old.ID)
 		orchEnvMu.Unlock()
+		go aimode.Default.Forget(old.ID)
 	}
 	sess, err := h.createOrchestrator(pid)
 	if err != nil {
@@ -131,15 +133,24 @@ func (h *Handler) newOrchestrator(w http.ResponseWriter, r *http.Request) {
 // claude CLI with a persistent process, on the chosen runner and AI ("" or "local"
 // runner = this instance).
 func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, message, model, runnerID, aiProfileID, effort, thinking string) (sessionpkg.TurnOptions, error) {
+	if model == "" {
+		model = sess.Model
+	}
+	if aimode.IsModel(model) {
+		// A local model: Google's AI Mode in Edge, on the machine of this hub. It runs no
+		// claude, so the runner, the AI and the lucode tools do not apply to it (a runner
+		// saved in the picker is ignored, not an error).
+		return sessionpkg.TurnOptions{
+			SessionID: sess.ID, ProjectID: sess.ProjectID, Message: message, Model: model,
+			Executor: "aimode", AgentName: "orchestrator",
+		}, nil
+	}
 	if runnerID == "" {
 		runnerID = "local" // explicit: do not inherit the project's runner
 	}
 	env, err := h.resolveTurnEnv(dbpkg.Agent{RunnerID: runnerID, AIProfileID: aiProfileID}, proj)
 	if err != nil {
 		return sessionpkg.TurnOptions{}, err
-	}
-	if model == "" {
-		model = sess.Model
 	}
 	_, model = resolveProvider("", model)
 

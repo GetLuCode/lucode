@@ -16,16 +16,25 @@ type state struct {
 	Profile  string `json:"profile"`
 }
 
-func statePath() string {
+// statePath is the state file of a browser: edge-state.json for the main one,
+// edge-state-<name>.json for a named one.
+func statePath(name string) string {
+	file := "edge-state.json"
+	if name != "" {
+		file = "edge-state-" + name + ".json"
+	}
 	if p := os.Getenv("LUCODE_EDGE_STATE"); p != "" { // tests point it at a temp file
+		if name != "" {
+			return p + "." + name
+		}
 		return p
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".lucode", "edge-state.json")
+	return filepath.Join(home, ".lucode", file)
 }
 
-func loadState() (state, bool) {
-	data, err := os.ReadFile(statePath())
+func loadState(name string) (state, bool) {
+	data, err := os.ReadFile(statePath(name))
 	if err != nil {
 		return state{}, false
 	}
@@ -36,13 +45,13 @@ func loadState() (state, bool) {
 	return s, true
 }
 
-func saveState(s state) {
-	if err := os.MkdirAll(filepath.Dir(statePath()), 0o755); err != nil {
+func saveState(name string, s state) {
+	if err := os.MkdirAll(filepath.Dir(statePath(name)), 0o755); err != nil {
 		return
 	}
 	if data, err := json.Marshal(s); err == nil {
-		_ = os.WriteFile(statePath(), data, 0o644)
+		_ = os.WriteFile(statePath(name), data, 0o644)
 	}
 }
 
-func clearState() { _ = os.Remove(statePath()) }
+func clearState(name string) { _ = os.Remove(statePath(name)) }

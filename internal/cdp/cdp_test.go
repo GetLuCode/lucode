@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testPage = `<!doctype html><title>Form test</title>
@@ -191,7 +192,16 @@ func TestReconnectAfterARestart(t *testing.T) {
 	if !strings.Contains(msg, "Reconnected") {
 		t.Errorf("want a reconnection, got %q", msg)
 	}
-	if tabs, err := second.Tabs(); err != nil || len(tabs) == 0 || tabs[0].Title != "kept" {
+	// the page was opened by Launch without waiting for it to load: give it a moment
+	var tabs []Tab
+	for i := 0; i < 40; i++ {
+		tabs, err = second.Tabs()
+		if err == nil && len(tabs) > 0 && tabs[0].Title == "kept" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil || len(tabs) == 0 || tabs[0].Title != "kept" {
 		t.Errorf("tabs after reconnecting: %+v %v", tabs, err)
 	}
 	// browser tools work without calling launch again
@@ -207,7 +217,7 @@ func TestReconnectAfterARestart(t *testing.T) {
 	if _, err := wsEndpoint(port); err == nil {
 		t.Error("the Edge from the earlier run should be gone")
 	}
-	if _, ok := loadState(); ok {
+	if _, ok := loadState(""); ok {
 		t.Error("the state file should be removed")
 	}
 }

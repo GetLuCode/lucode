@@ -30,6 +30,11 @@ import type { Message } from '../../types'
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
 
+// Local "models": no API and no tokens. Google's AI Mode runs in an Edge that lucode drives.
+const LOCAL_MODELS = [
+  { label: 'Google AI Mode (Edge)', value: 'local:aimode' },
+]
+
 const CLAUDE_MODELS = [
   { label: 'Haiku 5.5',  value: 'haiku' },
   { label: 'Sonnet 5.5', value: 'sonnet' },
@@ -565,7 +570,7 @@ function ChatViewFull() {
             <span className="chat__session-name">{headerName}</span>
             {session?.card_id && activeProjectId && <TaskStatus projectId={activeProjectId} cardId={session.card_id} />}
             <span className="chat__header-model-badge">
-              {[...CLAUDE_MODELS, ...MINIMAX_MODELS].find(m => m.value === model)?.label
+              {[...CLAUDE_MODELS, ...MINIMAX_MODELS, ...LOCAL_MODELS].find(m => m.value === model)?.label
                 ?? ollamaModels.find(m => `ollama:${m.name}` === model)?.label
                 ?? model.replace(/^ollama:/, '')}
             </span>
@@ -663,6 +668,21 @@ function ChatViewFull() {
                         })}
                       </>
                     )}
+
+                    {/* Local models: answered by a browser, not an API */}
+                    <div className="chat__header-dropdown-divider" />
+                    <div className="chat__header-dropdown-label">Local</div>
+                    {LOCAL_MODELS.map(m => (
+                      <button
+                        key={m.value}
+                        className={`chat__header-dropdown-item${model === m.value ? ' chat__header-dropdown-item--active' : ''}`}
+                        onClick={() => { setModel(m.value); setHeaderMenuOpen(false) }}
+                        title="Opens Edge on google.com, enters AI Mode and forwards the chat to it"
+                      >
+                        <span>{m.label}</span>
+                        {model === m.value && <IconCheck size={12} className="chat__header-dropdown-check" />}
+                      </button>
+                    ))}
                   </>
                 )
               })()}

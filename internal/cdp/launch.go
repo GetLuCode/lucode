@@ -27,8 +27,12 @@ type LaunchOptions struct {
 	Height     int
 }
 
-// Browser is the one Edge instance lucode controls.
+// Browser is an Edge instance lucode controls. Default is the one the browser_* tools
+// share; New makes others (e.g. for a local "model") that never interfere with it.
 type Browser struct {
+	name        string // names its state file; "" for Default
+	defaultPort int    // port to look at when nothing else is known; 0 = DefaultPort
+
 	mu       sync.Mutex
 	port     int
 	cmd      *exec.Cmd // nil when attached to a browser somebody else started
@@ -44,6 +48,11 @@ type Browser struct {
 
 // Default is the browser shared by every tool.
 var Default = &Browser{}
+
+// New makes an independent browser: its own state file (so it is found again after a
+// restart), its own default port, and no relation to Default. Give it its own profile
+// directory in LaunchOptions as well.
+func New(name string, port int) *Browser { return &Browser{name: name, defaultPort: port} }
 
 // FindEdge returns the path of msedge: LUCODE_EDGE_BIN, then the usual install locations, then PATH.
 func FindEdge() (string, error) {
@@ -194,7 +203,7 @@ func (b *Browser) Launch(o LaunchOptions) (string, error) {
 		b.cmd = nil
 		return "", err
 	}
-	saveState(state{Port: o.Port, PID: cmd.Process.Pid, Headless: o.Headless, Profile: profile})
+	saveState(b.name, state{Port: o.Port, PID: cmd.Process.Pid, Headless: o.Headless, Profile: profile})
 	return fmt.Sprintf("Edge started (%s, port %d, profile %s).", mode[o.Headless], o.Port, profile), nil
 }
 
@@ -207,8 +216,11 @@ func (b *Browser) knownPort() int {
 	if b.port != 0 {
 		return b.port
 	}
-	if st, ok := loadState(); ok {
+	if st, ok := loadState(b.name); ok {
 		return st.Port
+	}
+	if b.defaultPort != 0 {
+		return b.defaultPort
 	}
 	return DefaultPort
 }
@@ -231,7 +243,7 @@ func (b *Browser) connectLocked(ws string, port int) error {
 	b.c, b.port = c, port
 	if b.cmd == nil { // not started in this run: was it lucode's Edge from an earlier one?
 		b.pid = 0
-		if st, ok := loadState(); ok && st.Port == port {
+		if st, ok := loadState(b.name); ok && st.Port == port {
 			b.pid, b.headless = st.PID, st.Headless
 		}
 	}
@@ -317,7 +329,7 @@ func (b *Browser) closeLocked() {
 	b.resetLocked()
 	b.cmd, b.pid = nil, 0
 	if wasOwned {
-		clearState()
+		clearState(b.name)
 	}
 	if cmd == nil {
 		if pid > 0 { // Edge from an earlier run: wait for the port to go quiet, then make sure

@@ -361,3 +361,38 @@ func jsonString(raw json.RawMessage) string {
 	}
 	return strings.Trim(string(raw), `"`)
 }
+
+// Eval runs a JavaScript expression in the current tab and returns its result as text
+// (strings as they are, anything else as JSON). It is for Go callers that know the page
+// they drive; it is deliberately not offered as a tool.
+func (b *Browser) Eval(expr string) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out struct {
+		Result struct {
+			Type  string          `json:"type"`
+			Value json.RawMessage `json:"value"`
+		} `json:"result"`
+		Exception *struct {
+			Text      string `json:"text"`
+			Exception struct {
+				Description string `json:"description"`
+			} `json:"exception"`
+		} `json:"exceptionDetails"`
+	}
+	params := map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true}
+	if err := b.pageCall("Runtime.evaluate", params, &out); err != nil {
+		return "", err
+	}
+	if out.Exception != nil {
+		msg := out.Exception.Exception.Description
+		if msg == "" {
+			msg = out.Exception.Text
+		}
+		return "", errors.New("javascript: " + msg)
+	}
+	if out.Result.Type == "undefined" {
+		return "", nil
+	}
+	return jsonString(out.Result.Value), nil
+}

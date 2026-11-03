@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"claude-orchestrator/internal/aimode"
 	authclient "claude-orchestrator/internal/authclient"
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
@@ -499,6 +500,7 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	h.manager.CloseLive(id)
+	go aimode.Default.Forget(id) // its AI Mode conversation tab, if it had one
 	if err := dbpkg.DeleteSession(h.db, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -615,6 +617,10 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		} else {
 			opts.SystemPrompt = agent.Personality
 		}
+	}
+
+	if aimode.IsModel(model) { // local model: Google AI Mode in Edge, no claude and no tools
+		opts.Executor, opts.Persistent, opts.Resume = "aimode", false, false
 	}
 
 	// If the session has an account, pass it to aiapi (which will resolve it to the claude_config_dir)

@@ -33,6 +33,8 @@ const MODELS = [
   { value: 'haiku', label: 'Haiku 5.5' },
   { value: 'sonnet', label: 'Sonnet 5.5' },
   { value: 'opus', label: 'Opus 5.5' },
+  // Local: Google's AI Mode in an Edge that lucode drives. No claude, no tools, no tokens.
+  { value: 'local:aimode', label: 'Google AI Mode (Edge)' },
 ]
 
 const lsGet = (k: string, def: string) => {
@@ -178,6 +180,7 @@ export function OrchestratorPanel() {
     const saved = lsGet(LS.model(projectId), 'sonnet')
     setModel(MODELS.some(m => m.value === saved) ? saved : 'sonnet')
   }, [projectId])
+  const isLocalModel = model.startsWith('local:') // answered by a browser: no cache, context or process to show
   const pickModel = (v: string) => {
     setModel(v)
     if (projectId) lsSet(LS.model(projectId), v)
@@ -223,7 +226,7 @@ export function OrchestratorPanel() {
   const runningRef = useRef(false)
   runningRef.current = running
   const sendText = (text: string) => {
-    if (!text || !sid || running || runnerOffline) return
+    if (!text || !sid || running || (runnerOffline && !isLocalModel)) return
     setInput('')
     dictBase.current = ''
     useStore.setState(s => ({ pendingSend: { ...s.pendingSend, [sid]: true } }))
@@ -264,7 +267,7 @@ export function OrchestratorPanel() {
       <button className="orch-tab" onClick={() => toggle(true)} title="Open the orchestrator chat">
         <IconLayoutSidebarRightExpand size={16} />
         <span>Orchestrator</span>
-        <CacheBadge cache={cache} compact />
+        {!isLocalModel && <CacheBadge cache={cache} compact />}
       </button>
     )
   }
@@ -273,8 +276,8 @@ export function OrchestratorPanel() {
     <aside className="orch">
       <header className="orch__header">
         <span className="orch__title">Orchestrator</span>
-        <CacheBadge cache={cache} />
-        {sid && <ClaudeProcess sessionId={sid} />}
+        {!isLocalModel && <CacheBadge cache={cache} />}
+        {sid && !isLocalModel && <ClaudeProcess sessionId={sid} />}
         <button
           className="orch__icon-btn"
           onClick={startNewSession}
@@ -300,7 +303,7 @@ export function OrchestratorPanel() {
         </button>
       </header>
 
-      {sid && <ContextBar sessionId={sid} placement="panel" />}
+      {sid && !isLocalModel && <ContextBar sessionId={sid} placement="panel" />}
 
       <div className="orch__messages" ref={scrollRef}>
         {error && <div className="orch__error">{error}</div>}
@@ -379,7 +382,7 @@ export function OrchestratorPanel() {
           {running ? (
             <button className="orch__send orch__send--stop" onClick={cancel} title="Stop (Esc)"><IconPlayerStop size={15} /></button>
           ) : (
-            <button className="orch__send" onClick={send} disabled={!input.trim() || !sid || runnerOffline} title={runnerOffline ? 'The selected runner is offline' : 'Send (Enter)'}><IconSend size={15} /></button>
+            <button className="orch__send" onClick={send} disabled={!input.trim() || !sid || (runnerOffline && !isLocalModel)} title={runnerOffline && !isLocalModel ? 'The selected runner is offline' : 'Send (Enter)'}><IconSend size={15} /></button>
           )}
         </div>
       </div>
