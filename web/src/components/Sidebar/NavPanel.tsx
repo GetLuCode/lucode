@@ -5,7 +5,7 @@ import { useStore } from '../../store'
 import type { Project, Session } from '../../types'
 import { IconEdit, IconTrash, IconSearch, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconAdjustments, IconChartBar, IconLogout, IconDownload, IconUpload, IconCpu, IconRobot, IconLayoutKanban, IconMessage } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
-import { SpacesList } from './SpacesList'
+import { RunnersList } from './RunnersList'
 import { SettingsModal } from '../Settings/SettingsModal'
 import { TaskManagerPanel } from '../TaskManager/TaskManagerPanel'
 import { useAuthStore } from '../../store/auth'
@@ -70,8 +70,8 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
     navigate(`/projects/${id}`)
   }
 
-  const handleWorkspacePickerConfirm = async (name: string, path: string) => {
-    const p = await createProject({ name, work_dirs: [path] })
+  const handleWorkspacePickerConfirm = async (name: string, path: string, aiProfileId: string) => {
+    const p = await createProject({ name, work_dirs: [path], ...(aiProfileId ? { ai_profile_id: aiProfileId } : {}) })
     await setActiveProject(p.id)
     navigate(`/projects/${p.id}`)
   }
@@ -252,7 +252,7 @@ export function NavPanel({ onOpenSearch }: NavPanelProps) {
         />
         <input ref={importRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
 
-        <SpacesList />
+        <RunnersList />
 
         {/* section nav — only shown when a project is active.
             Icon-only by design: keeps the row from overflowing the 244px panel

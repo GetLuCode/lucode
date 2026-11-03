@@ -187,6 +187,22 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	// Discovery + remote spaces
 	mux.HandleFunc("GET /api/instances", h.listInstances)
+
+	// Runners and their preconfigured AIs. /api/ai-profiles* is what each runner
+	// serves for itself; /api/runners/{rid}/ai-profiles* reaches any runner from the hub.
+	mux.HandleFunc("GET /api/ai-profiles", h.listAIProfiles)
+	mux.HandleFunc("POST /api/ai-profiles", h.createAIProfile)
+	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)
+	mux.HandleFunc("DELETE /api/ai-profiles/{id}", h.deleteAIProfile)
+	mux.HandleFunc("GET /api/runners", h.listRunners)
+	root := func(*http.Request) string { return "" }
+	byID := func(tail string) func(*http.Request) string {
+		return func(r *http.Request) string { return "/" + r.PathValue("id") + tail }
+	}
+	mux.HandleFunc("GET /api/runners/{rid}/ai-profiles", h.runnerAI(h.listAIProfiles, root))
+	mux.HandleFunc("POST /api/runners/{rid}/ai-profiles", h.runnerAI(h.createAIProfile, root))
+	mux.HandleFunc("POST /api/runners/{rid}/ai-profiles/{id}/refresh", h.runnerAI(h.refreshAIProfile, byID("/refresh")))
+	mux.HandleFunc("DELETE /api/runners/{rid}/ai-profiles/{id}", h.runnerAI(h.deleteAIProfile, byID("")))
 	mux.HandleFunc("PATCH /api/projects/{id}/aiapi", h.setProjectAIAPI)
 
 	// Process task manager (proxied to aiapi)
@@ -350,6 +366,8 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		WorkDirs        []string `json:"work_dirs"`
 		ClaudeConfigDir string   `json:"claude_config_dir"`
 		DefaultModel    string   `json:"default_model"`
+		RunnerID        string   `json:"runner_id"`
+		AIProfileID     string   `json:"ai_profile_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -364,6 +382,8 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		WorkDirs:        body.WorkDirs,
 		ClaudeConfigDir: body.ClaudeConfigDir,
 		DefaultModel:    body.DefaultModel,
+		RunnerID:        body.RunnerID,
+		AIProfileID:     body.AIProfileID,
 	}
 	if err := dbpkg.InsertProject(h.db, p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -528,7 +548,7 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		WorkDirs:        proj.WorkDirs,
 		Effort:          body.Effort,
 		Thinking:        body.Thinking,
-		ClaudeConfigDir: proj.ClaudeConfigDir,
+		ClaudeConfigDir: h.projectConfigDir(proj),
 		Resume:          sess.MessageCount > 0,
 		ImageBase64:     body.Image.Base64,
 		ImageMediaType:  body.Image.MediaType,
@@ -688,7 +708,7 @@ func (h *Handler) forkSession(w http.ResponseWriter, r *http.Request) {
 			Model:           src.Model,
 			Name:            body.Name,
 			WorkDirs:        proj.WorkDirs,
-			ClaudeConfigDir: proj.ClaudeConfigDir,
+			ClaudeConfigDir: h.projectConfigDir(proj),
 			ForkFrom:        id,
 		}
 		if err := h.manager.StartTurn(opts); err != nil {
@@ -1146,19 +1166,47 @@ func (h *Handler) resolveWithinRoot(pathParam, root string) (absPath, absRoot st
 func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct {
-		Name string `json:"name"`
+		Name            string  `json:"name"`
+		ClaudeConfigDir *string `json:"claude_config_dir"`
+		RunnerID        *string `json:"runner_id"`
+		AIProfileID     *string `json:"ai_profile_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.Name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
+	if body.Name == "" && body.ClaudeConfigDir == nil && body.RunnerID == nil && body.AIProfileID == nil {
+		http.Error(w, "nothing to update", http.StatusBadRequest)
 		return
 	}
-	if err := dbpkg.UpdateProjectName(h.db, id, body.Name); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	if body.Name != "" {
+		if err := dbpkg.UpdateProjectName(h.db, id, body.Name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if body.RunnerID != nil || body.AIProfileID != nil {
+		cur, err := dbpkg.GetProject(h.db, id)
+		if err != nil {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		if body.RunnerID != nil {
+			cur.RunnerID = *body.RunnerID
+		}
+		if body.AIProfileID != nil {
+			cur.AIProfileID = *body.AIProfileID
+		}
+		if err := dbpkg.UpdateProjectEnvironment(h.db, id, cur.RunnerID, cur.AIProfileID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if body.ClaudeConfigDir != nil {
+		if err := dbpkg.UpdateProjectConfigDir(h.db, id, strings.TrimSpace(*body.ClaudeConfigDir)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

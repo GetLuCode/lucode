@@ -1,4 +1,4 @@
-import type { CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { AIProfile, Runner, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -224,6 +224,16 @@ export const detectCommand = (transcript: string, accountId: string) =>
 // Instances (discovery)
 export const getInstances = () =>
   req<{ self: InstanceInfo; peers: InstanceInfo[] }>('GET', '/api/instances')
+// Runners and their preconfigured AIs
+export const listRunners = () => req<Runner[]>('GET', '/api/runners')
+export const listAIProfiles = (runnerId: string) =>
+  req<AIProfile[]>('GET', `/api/runners/${runnerId}/ai-profiles`)
+export const addAIProfile = (runnerId: string, data: { name: string; claude_config_dir: string }) =>
+  req<AIProfile>('POST', `/api/runners/${runnerId}/ai-profiles`, data)
+export const refreshAIProfile = (runnerId: string, id: string) =>
+  req<AIProfile>('POST', `/api/runners/${runnerId}/ai-profiles/${id}/refresh`)
+export const deleteAIProfile = (runnerId: string, id: string) =>
+  req<void>('DELETE', `/api/runners/${runnerId}/ai-profiles/${id}`)
 export const setProjectAIAPI = (projectId: string, aiapiInstanceId: string) =>
   req<void>('PATCH', `/api/projects/${projectId}/aiapi`, { aiapi_instance_id: aiapiInstanceId })
 

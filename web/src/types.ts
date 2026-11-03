@@ -9,7 +9,30 @@ export interface Project {
   claude_config_dir?: string
   default_model: string
   aiapi_instance_id?: string
+  runner_id?: string
+  ai_profile_id?: string
   created_at: string
+}
+
+// A lucode instance that can run projects (this one or a peer found over NATS).
+export interface Runner {
+  id: string
+  hostname: string
+  os: string
+  self: boolean
+}
+
+// A preconfigured AI of a runner: a claude_config_dir plus the account it belongs to.
+export interface AIProfile {
+  id: string
+  name: string
+  claude_config_dir: string
+  email: string
+  display_name: string
+  organization: string
+  plan: string
+  error: string
+  checked_at: string
 }
 
 export interface InstanceInfo {

@@ -19,20 +19,22 @@ type Project struct {
 	ClaudeConfigDir string    `json:"claude_config_dir"`
 	DefaultModel    string    `json:"default_model"`
 	AIAPIInstanceID string    `json:"aiapi_instance_id,omitempty"`
+	RunnerID        string    `json:"runner_id"`    // instance the project runs on ("" = this one)
+	AIProfileID     string    `json:"ai_profile_id"` // preconfigured AI of that runner ("" = default account)
 	CreatedAt       time.Time `json:"created_at"`
 }
 
 func InsertProject(db *sql.DB, p Project) error {
 	dirs, _ := json.Marshal(p.WorkDirs)
 	_, err := db.Exec(
-		`INSERT INTO projects (id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id) VALUES (?,?,?,?,?,?)`,
-		p.ID, p.Name, string(dirs), p.ClaudeConfigDir, p.DefaultModel, p.AIAPIInstanceID,
+		`INSERT INTO projects (id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id) VALUES (?,?,?,?,?,?,?,?)`,
+		p.ID, p.Name, string(dirs), p.ClaudeConfigDir, p.DefaultModel, p.AIAPIInstanceID, p.RunnerID, p.AIProfileID,
 	)
 	return err
 }
 
 func ListProjects(db *sql.DB) ([]Project, error) {
-	rows, err := db.Query(`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, created_at FROM projects ORDER BY created_at DESC`)
+	rows, err := db.Query(`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, created_at FROM projects ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +43,7 @@ func ListProjects(db *sql.DB) ([]Project, error) {
 	for rows.Next() {
 		var p Project
 		var dirsJSON, createdAt string
-		if err := rows.Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &createdAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &p.RunnerID, &p.AIProfileID, &createdAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(dirsJSON), &p.WorkDirs)
@@ -55,8 +57,8 @@ func GetProject(db *sql.DB, id string) (Project, error) {
 	var p Project
 	var dirsJSON, createdAt string
 	err := db.QueryRow(
-		`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, created_at FROM projects WHERE id=?`, id,
-	).Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &createdAt)
+		`SELECT id, name, work_dirs, claude_config_dir, default_model, aiapi_instance_id, runner_id, ai_profile_id, created_at FROM projects WHERE id=?`, id,
+	).Scan(&p.ID, &p.Name, &dirsJSON, &p.ClaudeConfigDir, &p.DefaultModel, &p.AIAPIInstanceID, &p.RunnerID, &p.AIProfileID, &createdAt)
 	if err != nil {
 		return p, err
 	}
@@ -82,6 +84,12 @@ func UpdateProjectAIAPIInstance(db *sql.DB, id, aiapiInstanceID string) error {
 
 func UpdateProjectName(db *sql.DB, id, name string) error {
 	_, err := db.Exec(`UPDATE projects SET name=? WHERE id=?`, name, id)
+	return err
+}
+
+// UpdateProjectConfigDir sets which Claude config dir (account) a project runs with.
+func UpdateProjectConfigDir(db *sql.DB, id, dir string) error {
+	_, err := db.Exec(`UPDATE projects SET claude_config_dir=? WHERE id=?`, dir, id)
 	return err
 }
 
@@ -1672,4 +1680,10 @@ func ListCardComments(db *sql.DB, cardID string) ([]CardComment, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// UpdateProjectEnvironment sets the runner and preconfigured AI a project uses.
+func UpdateProjectEnvironment(db *sql.DB, id, runnerID, aiProfileID string) error {
+	_, err := db.Exec(`UPDATE projects SET runner_id=?, ai_profile_id=? WHERE id=?`, runnerID, aiProfileID, id)
+	return err
 }

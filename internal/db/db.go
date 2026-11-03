@@ -230,6 +230,27 @@ CREATE TABLE IF NOT EXISTS api_keys (
 		return fmt.Errorf("create api_keys: %w", err)
 	}
 
+	// ai_profiles: preconfigured AIs of this runner (a claude_config_dir plus the
+	// account info the Anthropic profile endpoint reports for it).
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS ai_profiles (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    claude_config_dir TEXT NOT NULL UNIQUE,
+    email             TEXT NOT NULL DEFAULT '',
+    display_name      TEXT NOT NULL DEFAULT '',
+    organization      TEXT NOT NULL DEFAULT '',
+    plan              TEXT NOT NULL DEFAULT '',
+    error             TEXT NOT NULL DEFAULT '',
+    checked_at        TEXT NOT NULL DEFAULT '',
+    created_at        DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`); err != nil {
+		return fmt.Errorf("create ai_profiles: %w", err)
+	}
+	// projects.runner_id / ai_profile_id — the environment and preconfigured AI a project uses (idempotent)
+	db.Exec(`ALTER TABLE projects ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE projects ADD COLUMN ai_profile_id TEXT NOT NULL DEFAULT ''`)
+
 	// projects.aiapi_instance_id — which aiapi instance to use for this project (idempotent)
 	db.Exec(`ALTER TABLE projects ADD COLUMN aiapi_instance_id TEXT NOT NULL DEFAULT ''`)
 

@@ -58,7 +58,7 @@ func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpk
 		Model:           model,
 		Provider:        provider,
 		WorkDirs:        proj.WorkDirs,
-		ClaudeConfigDir: proj.ClaudeConfigDir,
+		ClaudeConfigDir: h.projectConfigDir(proj),
 		Resume:          sess.MessageCount > 0,
 		Executor:        agent.Executor,
 		SystemPrompt:    agentSystemPrompt(agent, card, h.supervisorName(agent)),

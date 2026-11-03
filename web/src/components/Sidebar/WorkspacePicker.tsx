@@ -2,11 +2,12 @@ import { IconChevronRight, IconFolder, IconX } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import * as api from '../../api'
+import type { AIProfile } from '../../types'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
-  onConfirm: (name: string, path: string) => void
+  onConfirm: (name: string, path: string, aiProfileId: string) => void
 }
 
 export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
@@ -14,6 +15,8 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
   const [root, setRoot] = useState('')
   const [dirs, setDirs] = useState<string[]>([])
   const [name, setName] = useState('')
+  const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([])
+  const [aiProfileId, setAiProfileId] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -24,6 +27,8 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
 
     setError('')
     setLoading(true)
+    setAiProfileId('')
+    api.listAIProfiles('local').then(setAiProfiles).catch(() => setAiProfiles([]))
     api
       .getConfig()
       .then(config => api.listDirs(config.working_dir || ''))
@@ -85,7 +90,7 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
       setError('Name is required')
       return
     }
-    onConfirm(name.trim(), currentPath)
+    onConfirm(name.trim(), currentPath, aiProfileId)
     onClose()
   }
 
@@ -186,6 +191,19 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
             }}
             className="input"
           />
+        </div>
+
+        {/* Preconfigured AI of this runner */}
+        <div className="workspace-picker__name-input">
+          <label>AI</label>
+          <select className="input" value={aiProfileId} onChange={e => setAiProfileId(e.target.value)}>
+            <option value="">Default account</option>
+            {aiProfiles.map(p => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.email ? ` — ${p.email}` : ''}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Buttons */}
