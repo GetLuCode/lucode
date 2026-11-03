@@ -4,6 +4,7 @@ import * as api from '../../api'
 import { useStore } from '../../store'
 import type { AIProfile, Runner } from '../../types'
 import './SpacesList.css'
+import { backdropClose } from '../../lib/backdropClose'
 
 function osIcon(os: string) {
   if (os === 'windows') return <IconBrandWindows size={14} />
@@ -101,7 +102,7 @@ function RunnerPanel({ runner, onClose }: { runner: Runner; onClose: () => void 
     })
 
   return (
-    <div className="workspace-picker-overlay" onClick={onClose}>
+    <div className="workspace-picker-overlay" {...backdropClose(onClose)}>
       <div className="workspace-picker-modal" onClick={e => e.stopPropagation()}>
         <div className="workspace-picker__header">
           <h2>{runner.hostname} · Preconfigured AI</h2>

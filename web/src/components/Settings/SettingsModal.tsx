@@ -5,6 +5,7 @@ import { ToolsTab } from './ToolsTab'
 import { SpacesTab } from './SpacesTab'
 import { PermissionsTab } from './PermissionsTab'
 import './SettingsModal.css'
+import { backdropClose } from '../../lib/backdropClose'
 
 interface Props {
   isOpen: boolean
@@ -31,7 +32,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={onClose}
+      {...backdropClose(onClose)}
     >
       <motion.div
         className="settings-modal"

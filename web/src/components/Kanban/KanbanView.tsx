@@ -8,6 +8,7 @@ import {
 import { useStore } from '../../store'
 import type { Agent, CardComment, KanbanCard, KanbanList } from '../../types'
 import * as api from '../../api'
+import { backdropClose } from '../../lib/backdropClose'
 
 // ---- pasted images -----------------------------------------------------------
 
@@ -209,7 +210,7 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
   const epicCards = allCards.filter(c => c.card_type === 'epic' && c.id !== card.id)
 
   return (
-    <div className="kmodal-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="kmodal-backdrop" {...backdropClose(onClose)}>
       <div className="kmodal">
         {/* header */}
         <div className="kmodal__header">

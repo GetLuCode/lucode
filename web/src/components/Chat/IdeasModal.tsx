@@ -2,6 +2,7 @@ import { IconCheck, IconPlus, IconTrash, IconX, IconNotes } from '@tabler/icons-
 import { motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import { createIdea, deleteIdea, fetchIdeas, toggleIdea, type Idea } from '../../lib/ideasStorage'
+import { backdropClose } from '../../lib/backdropClose'
 
 interface Props {
   isOpen: boolean
@@ -98,7 +99,7 @@ export function IdeasModal({ isOpen, projectId, onClose, onPendingChange }: Prop
     <>
       <motion.div
         className="ideas-modal-backdrop"
-        onClick={onClose}
+        {...backdropClose(onClose)}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}

@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import * as api from '../../api'
 import type { AIProfile, Runner } from '../../types'
+import { backdropClose } from '../../lib/backdropClose'
 
 interface Props {
   isOpen: boolean
@@ -117,7 +118,7 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={onClose}
+      {...backdropClose(onClose)}
     >
       <motion.div
         className="workspace-picker-modal"

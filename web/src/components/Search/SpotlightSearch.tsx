@@ -5,6 +5,7 @@ import * as api from '../../api'
 import { useStore } from '../../store'
 import type { SearchResult } from '../../types'
 import { IconFolder, IconMessage } from '@tabler/icons-react'
+import { backdropClose } from '../../lib/backdropClose'
 
 interface Props {
   isOpen: boolean
@@ -105,9 +106,9 @@ export const SpotlightSearch: React.FC<Props> = ({ isOpen, onClose }) => {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        onClick={onClose}
+        {...backdropClose(onClose)}
       />
-      <div className="spotlight-modal-container" onClick={onClose}>
+      <div className="spotlight-modal-container" {...backdropClose(onClose)}>
         <motion.div
           className="spotlight-modal"
           initial={{ opacity: 0, scale: 0.95 }}

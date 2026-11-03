@@ -4,6 +4,7 @@ import { IconHistory, IconArrowBackUp, IconFile, IconAlertCircle, IconEye } from
 import * as api from '../../api'
 import type { Checkpoint, CheckpointChange, FileDiff } from '../../types'
 import './CheckpointsView.css'
+import { backdropClose } from '../../lib/backdropClose'
 
 // ---- helpers -----------------------------------------------------------------
 
@@ -183,7 +184,7 @@ export function CheckpointsView({ onClose }: { onClose?: () => void } = {}) {
 
       {/* Revert confirmation modal */}
       {confirmRevert && (
-        <div className="ck-modal-backdrop" onClick={() => setConfirmRevert(null)}>
+        <div className="ck-modal-backdrop" {...backdropClose(() => setConfirmRevert(null))}>
           <div className="ck-modal" onClick={e => e.stopPropagation()}>
             <h3>Revert workDir?</h3>
             <p>

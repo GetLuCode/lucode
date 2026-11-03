@@ -2,6 +2,7 @@ import { IconX } from '@tabler/icons-react'
 import { useEffect, useState } from 'react'
 import * as api from '../../api'
 import type { AIProfile, Project, Runner } from '../../types'
+import { backdropClose } from '../../lib/backdropClose'
 
 // Changes where a project's agents run and with which account: its runner, the
 // work dir on that runner (peers only) and one of that runner's preconfigured AIs.
@@ -52,7 +53,7 @@ export function ProjectEnvironmentModal({
   }
 
   return (
-    <div className="workspace-picker-overlay" onClick={onClose}>
+    <div className="workspace-picker-overlay" {...backdropClose(onClose)}>
       <div className="workspace-picker-modal" onClick={e => e.stopPropagation()}>
         <div className="workspace-picker__header">
           <h2>{project.name} · Environment</h2>

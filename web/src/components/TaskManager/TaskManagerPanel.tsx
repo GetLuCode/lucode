@@ -4,6 +4,7 @@ import { IconX, IconPlayerStop } from '@tabler/icons-react'
 import * as api from '../../api'
 import type { ProcessInfo } from '../../types'
 import './TaskManagerPanel.css'
+import { backdropClose } from '../../lib/backdropClose'
 
 interface Props {
   isOpen: boolean
@@ -76,7 +77,7 @@ export function TaskManagerPanel({ isOpen, onClose }: Props) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={onClose}
+      {...backdropClose(onClose)}
     >
       <motion.div
         className="tm-panel"

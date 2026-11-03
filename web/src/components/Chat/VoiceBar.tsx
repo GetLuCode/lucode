@@ -2,6 +2,7 @@ import { Switch } from '@headlessui/react'
 import { IconX } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
+import { backdropClose } from '../../lib/backdropClose'
 
 const LANGUAGES = [
   { label: 'Español (España)', value: 'es-ES' },
@@ -70,7 +71,7 @@ export function VoiceSettingsModal({
       {/* Backdrop */}
       <motion.div
         className="voice-modal-backdrop"
-        onClick={onClose}
+        {...backdropClose(onClose)}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
