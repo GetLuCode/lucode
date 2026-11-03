@@ -95,8 +95,8 @@ export const sendTurn = (id: string, message: string, model?: string, provider?:
   req<void>('POST', `/api/sessions/${id}/turn`, { message, model, provider, effort, thinking, image })
 // The project's orchestrator chat (created on first use).
 export const getOrchestrator = (pid: string) => req<Session>('GET', `/api/projects/${pid}/orchestrator`)
-export const sendOrchestratorTurn = (id: string, message: string, env: { runnerId: string; aiProfileId: string }) =>
-  req<void>('POST', `/api/sessions/${id}/turn`, { message, runner_id: env.runnerId, ai_profile_id: env.aiProfileId })
+export const sendOrchestratorTurn = (id: string, message: string, env: { runnerId: string; aiProfileId: string; model?: string }) =>
+  req<void>('POST', `/api/sessions/${id}/turn`, { message, runner_id: env.runnerId, ai_profile_id: env.aiProfileId, model: env.model })
 // Voice output (Fish Audio through the voice worker). The key is write-only.
 export interface TTSSettings { configured: boolean; model: string; voice_id: string; speed: number }
 export const getTTSSettings = () => req<TTSSettings>('GET', '/api/tts/settings')

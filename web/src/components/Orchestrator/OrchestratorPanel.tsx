@@ -25,7 +25,14 @@ const LS = {
   runner: (pid: string) => `orch_runner:${pid}`,
   lastRunner: 'orch_runner',
   ai: (pid: string, runner: string) => `orch_ai:${pid}:${runner}`,
+  model: (pid: string) => `orch_model:${pid}`,
 }
+
+const MODELS = [
+  { value: 'haiku', label: 'Haiku 5.5' },
+  { value: 'sonnet', label: 'Sonnet 5.5' },
+  { value: 'opus', label: 'Opus 5.5' },
+]
 
 const lsGet = (k: string, def: string) => {
   try { return localStorage.getItem(k) ?? def } catch { return def }
@@ -190,6 +197,16 @@ export function OrchestratorPanel() {
     lsSet(LS.lastRunner, v)
     if (projectId) lsSet(LS.runner(projectId), v)
   }
+  const [model, setModel] = useState('sonnet')
+  useEffect(() => {
+    if (!projectId) return
+    const saved = lsGet(LS.model(projectId), 'sonnet')
+    setModel(MODELS.some(m => m.value === saved) ? saved : 'sonnet')
+  }, [projectId])
+  const pickModel = (v: string) => {
+    setModel(v)
+    if (projectId) lsSet(LS.model(projectId), v)
+  }
   const pickAI = (id: string) => {
     setAiId(id)
     if (projectId) lsSet(LS.ai(projectId, runnerId), id)
@@ -235,7 +252,7 @@ export function OrchestratorPanel() {
     setInput('')
     dictBase.current = ''
     useStore.setState(s => ({ pendingSend: { ...s.pendingSend, [sid]: true } }))
-    api.sendOrchestratorTurn(sid, text, { runnerId, aiProfileId: effectiveAi }).catch(e => {
+    api.sendOrchestratorTurn(sid, text, { runnerId, aiProfileId: effectiveAi, model }).catch(e => {
       useStore.setState(s => {
         const next = { ...s.pendingSend }
         delete next[sid]
@@ -339,9 +356,12 @@ export function OrchestratorPanel() {
               ...profiles.map(p => ({ value: p.id, label: p.name, hint: p.email || undefined })),
             ]}
             onAI={v => pickAI(v === 'default' ? '' : v)}
+            model={model}
+            models={MODELS}
+            onModel={pickModel}
           />
-          <span className="orch__env-summary" title="Runner · AI">
-            {runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'}
+          <span className="orch__env-summary" title="Runner · AI · Model">
+            {runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'} · {MODELS.find(m => m.value === model)?.label ?? model}
           </span>
           <button
             className={`orch__mic orch__mic--${mic.state}`}

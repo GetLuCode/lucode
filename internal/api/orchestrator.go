@@ -66,8 +66,9 @@ Rules:
 // orchEnvs remembers, per orchestrator session, the runner and AI its live process
 // was started with, so a change in the selects restarts the process.
 var (
-	orchEnvMu sync.Mutex
-	orchEnvs  = map[string]string{}
+	orchEnvMu  sync.Mutex
+	orchEnvs   = map[string]string{}
+	orchModels = map[string]string{}
 )
 
 // getOrchestrator returns the project's orchestrator session, creating it on first use.
@@ -117,6 +118,15 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 	prev, seen := orchEnvs[sess.ID]
 	orchEnvs[sess.ID] = key
 	orchEnvMu.Unlock()
+	// The persistent process is started with --model: another model needs a new process,
+	// but the conversation (same runner and AI) is resumed.
+	orchEnvMu.Lock()
+	prevModel, modelSeen := orchModels[sess.ID]
+	orchModels[sess.ID] = model
+	orchEnvMu.Unlock()
+	if modelSeen && prevModel != model && !(seen && prev != key) {
+		h.manager.CloseLive(sess.ID)
+	}
 	if seen && prev != key {
 		// The conversation of claude lives with the runner/AI that ran it: restart the
 		// process there (without --resume, its transcript is not on the new one).

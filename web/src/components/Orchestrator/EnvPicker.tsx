@@ -38,25 +38,29 @@ function Section({ title, value, options, onChange }: {
 
 // A gear button that opens a small floating panel (no overlay) to choose the runner
 // and the preconfigured AI the orchestrator runs with.
-export function EnvPicker({ runner, runners, onRunner, ai, profiles, onAI }: {
+export function EnvPicker({ runner, runners, onRunner, ai, profiles, onAI, model, models, onModel }: {
   runner: string
   runners: EnvOption[]
   onRunner: (value: string) => void
   ai: string
   profiles: EnvOption[]
   onAI: (value: string) => void
+  model: string
+  models: EnvOption[]
+  onModel: (value: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const runnerLabel = runners.find(o => o.value === runner)?.label ?? runner
   const aiLabel = profiles.find(o => o.value === ai)?.label ?? ai
+  const modelLabel = models.find(o => o.value === model)?.label ?? model
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           className="env-picker__trigger"
-          title={`Runner: ${runnerLabel} · AI: ${aiLabel}`}
-          aria-label="Runner and AI"
+          title={`Runner: ${runnerLabel} · AI: ${aiLabel} · Model: ${modelLabel}`}
+          aria-label="Runner, AI and model"
         >
           <IconSettings size={16} />
         </button>
@@ -65,6 +69,8 @@ export function EnvPicker({ runner, runners, onRunner, ai, profiles, onAI }: {
         <Section title="Runner" value={runner} options={runners} onChange={onRunner} />
         <div className="env-picker__divider" />
         <Section title="AI" value={ai} options={profiles} onChange={onAI} />
+        <div className="env-picker__divider" />
+        <Section title="Model" value={model} options={models} onChange={onModel} />
       </PopoverContent>
     </Popover>
   )
