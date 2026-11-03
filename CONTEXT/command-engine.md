@@ -228,3 +228,16 @@ userTools: UserTool[]          // loaded from store on mount
    - Timeout → `{ success: false, error: "timeout: execution timeout exceeded" }`
 4. **No double-processing** — `processingRef` prevents concurrent command detection
 5. **Hotword required** — no hotword configured = all transcripts passthrough (no false positives)
+
+## Browser control (Edge over CDP) — `internal/cdp`
+
+One Microsoft Edge shared by the process (`cdp.Default`), driven over the DevTools protocol (gorilla/websocket, flattened sessions). Elements are located through the **accessibility tree** (`Accessibility.getFullAXTree`: role + accessible name) and referenced as `e<backendNodeId>`; CSS selectors and raw coordinates are the fallback.
+
+| Layer | File | Purpose |
+|-------|------|---------|
+| Core | `internal/cdp/launch.go` | `Launch` (window or `--headless=new`, own profile `~/.lucode/edge-profile`, port 9222; attaches if the port already answers), `Close` |
+| Core | `internal/cdp/pages.go`, `ax.go`, `actions.go` | tabs, navigate, list/find elements, click, mouse, type, key, text, screenshot, JS dialogs |
+| MCP | `internal/taskmcp/browser.go`, `internal/api/browsertools.go` | `browser_*` tools for the orchestrator (and agents that list them in `lucode_tools`); NOT in `Names()`, NOT auto-approved |
+| Goja | `internal/toolengine/cdp.go` | `cdp` object for user tools (`cdp.launch`, `cdp.find`, `cdp.click`...); code that mentions `cdp.` gets a 60 s limit instead of 10 s |
+
+The browser runs on the machine of the lucode hub (tool calls are forwarded there), whatever runner the session uses. Tests (`internal/cdp/cdp_test.go`, `internal/toolengine/cdp_test.go`) launch a real headless Edge with a temp profile and skip when Edge is missing.

@@ -35,7 +35,7 @@ func orchestratorTools() []string {
 		}
 		out = append(out, n)
 	}
-	return out
+	return append(out, taskmcp.BrowserNames()...)
 }
 
 // orchestratorCaller is the identity the agent-management tools see: an agent of
@@ -146,7 +146,7 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 		Effort:          effort,
 		Thinking:        thinking,
 		Executor:        "claude",
-		SystemPrompt:    orchestratorPrompt,
+		SystemPrompt:    orchestratorPrompt + browserPrompt,
 		AgentName:       "orchestrator",
 		Persistent:      true,
 		LucodeTools:     orchestratorTools(),
@@ -156,6 +156,9 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 // handleOrchestratorTool runs a lucode tool called by an orchestrator session.
 func (h *Handler) handleOrchestratorTool(sessID string, sess dbpkg.Session, tool string, args json.RawMessage) (string, error) {
 	toolName := strings.TrimPrefix(tool, "mcp__lucode__")
+	if taskmcp.IsBrowserTool(toolName) {
+		return h.handleBrowserTool(toolName, args)
+	}
 	var a struct {
 		To             string   `json:"to"`
 		Message        string   `json:"message"`

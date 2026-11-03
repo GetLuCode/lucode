@@ -2862,7 +2862,7 @@ func sanitizeLucodeTools(in []string) []string {
 		return nil
 	}
 	known := map[string]bool{}
-	for _, n := range taskmcp.Names() {
+	for _, n := range append(taskmcp.Names(), taskmcp.BrowserNames()...) {
 		known[n] = true
 	}
 	out := []string{}

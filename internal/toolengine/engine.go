@@ -23,8 +23,12 @@ const defaultTimeout = 10 * time.Second
 func Execute(code string, args json.RawMessage, workDir string) (any, error) {
 	vm := goja.New()
 
-	// Set up timeout / kill switch
-	timer := time.AfterFunc(defaultTimeout, func() {
+	// Set up timeout / kill switch. Code that drives the browser gets longer.
+	timeout := defaultTimeout
+	if strings.Contains(code, "cdp.") {
+		timeout = browserTimeout
+	}
+	timer := time.AfterFunc(timeout, func() {
 		vm.Interrupt("execution timeout exceeded")
 	})
 	defer timer.Stop()
@@ -45,6 +49,7 @@ func Execute(code string, args json.RawMessage, workDir string) (any, error) {
 	injectHTTP(vm)
 	injectLog(vm)
 	injectUtils(vm)
+	injectCDP(vm)
 
 	// Wrap user code in a function to capture return value
 	wrappedCode := fmt.Sprintf(`(function() { %s })()`, code)

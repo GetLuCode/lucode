@@ -68,6 +68,23 @@ const LUCODE_TOOLS = [
   { name: 'agent_delete',  desc: 'Delete an idle agent of the project' },
 ]
 
+// Control of Microsoft Edge (CDP). Stored in lucode_tools like the rest, but never on by default.
+const BROWSER_TOOLS = [
+  { name: 'browser_launch',        desc: 'Start Edge in a window or headless' },
+  { name: 'browser_close',         desc: 'Close the Edge lucode started' },
+  { name: 'browser_tabs',          desc: 'List, open, switch and close tabs' },
+  { name: 'browser_navigate',      desc: 'Open a URL, go back / forward / reload' },
+  { name: 'browser_list_elements', desc: 'List the page elements by role and accessible name' },
+  { name: 'browser_find_element',  desc: 'Find elements by role / name / text (CSS fallback)' },
+  { name: 'browser_click',         desc: 'Click an element' },
+  { name: 'browser_mouse',         desc: 'Move, click, drag and scroll by coordinates' },
+  { name: 'browser_type',          desc: 'Type into a field' },
+  { name: 'browser_key',           desc: 'Press a key or shortcut' },
+  { name: 'browser_screenshot',    desc: 'Take a screenshot' },
+  { name: 'browser_get_text',      desc: 'Read the text of the page' },
+  { name: 'browser_dialog',        desc: 'Answer a JavaScript alert / confirm / prompt' },
+]
+
 const DEFAULT_TOOLS = ['Bash', 'Edit', 'Read', 'Write']
 
 // One category of tools with its own on/off switches.
@@ -384,6 +401,13 @@ function AgentForm({
             title="Lucode tools"
             hint="Provided by lucode so the agent can report on its task and work with other agents. Switch off what this agent should not do, for example send_to_agent to keep it from messaging others."
             tools={LUCODE_TOOLS}
+            enabled={form.lucode_tools}
+            onToggle={toggleLucodeTool}
+          />
+          <ToolGroup
+            title="Browser tools (Edge)"
+            hint="Off by default. Lets the agent open Microsoft Edge on the machine where lucode runs and drive it by accessibility roles and names. Each use asks for approval."
+            tools={BROWSER_TOOLS}
             enabled={form.lucode_tools}
             onToggle={toggleLucodeTool}
           />

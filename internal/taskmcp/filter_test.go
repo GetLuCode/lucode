@@ -69,3 +69,22 @@ func TestNamesAreAllTaskTools(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowserToolsAreOptIn(t *testing.T) {
+	for _, n := range listed(t, nil) {
+		if IsBrowserTool(n) {
+			t.Errorf("%s must not be listed when no filter is given", n)
+		}
+	}
+	if got := listed(t, BrowserNames()); len(got) != len(BrowserNames()) {
+		t.Errorf("asking for the browser tools lists them all, got %v", got)
+	}
+	for _, n := range BrowserNames() {
+		if IsTaskTool(n) {
+			t.Errorf("%s must not be auto-approved like a task tool", n)
+		}
+		if !IsBrowserTool("mcp__lucode__" + n) {
+			t.Errorf("%s is not recognised with the mcp prefix", n)
+		}
+	}
+}

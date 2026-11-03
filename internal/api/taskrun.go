@@ -276,6 +276,9 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 		sb.WriteString("\n\nThe task only changes state when you tell lucode. Report through the lucode task tools (in Claude Code they appear as mcp__lucode__<name>):\n")
 		sb.WriteString(strings.Join(report, "\n"))
 	}
+	if agent.LucodeTools != nil && contains(agent.LucodeTools, taskmcp.ToolBrowserList) {
+		sb.WriteString(browserPrompt)
+	}
 	sb.WriteString("\n\nRules:")
 	if has("task_done") {
 		sb.WriteString("\n- Never say the task is finished without calling task_done; do not call it for unfinished work.")
@@ -398,6 +401,13 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 	toolName := strings.TrimPrefix(tool, "mcp__lucode__")
 	if agentErr == nil && !lucodeToolEnabled(agent, toolName) {
 		return "", fmt.Errorf("the %s tool is disabled for this agent", toolName)
+	}
+	if taskmcp.IsBrowserTool(toolName) {
+		// unlike the task tools, never implied by "all": the agent must list it
+		if agentErr != nil || !contains(agent.LucodeTools, toolName) {
+			return "", fmt.Errorf("the %s tool is disabled for this agent", toolName)
+		}
+		return h.handleBrowserTool(toolName, args)
 	}
 
 	switch toolName {

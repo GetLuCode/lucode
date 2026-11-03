@@ -30,7 +30,7 @@ func isMiniMax(model string) bool { return strings.HasPrefix(model, "MiniMax") }
 // callerLucodeTools is the set of lucode tools the calling agent has.
 func callerLucodeTools(agent dbpkg.Agent) []string {
 	if agent.LucodeTools == nil {
-		return taskmcp.Names()
+		return append(taskmcp.Names(), taskmcp.BrowserNames()...)
 	}
 	return agent.LucodeTools
 }
@@ -193,7 +193,8 @@ func (h *Handler) agentCreate(caller dbpkg.Agent, args json.RawMessage) (string,
 	} else {
 		lucodeTools = []string{}
 		for _, t := range callerLucodeTools(caller) {
-			if !contains(agentManageTools, t) {
+			// browser control is never handed down by default: it has to be asked for
+			if !contains(agentManageTools, t) && !taskmcp.IsBrowserTool(t) {
 				lucodeTools = append(lucodeTools, t)
 			}
 		}
