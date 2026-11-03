@@ -1,0 +1,18 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-popover: var(--bg-panel);
+  --color-popover-foreground: var(--text);
+  --color-accent: var(--bg-active);
+  --color-accent-foreground: var(--text);
+  --color-muted-foreground: var(--text-muted);
+  --color-border: var(--border-bright);
+  --color-input: var(--border-bright);
+  --color-ring: var(--accent);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+}

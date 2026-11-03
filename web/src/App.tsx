@@ -17,6 +17,7 @@ import { ProjectHeader } from './components/Header/ProjectHeader'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { HomeView } from './components/Home/HomeView'
 import { RunningView } from './components/Running/RunningView'
+import { OrchestratorPanel } from './components/Orchestrator/OrchestratorPanel'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
@@ -136,6 +137,7 @@ export default function App() {
             </ErrorBoundary>
           </div>
         </main>
+        {!isHome && <OrchestratorPanel />}
         <aside
           className={`checkpoints-drawer${isCheckpointsOpen ? ' checkpoints-drawer--open' : ''}`}
           aria-hidden={!isCheckpointsOpen}

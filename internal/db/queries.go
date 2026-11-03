@@ -137,12 +137,27 @@ type Session struct {
 	ContextUsage string    `json:"context_usage,omitempty"`
 	CardID       string    `json:"card_id,omitempty"`
 	AgentID      string    `json:"agent_id,omitempty"`
+	// Kind is "" for an ordinary chat and SessionKindOrchestrator for the project's
+	// main chat (the right-hand panel), which is not listed with the other sessions.
+	Kind string `json:"kind,omitempty"`
+}
+
+const SessionKindOrchestrator = "orchestrator"
+
+// GetOrchestratorSession returns the project's orchestrator chat (sql.ErrNoRows if none yet).
+func GetOrchestratorSession(db *sql.DB, projectID string) (Session, error) {
+	var id string
+	err := db.QueryRow(`SELECT id FROM sessions WHERE project_id=? AND kind=? ORDER BY created_at LIMIT 1`, projectID, SessionKindOrchestrator).Scan(&id)
+	if err != nil {
+		return Session{}, err
+	}
+	return GetSession(db, id)
 }
 
 func InsertSession(db *sql.DB, s Session) error {
 	_, err := db.Exec(
-		`INSERT INTO sessions (id, project_id, name, model, status, parent_id, account_id, card_id, agent_id) VALUES (?,?,?,?,?,?,?,?,?)`,
-		s.ID, s.ProjectID, s.Name, s.Model, s.Status, nullStr(s.ParentID), s.AccountID, s.CardID, s.AgentID,
+		`INSERT INTO sessions (id, project_id, name, model, status, parent_id, account_id, card_id, agent_id, kind) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		s.ID, s.ProjectID, s.Name, s.Model, s.Status, nullStr(s.ParentID), s.AccountID, s.CardID, s.AgentID, s.Kind,
 	)
 	return err
 }
@@ -152,8 +167,8 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 	var parentID sql.NullString
 	var createdAt, lastActive string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id FROM sessions WHERE id=?`, id,
-	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID)
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, kind FROM sessions WHERE id=?`, id,
+	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID, &s.Kind)
 	if err != nil {
 		return s, err
 	}
@@ -167,8 +182,8 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 
 func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id FROM sessions WHERE project_id=? ORDER BY last_active DESC`,
-		projectID,
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id FROM sessions WHERE project_id=? AND kind<>? ORDER BY last_active DESC`,
+		projectID, SessionKindOrchestrator,
 	)
 	if err != nil {
 		return nil, err

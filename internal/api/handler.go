@@ -94,6 +94,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.deleteSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", h.updateSessionName)
 
+	mux.HandleFunc("GET /api/projects/{pid}/orchestrator", h.getOrchestrator)
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)
 	mux.HandleFunc("DELETE /api/sessions/{id}/turn", h.cancelTurn)
 	mux.HandleFunc("POST /api/sessions/{id}/fork", h.forkSession)
@@ -520,6 +521,9 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		Provider string `json:"provider"`
 		Effort   string `json:"effort"`
 		Thinking string `json:"thinking"`
+		// Orchestrator chat only: where it runs and with which preconfigured AI.
+		RunnerID    string `json:"runner_id"`
+		AIProfileID string `json:"ai_profile_id"`
 		Image    struct {
 			Base64    string `json:"base64"`
 			MediaType string `json:"mediaType"`
@@ -539,6 +543,25 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	proj, err := dbpkg.GetProject(h.db, sess.ProjectID)
 	if err != nil {
 		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	if sess.Kind == dbpkg.SessionKindOrchestrator {
+		opts, err := h.orchestratorTurnOpts(sess, proj, body.Message, body.Model, body.RunnerID, body.AIProfileID, body.Effort, body.Thinking)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		opts.ImageBase64, opts.ImageMediaType = body.Image.Base64, body.Image.MediaType
+		if err := h.manager.StartTurn(opts); err != nil {
+			if errors.Is(err, sessionpkg.ErrSessionBusy) {
+				http.Error(w, "session is busy", http.StatusConflict)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 

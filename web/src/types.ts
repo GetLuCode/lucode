@@ -59,6 +59,7 @@ export interface Session {
   context_usage?: string  // JSON-encoded context usage, persisted per session
   card_id?: string        // the task (kanban card) this session belongs to
   agent_id?: string       // the agent running it
+  kind?: 'orchestrator' | '' // the project's main chat (right-hand panel)
 }
 
 export interface MessageUsage {

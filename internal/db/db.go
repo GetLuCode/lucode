@@ -267,6 +267,7 @@ CREATE TABLE IF NOT EXISTS ai_profiles (
 	// Task model: a session belongs to a kanban card (task) and runs on its agent (idempotent)
 	db.Exec(`ALTER TABLE sessions ADD COLUMN card_id  TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_card  ON sessions(card_id)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`)
 

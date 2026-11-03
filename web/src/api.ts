@@ -93,6 +93,10 @@ export const renameSession = (id: string, name: string) =>
   req<void>('PATCH', `/api/sessions/${id}`, { name })
 export const sendTurn = (id: string, message: string, model?: string, provider?: string, effort?: string, thinking?: string, image?: { base64: string; mediaType: string } | null) =>
   req<void>('POST', `/api/sessions/${id}/turn`, { message, model, provider, effort, thinking, image })
+// The project's orchestrator chat (created on first use).
+export const getOrchestrator = (pid: string) => req<Session>('GET', `/api/projects/${pid}/orchestrator`)
+export const sendOrchestratorTurn = (id: string, message: string, env: { runnerId: string; aiProfileId: string }) =>
+  req<void>('POST', `/api/sessions/${id}/turn`, { message, runner_id: env.runnerId, ai_profile_id: env.aiProfileId })
 export const cancelTurn = (id: string) =>
   req<void>('DELETE', `/api/sessions/${id}/turn`)
 export const forkSession = (id: string, name: string, message?: string) =>

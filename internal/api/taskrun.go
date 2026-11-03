@@ -361,6 +361,9 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 	if err != nil {
 		return "", errors.New("session not found")
 	}
+	if sess.Kind == dbpkg.SessionKindOrchestrator {
+		return h.handleOrchestratorTool(sessID, sess, tool, args)
+	}
 	if sess.CardID == "" {
 		return "", errors.New("this session is not linked to a task")
 	}
