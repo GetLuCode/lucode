@@ -189,6 +189,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/usage/sessions", h.usageSessions)
 
 	mux.HandleFunc("GET /ws", h.globalWS)
+	mux.HandleFunc("GET /ws/stt", h.sttSocket)
+	mux.HandleFunc("GET /api/stt/status", h.sttStatus)
+	mux.HandleFunc("POST /api/stt/start", h.sttStart)
+	mux.HandleFunc("GET /api/tts/settings", h.getTTSSettings)
+	mux.HandleFunc("PUT /api/tts/settings", h.putTTSSettings)
+	mux.HandleFunc("POST /api/tts", h.ttsSpeak)
 
 	// Discovery + remote spaces
 	mux.HandleFunc("GET /api/instances", h.listInstances)

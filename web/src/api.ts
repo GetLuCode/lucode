@@ -97,6 +97,18 @@ export const sendTurn = (id: string, message: string, model?: string, provider?:
 export const getOrchestrator = (pid: string) => req<Session>('GET', `/api/projects/${pid}/orchestrator`)
 export const sendOrchestratorTurn = (id: string, message: string, env: { runnerId: string; aiProfileId: string }) =>
   req<void>('POST', `/api/sessions/${id}/turn`, { message, runner_id: env.runnerId, ai_profile_id: env.aiProfileId })
+// Voice output (Fish Audio through the voice worker). The key is write-only.
+export interface TTSSettings { configured: boolean; model: string; voice_id: string; speed: number }
+export const getTTSSettings = () => req<TTSSettings>('GET', '/api/tts/settings')
+export const saveTTSSettings = (data: { api_key?: string; clear_key?: boolean; model: string; voice_id: string; speed: number }) =>
+  req<TTSSettings>('PUT', '/api/tts/settings', data)
+// Raw PCM16 mono audio stream of the text (X-Sample-Rate says the rate).
+export const speakRequest = (text: string, signal: AbortSignal) => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = getAuthToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return fetch(`${BASE}/api/tts`, { method: 'POST', headers, body: JSON.stringify({ text }), signal })
+}
 export const cancelTurn = (id: string) =>
   req<void>('DELETE', `/api/sessions/${id}/turn`)
 export const forkSession = (id: string, name: string, message?: string) =>

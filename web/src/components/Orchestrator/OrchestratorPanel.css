@@ -88,3 +88,48 @@
 .env-picker__item-text { display: flex; flex-direction: column; min-width: 0; }
 .env-picker__hint { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
 .env-picker__check { color: var(--accent); flex-shrink: 0; }
+
+/* dictation button */
+.orch__mic {
+  width: 34px; height: 30px; display: grid; place-items: center; flex-shrink: 0; cursor: pointer;
+  background: none; color: var(--text-muted); border: 1px solid var(--border-bright); border-radius: 6px;
+}
+.orch__mic:hover { color: var(--text); background: var(--bg-hover); }
+.orch__mic--loading { color: var(--warning); border-color: var(--warning); animation: orch-pulse 1.2s ease-in-out infinite; }
+.orch__mic--armed { color: var(--accent); border-color: var(--accent); }
+.orch__mic--awake { color: var(--error); border-color: var(--error); animation: orch-pulse 0.9s ease-in-out infinite; }
+.orch__mic--listening { color: var(--error); border-color: var(--error); animation: orch-pulse 1.6s ease-in-out infinite; }
+@keyframes orch-pulse { 50% { opacity: 0.55; } }
+
+/* voice settings dialog */
+.orch-dialog__backdrop { position: fixed; inset: 0; z-index: 900; display: grid; place-items: center; background: rgba(0, 0, 0, 0.5); }
+.orch-dialog {
+  width: min(440px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 12px; padding: 16px;
+  background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: 12px; box-shadow: var(--shadow);
+}
+.orch-dialog__header { display: flex; align-items: center; justify-content: space-between; }
+.orch-dialog__header h3 { margin: 0; font-size: 15px; }
+.orch-dialog__note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+.orch-dialog__field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); }
+.orch-dialog__field em { color: var(--accent); font-style: normal; }
+.orch-dialog__field input {
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border-bright);
+  border-radius: 6px; padding: 7px 9px; font: inherit; font-size: 13px;
+}
+.orch-dialog__field input:focus { outline: none; border-color: var(--accent); }
+.orch-dialog__field select {
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border-bright);
+  border-radius: 6px; padding: 7px 9px; font: inherit; font-size: 13px; max-width: 100%;
+}
+.orch-dialog__field select:focus { outline: none; border-color: var(--accent); }
+.orch-dialog__field select:disabled { opacity: 0.5; }
+.orch-dialog__check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
+.orch-dialog__check input { margin-top: 2px; accent-color: var(--accent); }
+.orch-dialog__rule { height: 1px; background: var(--border); }
+.orch-dialog__actions { display: flex; align-items: center; gap: 8px; }
+.orch-dialog__btn { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-bright); border-radius: 6px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.orch-dialog__btn:hover { background: var(--bg-hover); }
+.orch-dialog__btn:disabled { opacity: 0.45; cursor: default; }
+.orch-dialog__btn--primary { background: var(--accent); color: #04110d; border-color: var(--accent); }
+.orch-dialog__btn--danger { color: var(--error); border-color: var(--error); background: none; }
+.orch__icon-btn--on { color: var(--accent); }

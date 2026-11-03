@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop } from '@tabler/icons-react'
+import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from '../Chat/MessageBubble'
 import { ThinkingIndicator } from '../Chat/ThinkingIndicator'
 import { EnvPicker } from './EnvPicker'
+import { useWorkerMic } from '@/hooks/useWorkerMic'
+import { useWorkerTTS } from '@/hooks/useWorkerTTS'
+import { VoiceSettingsDialog } from './VoiceSettingsDialog'
+import { getHotword } from '@/lib/audioDevices'
 import type { AIProfile, Message, Runner } from '../../types'
 import './OrchestratorPanel.css'
 
@@ -16,6 +20,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000
 // AI belongs to its runner); a project without a choice starts from the last runner used.
 const LS = {
   open: 'orch_open',
+  autoRead: 'orch_autoread',
   runner: (pid: string) => `orch_runner:${pid}`,
   lastRunner: 'orch_runner',
   ai: (pid: string, runner: string) => `orch_ai:${pid}:${runner}`,
@@ -79,6 +84,45 @@ export function OrchestratorPanel() {
   const [session, setSession] = useState<{ id: string; last_active: string } | null>(null)
   const [error, setError] = useState('')
   const [input, setInput] = useState('')
+  // Dictation: what was typed before is kept; the phrase being spoken follows it.
+  const dictBase = useRef('')
+  const joinText = (a: string, b: string) => (a && b ? `${a.replace(/\s+$/, '')} ${b}` : a || b)
+  const mic = useWorkerMic({
+    onRealtime: text => setInput(joinText(dictBase.current, text)),
+    onFinal: (text, viaHotword) => {
+      if (!text.trim()) return
+      // a command said after the hotword is sent on its own; if the agent is busy it waits in the box
+      if (viaHotword && !runningRef.current) { sendText(text.trim()); return }
+      dictBase.current = joinText(dictBase.current, text)
+      setInput(dictBase.current)
+    },
+  })
+  // Voice output: a button per answer, plus an auto-read switch (off by default: Fish bills by text).
+  const tts = useWorkerTTS()
+  const [voiceOpen, setVoiceOpen] = useState(false)
+  const [speakingId, setSpeakingId] = useState<string | null>(null)
+  const [ttsConfigured, setTtsConfigured] = useState(true) // unknown until the dialog or a speak says otherwise
+  const [autoRead, setAutoRead] = useState(() => lsGet(LS.autoRead, '0') === '1')
+  const speakMessage = (id: string, content: string) => {
+    if (!ttsConfigured) { setVoiceOpen(true); return }
+    setSpeakingId(id)
+    void tts.speak(content)
+  }
+  useEffect(() => { api.getTTSSettings().then(s => setTtsConfigured(s.configured)).catch(() => {}) }, [])
+  useEffect(() => { if (tts.state === 'idle') setSpeakingId(null) }, [tts.state])
+  // the dictation must not hear the answer being spoken
+  useEffect(() => { mic.setMuted(tts.state !== 'idle') }, [tts.state, mic])
+  const hotword = getHotword()
+  const micTitle = {
+    off: hotword.enabled ? `Listen for the hotword${hotword.backend === 'vosk' ? ` “${hotword.phrase}”` : ' “hey jarvis”'}` : 'Dictate (Parakeet, local)',
+    loading: 'Loading the voice model…',
+    listening: 'Stop dictating',
+    armed: 'Waiting for the hotword (click to stop)',
+    awake: 'Listening for your command…',
+  }[mic.state]
+  const toggleMic = () => {
+    if (mic.state === 'off') { dictBase.current = input; void mic.start() } else mic.stop()
+  }
   const [runners, setRunners] = useState<Runner[]>([])
   const [profiles, setProfiles] = useState<AIProfile[]>([])
   const [runnersLoaded, setRunnersLoaded] = useState(false)
@@ -93,6 +137,15 @@ export function OrchestratorPanel() {
   const status = useStore(s => (sid ? s.sessionStatus[sid] : undefined) ?? 'idle')
   const sessionError = useStore(s => (sid ? s.sessionError[sid] : '') ?? '')
   const sending = useStore(s => (sid ? s.pendingSend[sid] : false) ?? false)
+  const liveMessageId = useStore(s => (sid ? s.liveMessageId[sid] : undefined))
+
+  // Auto-read: only an answer that arrives live, never the history when the chat opens.
+  useEffect(() => {
+    if (!autoRead || !liveMessageId) return
+    const m = useStore.getState().messages[sid ?? '']?.find(x => x.id === liveMessageId)
+    if (m && m.role === 'assistant' && ttsConfigured) speakMessage(m.id, m.content)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveMessageId])
   const { sendHookRespond } = useSessionWS(sid)
 
   const running = sending || status === 'running' || status === 'waiting_hook'
@@ -169,10 +222,12 @@ export function OrchestratorPanel() {
     if (el) el.scrollTop = el.scrollHeight
   }, [messages.length, streamingText, open])
 
-  const send = useCallback(() => {
-    const text = input.trim()
+  const runningRef = useRef(false)
+  runningRef.current = running
+  const sendText = (text: string) => {
     if (!text || !sid || running || runnerOffline) return
     setInput('')
+    dictBase.current = ''
     useStore.setState(s => ({ pendingSend: { ...s.pendingSend, [sid]: true } }))
     api.sendOrchestratorTurn(sid, text, { runnerId, aiProfileId: effectiveAi }).catch(e => {
       useStore.setState(s => {
@@ -181,7 +236,8 @@ export function OrchestratorPanel() {
         return { pendingSend: next, sessionError: { ...s.sessionError, [sid]: String(e?.message ?? e) } }
       })
     })
-  }, [input, sid, running, runnerId, effectiveAi, runnerOffline])
+  }
+  const send = () => sendText(input.trim())
 
   const cancel = () => { if (sid) api.cancelTurn(sid).catch(console.error) }
 
@@ -202,6 +258,17 @@ export function OrchestratorPanel() {
       <header className="orch__header">
         <span className="orch__title">Orchestrator</span>
         <CacheBadge cache={cache} />
+        <button
+          className={`orch__icon-btn${autoRead ? ' orch__icon-btn--on' : ''}`}
+          onClick={() => { const v = !autoRead; setAutoRead(v); lsSet(LS.autoRead, v ? '1' : '0'); if (!v) tts.stop(); if (v && !ttsConfigured) setVoiceOpen(true) }}
+          title={autoRead ? 'Reading answers aloud (click to stop)' : 'Read answers aloud automatically'}
+          aria-pressed={autoRead}
+        >
+          {autoRead ? <IconVolume size={16} /> : <IconVolumeOff size={16} />}
+        </button>
+        <button className="orch__icon-btn" onClick={() => setVoiceOpen(true)} title="Voice settings">
+          <IconSettings size={16} />
+        </button>
         <button className="orch__icon-btn" onClick={() => toggle(false)} title="Hide">
           <IconLayoutSidebarRightCollapse size={16} />
         </button>
@@ -214,7 +281,13 @@ export function OrchestratorPanel() {
         )}
         {messages.map(m => (
           <div key={m.id} className="orch__msg">
-            <MessageBubble message={m} sendHookRespond={sendHookRespond} />
+            <MessageBubble
+              message={m}
+              sendHookRespond={sendHookRespond}
+              isBeingRead={speakingId === m.id}
+              onSpeak={speakMessage}
+              onStopSpeaking={tts.stop}
+            />
           </div>
         ))}
         {streamingText && (
@@ -223,6 +296,7 @@ export function OrchestratorPanel() {
           </div>
         )}
         {running && !streamingText && <ThinkingIndicator />}
+        {tts.error && <div className="orch__error">{tts.error}</div>}
         {status === 'error' && sessionError && <div className="orch__error">{sessionError}</div>}
       </div>
 
@@ -233,7 +307,11 @@ export function OrchestratorPanel() {
           value={input}
           placeholder={sid ? 'Message the orchestrator…' : 'Loading…'}
           disabled={!sid}
-          onChange={e => setInput(e.target.value)}
+          onChange={e => {
+            setInput(e.target.value)
+            // typing while dictating: the dictation continues after what is now in the box
+            if (mic.state !== 'off') dictBase.current = e.target.value
+          }}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
             else if (e.key === 'Escape' && running) { e.preventDefault(); cancel() }
@@ -259,6 +337,14 @@ export function OrchestratorPanel() {
           <span className="orch__env-summary" title="Runner · AI">
             {runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'}
           </span>
+          <button
+            className={`orch__mic orch__mic--${mic.state}`}
+            onClick={toggleMic}
+            title={mic.error || micTitle}
+            aria-pressed={mic.state !== 'off'}
+          >
+            <IconMicrophone size={15} />
+          </button>
           {running ? (
             <button className="orch__send orch__send--stop" onClick={cancel} title="Stop (Esc)"><IconPlayerStop size={15} /></button>
           ) : (
@@ -266,6 +352,7 @@ export function OrchestratorPanel() {
           )}
         </div>
       </div>
+      {voiceOpen && <VoiceSettingsDialog onClose={() => setVoiceOpen(false)} onSaved={setTtsConfigured} />}
     </aside>
   )
 }

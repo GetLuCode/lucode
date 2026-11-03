@@ -19,6 +19,11 @@ async function getWSUrl(): Promise<string> {
   return `${protocol}//localhost:8090/ws`
 }
 
+// WebSocket of the voice-input bridge (same host as the main socket).
+export async function getSttWSUrl(): Promise<string> {
+  return (await getWSUrl()).replace(/\/ws$/, '/ws/stt')
+}
+
 function setupWSHandlers(ws: ReconnectingWebSocket): void {
   ws.onopen = () => console.log('[ws] connected')
   ws.onclose = () => console.log('[ws] disconnected, reconnecting...')
