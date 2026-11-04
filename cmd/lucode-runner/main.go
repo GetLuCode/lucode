@@ -11,7 +11,6 @@
 package main
 
 import (
-	_ "embed"
 	"flag"
 	"log"
 	"os"
@@ -30,11 +29,7 @@ import (
 	versionpkg "claude-orchestrator/internal/version"
 )
 
-// embeddedHook is the lucodehook binary baked into this executable at build time (see
-// build.sh). It is the approval hook claude calls before a tool runs; the hub answers it.
-//
-//go:embed embedded/lucodehook
-var embeddedHook []byte
+// embeddedHook (hook_<os>.go) is the lucodehook binary of this OS, baked in at build time.
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp-task" {
