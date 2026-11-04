@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { marked, type Token, type TokensList } from 'marked'
-import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces, IconZoomIn, IconZoomOut, IconZoomReset } from '@tabler/icons-react'
+import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces, IconZoomIn, IconZoomOut, IconZoomReset, IconArrowsMaximize, IconX } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
@@ -279,9 +280,37 @@ function MermaidDiagram({ source }: { source: string }) {
 const ZOOM_MIN = 0.5
 const ZOOM_MAX = 6
 
-// A drawn diagram with zoom: the buttons, Ctrl + wheel, and dragging to move around when it
-// is bigger than its box. Zoom 1 is the diagram fitted to the width of the chat.
+// A drawn diagram: zoomable in place, and openable in a view that covers the whole window.
 function DiagramView({ svg }: { svg: string }) {
+  const [full, setFull] = useState(false)
+  return (
+    <>
+      <ZoomBox svg={svg} extra={
+        <button type="button" onClick={() => setFull(true)} title="Full window" aria-label="Full window"><IconArrowsMaximize size={15} /></button>
+      } />
+      {full && createPortal(<DiagramOverlay svg={svg} onClose={() => setFull(false)} />, document.body)}
+    </>
+  )
+}
+
+function DiagramOverlay({ svg, onClose }: { svg: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+  return (
+    <div className="mermaid-overlay" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <ZoomBox svg={svg} full extra={
+        <button type="button" onClick={onClose} title="Close (Esc)" aria-label="Close"><IconX size={15} /></button>
+      } />
+    </div>
+  )
+}
+
+// The zoom of a diagram: the buttons, Ctrl + wheel, and dragging to move around when it is
+// bigger than its box. Zoom 1 is the diagram fitted to the width of its box.
+function ZoomBox({ svg, extra, full }: { svg: string; extra: React.ReactNode; full?: boolean }) {
   const [zoom, setZoom] = useState(1)
   const box = useRef<HTMLDivElement>(null)
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
@@ -316,11 +345,12 @@ function DiagramView({ svg }: { svg: string }) {
   const endDrag = () => { drag.current = null }
 
   return (
-    <div className="mermaid-diagram">
+    <div className={`mermaid-diagram${full ? ' mermaid-diagram--full' : ''}`}>
       <div className="mermaid-diagram__tools">
         <button type="button" onClick={() => step(1 / 1.25)} disabled={zoom <= ZOOM_MIN} title="Zoom out" aria-label="Zoom out"><IconZoomOut size={15} /></button>
         <button type="button" onClick={() => setZoom(1)} disabled={zoom === 1} title="Fit to width" aria-label="Reset zoom"><IconZoomReset size={15} /></button>
         <button type="button" onClick={() => step(1.25)} disabled={zoom >= ZOOM_MAX} title="Zoom in (Ctrl + wheel)" aria-label="Zoom in"><IconZoomIn size={15} /></button>
+        {extra}
       </div>
       <div
         ref={box}
@@ -330,7 +360,7 @@ function DiagramView({ svg }: { svg: string }) {
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
       >
-        <div className="mermaid-diagram__svg" style={{ width: `${zoom * 100}%`, minWidth: `${zoom * 560}px` }} dangerouslySetInnerHTML={{ __html: svg }} />
+        <div className="mermaid-diagram__svg" style={{ width: `${zoom * 100}%`, minWidth: full ? undefined : `${zoom * 560}px` }} dangerouslySetInnerHTML={{ __html: svg }} />
       </div>
     </div>
   )
