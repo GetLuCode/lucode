@@ -34,6 +34,7 @@ func main() {
 	host := flag.String("host", "", "hostname of the runner (default: the first other lucode peer)")
 	noTurns := flag.Bool("no-turns", false, "only check discovery and the RPC calls; run no turns (spends no tokens even with the real claude)")
 	flag.Parse()
+	*natsURL = natspkg.NormalizeURL(*natsURL)
 	log.SetFlags(0)
 
 	nc, err := nats.Connect(*natsURL, nats.Timeout(5*time.Second))

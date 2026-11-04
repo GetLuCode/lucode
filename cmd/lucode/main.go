@@ -53,6 +53,7 @@ func main() {
 	minimaxSubKey := flag.String("minimax-subscription-key", os.Getenv("MINIMAX_SUBSCRIPTION_KEY"), "MiniMax subscription API key for token plan monitoring")
 	hubOnly := flag.Bool("hub-only", false, "orchestrate only: run no claude on this machine (every project needs a runner)")
 	flag.Parse()
+	*natsURL = natspkg.NormalizeURL(*natsURL) // "hub" or "192.168.1.5" are enough
 
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
 		log.Fatalf("mkdir data: %v", err)
