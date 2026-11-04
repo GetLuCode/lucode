@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   IconPlus, IconX, IconTrash, IconArchive,
   IconArchiveOff, IconRobot, IconCalendar, IconLink,
-  IconTag, IconGripVertical, IconRefresh, IconCopy,
+  IconTag, IconGripVertical, IconRefresh, IconGitMerge, IconCopy,
 } from '@tabler/icons-react'
 import { copyText } from '../../lib/copyText'
 import { useStore } from '../../store'
@@ -513,6 +513,7 @@ interface CardItemProps {
   card: KanbanCard
   agents: Agent[]
   onClick: () => void
+  onReview?: () => void   // only for cards in the Review list: opens the merge dialog
   onDragStart: (e: React.DragEvent) => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
@@ -524,7 +525,7 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
   error:        { label: '✕ error',          color: '#ef4444' },
 }
 
-function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop }: CardItemProps) {
+function KanbanCardItem({ card, agents, onClick, onReview, onDragStart, onDragOver, onDrop }: CardItemProps) {
   const agent = agents.find(a => a.id === card.agent_id)
   // Live state of the agent working on this task (its chat session).
   const runStatus = useStore(s => {
@@ -553,6 +554,16 @@ function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop
       <p className="kcard__title">{card.title}</p>
       {card.description && (
         <p className="kcard__desc">{card.description}</p>
+      )}
+      {onReview && (
+        <button
+          className="kcard__review-btn"
+          draggable={false}
+          onClick={e => { e.stopPropagation(); onReview() }}
+          title="Check the branch and merge it"
+        >
+          <IconGitMerge size={12} /> Review &amp; merge
+        </button>
       )}
       <div className="kcard__meta">
         {hasDates && (
@@ -610,6 +621,7 @@ interface ColumnProps {
   cards: KanbanCard[]
   agents: Agent[]
   onCardClick: (c: KanbanCard) => void
+  onReviewCard: (c: KanbanCard) => void
   onAddCard: (listId: string, title: string) => void
   onRenameList: (id: string, name: string) => void
   onDeleteList: (id: string) => void
@@ -619,7 +631,7 @@ interface ColumnProps {
 
 function KanbanColumn({
   list, cards, agents,
-  onCardClick, onAddCard, onRenameList, onDeleteList,
+  onCardClick, onReviewCard, onAddCard, onRenameList, onDeleteList,
   onCardDragStart, onCardDrop,
 }: ColumnProps) {
   const [addingCard, setAddingCard] = useState(false)
@@ -682,6 +694,7 @@ function KanbanColumn({
             card={card}
             agents={agents}
             onClick={() => onCardClick(card)}
+            onReview={list.kind === 'review' ? () => onReviewCard(card) : undefined}
             onDragStart={() => onCardDragStart(card.id, list.id)}
             onDragOver={e => e.preventDefault()}
             onDrop={() => onCardDrop(list.id, card.id)}
@@ -944,7 +957,8 @@ export function KanbanView() {
             list={list}
             cards={visibleCards.filter(c => c.list_id === list.id).sort((a, b) => a.position - b.position)}
             agents={agents}
-            onCardClick={c => (list.kind === 'review' ? setReviewCard(c) : setSelectedCard(c))}
+            onCardClick={setSelectedCard}
+            onReviewCard={setReviewCard}
             onAddCard={handleAddCard}
             onRenameList={handleRenameList}
             onDeleteList={handleDeleteList}
