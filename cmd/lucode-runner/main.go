@@ -54,7 +54,9 @@ func main() {
 	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
 		log.Fatalf("data dir: %v", err)
 	}
-	db, err := dbpkg.Init(filepath.Join(*dataDir, "lucode-runner.db"))
+	// Same file name as lucode: a machine that ran the full lucode as a runner keeps its
+	// preconfigured AIs when it switches to this binary (with --data pointing at the old dir).
+	db, err := dbpkg.Init(filepath.Join(*dataDir, "lucode.db"))
 	if err != nil {
 		log.Fatalf("db init: %v", err)
 	}
