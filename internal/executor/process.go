@@ -169,7 +169,9 @@ func buildArgs(req TurnRequest) []string {
 	if req.Thinking != "" && req.Thinking != "adaptive" {
 		args = append(args, "--thinking="+req.Thinking)
 	}
-	if req.ClaudeSettings != "" {
+	if req.PermissionMode != "" {
+		args = append(args, "--permission-mode="+req.PermissionMode)
+	} else if req.ClaudeSettings != "" {
 		args = append(args, "--settings="+req.ClaudeSettings)
 	}
 	if len(req.Tools) > 0 {

@@ -255,6 +255,7 @@ export interface Agent {
   scope: 'project' | 'global'   // global agents are available in every project
   lucode_tools: string[]        // lucode tools the agent has (task_*, agent_list, send_to_agent, task_info)
   persistent: boolean           // keep the claude -p process alive between messages
+  auto_mode: boolean            // claude --permission-mode auto: no lucode approval requests
   reports_to: string            // id of the supervising agent ('' = none)
   runner_id: string             // runner the agent works on ('' = the project's)
   ai_profile_id: string         // preconfigured AI of that runner ('' = the project's)

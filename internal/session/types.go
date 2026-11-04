@@ -66,6 +66,7 @@ type TurnOptions struct {
 	AgentName    string
 	Tools        []string // built-in tools the agent may use (claude names); empty = all
 	Persistent   bool     // keep the claude process alive between turns (Executor "claude" only)
+	AutoMode     bool     // claude --permission-mode auto: no approval hook (Executor "claude" only)
 	RunnerID     string   // run the turn on this peer runner instead of here ("" = this instance)
 	AIProfileID  string   // preconfigured AI of that runner; it resolves the claude_config_dir
 	LucodeTools  []string // lucode tools the agent has (task_*, agent_list, ...); nil = all, empty = none

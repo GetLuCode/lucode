@@ -73,6 +73,7 @@ func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpk
 		AgentName:       agent.Name,
 		Tools:           agent.Tools,
 		Persistent:      agent.Persistent && agent.Executor == "claude",
+		AutoMode:        agent.AutoMode && agent.Executor == "claude",
 		LucodeTools:     agent.LucodeTools,
 	}, nil
 }

@@ -620,6 +620,7 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		opts.AgentName = agent.Name
 		opts.Tools = agent.Tools
 		opts.Persistent = agent.Persistent && agent.Executor == "claude"
+		opts.AutoMode = agent.AutoMode && agent.Executor == "claude"
 		opts.LucodeTools = agent.LucodeTools
 		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
 			opts.SystemPrompt = agentSystemPrompt(*agent, card, h.supervisorName(*agent))
@@ -2334,6 +2335,7 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Tools       []string `json:"tools"`
 		Executor    string   `json:"executor"`
 		Persistent  bool     `json:"persistent"`
+		AutoMode    bool     `json:"auto_mode"`
 		ReportsTo   string   `json:"reports_to"`
 		Scope       string   `json:"scope"`        // "project" (default) or "global"
 		LucodeTools []string `json:"lucode_tools"` // nil = all
@@ -2372,6 +2374,7 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Model:       body.Model,
 		Executor:    body.Executor,
 		Persistent:  body.Persistent && body.Executor == "claude",
+		AutoMode:    body.AutoMode && body.Executor == "claude",
 		ReportsTo:   body.ReportsTo,
 		RunnerID:    body.RunnerID,
 		AIProfileID: body.AIProfileID,
@@ -2414,6 +2417,7 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Tools       []string `json:"tools"`
 		Executor    *string  `json:"executor"`
 		Persistent  *bool    `json:"persistent"`
+		AutoMode    *bool    `json:"auto_mode"`
 		ReportsTo   *string  `json:"reports_to"`
 		Scope       *string  `json:"scope"`      // "project" | "global"
 		ProjectID   *string  `json:"project_id"` // needed when a global agent becomes project-only
@@ -2440,6 +2444,9 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Persistent != nil {
 		a.Persistent = *body.Persistent
+	}
+	if body.AutoMode != nil {
+		a.AutoMode = *body.AutoMode
 	}
 	if body.Scope != nil {
 		switch *body.Scope {
@@ -2488,6 +2495,7 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		a.Tools = body.Tools
 	}
 	a.Persistent = a.Persistent && a.Executor == "claude" // only the claude CLI can stay alive
+	a.AutoMode = a.AutoMode && a.Executor == "claude"     // --permission-mode is a claude CLI flag
 	if err := dbpkg.UpdateAgent(h.db, a); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

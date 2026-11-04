@@ -138,6 +138,7 @@ interface AgentFormData {
   tools: string[]
   executor: 'aiapi' | 'claude'
   persistent: boolean
+  auto_mode: boolean
   reports_to: string
   scope: 'project' | 'global'
   lucode_tools: string[]
@@ -153,6 +154,7 @@ const EMPTY_FORM: AgentFormData = {
   tools: [...DEFAULT_TOOLS],
   executor: 'aiapi',
   persistent: false,
+  auto_mode: false,
   reports_to: '',
   scope: 'project',
   lucode_tools: LUCODE_TOOLS.map(t => t.name),
@@ -299,7 +301,10 @@ function AgentForm({
                   // the claude CLI only runs Claude models
                   if (executor === 'claude' && form.model.startsWith('MiniMax')) setField('model', 'sonnet')
                   // only the claude CLI can keep a process alive
-                  if (executor !== 'claude') setField('persistent', false)
+                  if (executor !== 'claude') {
+                    setField('persistent', false)
+                    setField('auto_mode', false)
+                  }
                 }}
               >
                 {EXECUTORS.map(x => (
@@ -334,12 +339,23 @@ function AgentForm({
                 />
                 Keep it alive between messages
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 6, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
+                <input
+                  type="checkbox"
+                  checked={form.auto_mode && form.executor === 'claude'}
+                  disabled={form.executor !== 'claude'}
+                  onChange={e => setField('auto_mode', e.target.checked)}
+                />
+                Auto mode (no approval requests)
+              </label>
             </div>
           </div>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
             Reports to: this agent&apos;s supervisor is told when it finishes, gets blocked or fails, and can be
             reached with agent_message. Keep alive (claude -p only): replies faster, but each active task holds a
             claude process in memory; it exits by itself after 30 idle minutes and the conversation resumes later.
+            Auto mode (claude only): claude decides by itself which tool calls are safe, so lucode never asks you to
+            approve them.
           </p>
 
           <div className="agent-form__row">
@@ -463,6 +479,7 @@ function AgentCard({
           <span className="agent-card__model">{modelLabel}</span>
           <span className="agent-card__model">{agent.executor === 'claude' ? 'claude -p' : 'aiapi'}</span>
           {agent.scope === 'global' && <span className="agent-card__model" title="Available in every project">global</span>}
+          {agent.auto_mode && <span className="agent-card__model" title="claude decides on its own which tools are safe; no approval requests">auto</span>}
           {agent.persistent && <span className="agent-card__model" title="Process stays alive between messages">live</span>}
           {supervisor && <span className="agent-card__model" title="Reports to">→ {supervisor}</span>}
         </div>
@@ -602,6 +619,7 @@ export function AgentsView() {
             tools: view.edit.tools,
             executor: view.edit.executor ?? 'aiapi',
             persistent: view.edit.persistent ?? false,
+            auto_mode: view.edit.auto_mode ?? false,
             reports_to: view.edit.reports_to ?? '',
             scope: view.edit.scope ?? 'project',
             lucode_tools: view.edit.lucode_tools ?? LUCODE_TOOLS.map(t => t.name),

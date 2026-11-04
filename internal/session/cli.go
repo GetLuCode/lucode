@@ -57,6 +57,15 @@ func InstallHookSettings(hookBinary []byte) string {
 	return settingsPath
 }
 
+// permissionModeOf is the claude --permission-mode of a turn ("" = the default
+// flow, where every tool call goes through lucode's approval hook).
+func permissionModeOf(opts TurnOptions) string {
+	if opts.AutoMode {
+		return "auto"
+	}
+	return ""
+}
+
 // writeTaskMCPConfig writes the MCP config that starts `lucode mcp-task` for
 // this session, giving the agent the task and teammate tools. Returns "" when it
 // cannot be written (the agent then just has no lucode tools).
@@ -129,6 +138,7 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 		Tools:              opts.Tools,
 		ClaudeConfigDir:    opts.ClaudeConfigDir,
 		ClaudeSettings:     m.claudeSettings,
+		PermissionMode:     permissionModeOf(opts),
 		NATSSettings:       m.backendNATSURL,
 		NATSCreds:          m.natsCreds,
 		ImageBase64:        opts.ImageBase64,

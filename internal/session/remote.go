@@ -91,6 +91,7 @@ func (m *Manager) runWithRemoteCLI(ctx context.Context, ps *ProcessState, opts T
 			Thinking:           opts.Thinking,
 			AppendSystemPrompt: opts.SystemPrompt,
 			Tools:              opts.Tools,
+			PermissionMode:     permissionModeOf(opts),
 			ImageBase64:        opts.ImageBase64,
 			ImageMediaType:     opts.ImageMediaType,
 		},

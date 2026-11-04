@@ -447,6 +447,8 @@ CREATE TABLE IF NOT EXISTS card_images (
 	// agents.runner_id / ai_profile_id: environment and preconfigured AI that override the project's (empty = inherit)
 	db.Exec(`ALTER TABLE agents ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE agents ADD COLUMN ai_profile_id TEXT NOT NULL DEFAULT ''`)
+	// agents.auto_mode — run claude with --permission-mode auto instead of asking through the PreToolUse hook
+	db.Exec(`ALTER TABLE agents ADD COLUMN auto_mode INTEGER NOT NULL DEFAULT 0`)
 
 	return nil
 }

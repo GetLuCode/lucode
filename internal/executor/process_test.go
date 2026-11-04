@@ -98,3 +98,22 @@ func TestUsageLimitResultIsReported(t *testing.T) {
 		t.Error("a normal result is not an error")
 	}
 }
+
+func TestAutoModeReplacesTheApprovalHook(t *testing.T) {
+	has := func(args []string, want string) bool {
+		for _, a := range args {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+	def := buildArgs(TurnRequest{SessionID: "s", ClaudeSettings: "hooks.json"})
+	if !has(def, "--settings=hooks.json") {
+		t.Errorf("by default the approval hook must be passed: %v", def)
+	}
+	auto := buildArgs(TurnRequest{SessionID: "s", ClaudeSettings: "hooks.json", PermissionMode: "auto"})
+	if !has(auto, "--permission-mode=auto") || has(auto, "--settings=hooks.json") {
+		t.Errorf("auto mode passes --permission-mode and not the hook: %v", auto)
+	}
+}
