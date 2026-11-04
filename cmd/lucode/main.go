@@ -136,6 +136,28 @@ func main() {
 	// Turns that were running on runners when this instance stopped: pick up their events.
 	manager.RecoverRunnerTurns()
 
+	// Persistent claude processes on runners: as a runner, answer which ones are alive;
+	// as a hub, follow the start/exit notices and ask each runner that shows up.
+	if err := bus.ServeRunnerProcesses(manager.RunnerProcesses); err != nil {
+		log.Printf("[runner] processes server: %v", err)
+	}
+	if err := manager.WatchRunnerProcesses(); err != nil {
+		log.Printf("[runner] processes watch: %v", err)
+	}
+	syncRunners := func(peers []natspkg.InstanceInfo) {
+		for _, p := range peers {
+			if p.Type == "lucode" {
+				go manager.SyncRunnerProcesses(p.ID)
+			}
+		}
+	}
+	prevPeersChange := bus.OnPeersChange
+	bus.OnPeersChange = func(peers []natspkg.InstanceInfo) {
+		prevPeersChange(peers)
+		syncRunners(peers)
+	}
+	syncRunners(bus.Peers()) // those already known before this callback existed
+
 	// Start RPC server after handler is created so it can serve remote requests
 	if err := bus.StartRPCServer(apipkg.Wrap(handler)); err != nil {
 		log.Printf("[rpc] start error: %v", err)

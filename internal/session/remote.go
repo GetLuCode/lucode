@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	dbpkg "claude-orchestrator/internal/db"
@@ -377,16 +378,23 @@ func (m *Manager) serveRemoteLive(ctx context.Context, req execpkg.TurnRequest, 
 		rl = &remoteLive{}
 		rl.setTurn(send)
 		cur := rl
-		live, d, err := execpkg.StartLive(req, rl.publish, func() { dropRemoteLive(sessID, cur) })
+		var pid atomic.Int64 // known once the process is started; the exit notice carries it
+		live, d, err := execpkg.StartLive(req, rl.publish, func() {
+			dropRemoteLive(sessID, cur)
+			// Whatever the reason (idle timeout, crash, close, kill): the hub is told.
+			m.bus.PublishRunnerProcess(natspkg.RunnerProcess{SessionID: sessID, Alive: false, PID: int(pid.Load())})
+		})
 		if err != nil {
 			send(map[string]any{"type": "error", "session_id": sessID, "message": err.Error()})
 			send(map[string]any{"type": "session_status", "session_id": sessID, "status": "error"})
 			return
 		}
 		rl.live, done = live, d
+		pid.Store(int64(live.PID()))
 		remoteMu.Lock()
 		remoteLives[sessID] = rl
 		remoteMu.Unlock()
+		m.bus.PublishRunnerProcess(natspkg.RunnerProcess{SessionID: sessID, Alive: true, PID: live.PID()})
 	}
 
 	select {

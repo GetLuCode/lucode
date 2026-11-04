@@ -31,6 +31,10 @@ type Manager struct {
 	lives  map[string]*execpkg.Live
 	// remoteRunnerOf: runner holding the persistent process of a session run remotely.
 	remoteRunnerOf map[string]string
+	// remotePID / remoteAt: pid of that process (0 until the runner says) and the time
+	// of the last notice about it, to drop stale ones. Guarded by liveMu like the rest.
+	remotePID map[string]int
+	remoteAt  map[string]int64
 
 	// OnTurnEnd runs after a turn finishes and the session is free again (used to
 	// deliver messages other agents queued for it).
@@ -75,6 +79,8 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 		procs:              make(map[string]*ProcessState),
 		lives:              make(map[string]*execpkg.Live),
 		remoteRunnerOf:     make(map[string]string),
+		remotePID:          make(map[string]int),
+		remoteAt:           make(map[string]int64),
 		turnCounters:       make(map[string]int),
 		pendingApprovals:   make(map[string]chan hookResponse),
 		deniedThisTurn:     make(map[string]bool),

@@ -5,7 +5,7 @@ package session
 // already tells, so it is not reported here.
 type ProcessInfo struct {
 	Alive  bool   `json:"alive"`
-	PID    int    `json:"pid,omitempty"`    // local processes only
+	PID    int    `json:"pid,omitempty"`    // on the machine that runs it (the runner's, when Runner is set)
 	Runner string `json:"runner,omitempty"` // the runner holding it, when it is not this instance
 }
 
@@ -17,10 +17,10 @@ func (m *Manager) ProcessInfoOf(sessID string) ProcessInfo {
 		return ProcessInfo{Alive: true, PID: l.PID()}
 	}
 	m.liveMu.Lock()
-	runner := m.remoteRunnerOf[sessID]
+	runner, pid := m.remoteRunnerOf[sessID], m.remotePID[sessID]
 	m.liveMu.Unlock()
 	if runner != "" {
-		return ProcessInfo{Alive: true, Runner: runner}
+		return ProcessInfo{Alive: true, PID: pid, Runner: runner}
 	}
 	return ProcessInfo{}
 }

@@ -237,6 +237,7 @@ func (m *Manager) CloseLive(sessID string) {
 	delete(m.lives, sessID)
 	runner := m.remoteRunnerOf[sessID]
 	delete(m.remoteRunnerOf, sessID)
+	delete(m.remotePID, sessID)
 	m.liveMu.Unlock()
 	if runner != "" {
 		m.bus.RunnerClose(runner, sessID) // the process lives on that runner
