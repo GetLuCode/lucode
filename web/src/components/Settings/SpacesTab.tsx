@@ -18,14 +18,13 @@ function roleLabel(info: InstanceInfo) {
   return 'lucode'
 }
 
-function InstanceCard({ info, badge }: { info: InstanceInfo; badge?: string }) {
+function InstanceCard({ info }: { info: InstanceInfo }) {
   const elapsed = Math.round((Date.now() - new Date(info.started_at).getTime()) / 60000)
   const uptime = elapsed < 60 ? `${elapsed}m` : `${Math.round(elapsed / 60)}h`
   return (
     <div className="instance-card">
       <div className="instance-card__header">
         <span className="instance-card__type">{roleLabel(info)}</span>
-        {badge && <span className="instance-card__badge">{badge}</span>}
       </div>
       <div className="instance-card__hostname">{info.hostname}</div>
       <div className="instance-card__meta">{osLabel(info.os)} · up {uptime}</div>
@@ -50,7 +49,7 @@ export function SpacesTab() {
         <h3 className="spaces-section__title">Discovered Instances</h3>
         <div className="spaces-instances">
           {instances.self && (
-            <InstanceCard info={instances.self} badge="this" />
+            <InstanceCard info={instances.self} />
           )}
           {instances.peers.map(p => (
             <InstanceCard key={p.id} info={p} />
