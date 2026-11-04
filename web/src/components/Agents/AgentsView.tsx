@@ -139,6 +139,8 @@ interface AgentFormData {
   executor: 'aiapi' | 'claude'
   persistent: boolean
   auto_mode: boolean
+  worktree: boolean
+  worktree_base_ref: 'head' | 'fresh'
   reports_to: string
   scope: 'project' | 'global'
   lucode_tools: string[]
@@ -155,6 +157,8 @@ const EMPTY_FORM: AgentFormData = {
   executor: 'aiapi',
   persistent: false,
   auto_mode: false,
+  worktree: false,
+  worktree_base_ref: 'head',
   reports_to: '',
   scope: 'project',
   lucode_tools: LUCODE_TOOLS.map(t => t.name),
@@ -358,6 +362,26 @@ function AgentForm({
                 />
                 Auto mode (no approval requests)
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 6, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
+                <input
+                  type="checkbox"
+                  checked={form.worktree && form.executor === 'claude'}
+                  disabled={form.executor !== 'claude'}
+                  onChange={e => setField('worktree', e.target.checked)}
+                />
+                Work in a git worktree
+              </label>
+              {form.worktree && form.executor === 'claude' && (
+                <select
+                  className="agent-form__input"
+                  style={{ marginTop: 6 }}
+                  value={form.worktree_base_ref}
+                  onChange={e => setField('worktree_base_ref', e.target.value as 'head' | 'fresh')}
+                >
+                  <option value="head">Branch off the current HEAD</option>
+                  <option value="fresh">Branch off a fresh origin default branch</option>
+                </select>
+              )}
             </div>
           </div>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
@@ -365,7 +389,9 @@ function AgentForm({
             reached with agent_message. Keep alive (claude -p only): replies faster, but each active task holds a
             claude process in memory; it exits by itself after 30 idle minutes and the conversation resumes later.
             Auto mode (claude only): claude decides by itself which tool calls are safe, so lucode never asks you to
-            approve them.
+            approve them. Worktree (claude only): the agent works in its own git worktree, so parallel agents do not
+            step on each other; the base is passed as worktree.baseRef (head = where the project is now, fresh =
+            the remote default branch).
           </p>
 
           <div className="agent-form__row">
@@ -490,6 +516,7 @@ function AgentCard({
           <span className="agent-card__model">{agent.executor === 'claude' ? 'claude -p' : 'aiapi'}</span>
           {agent.scope === 'global' && <span className="agent-card__model" title="Available in every project">global</span>}
           {agent.auto_mode && <span className="agent-card__model" title="claude decides on its own which tools are safe; no approval requests">auto</span>}
+          {agent.worktree && <span className="agent-card__model" title={`works in its own git worktree (baseRef=${agent.worktree_base_ref})`}>worktree</span>}
           {agent.persistent && <span className="agent-card__model" title="Process stays alive between messages">live</span>}
           {supervisor && <span className="agent-card__model" title="Reports to">→ {supervisor}</span>}
         </div>
@@ -630,6 +657,8 @@ export function AgentsView() {
             executor: view.edit.executor ?? 'aiapi',
             persistent: view.edit.persistent ?? false,
             auto_mode: view.edit.auto_mode ?? false,
+            worktree: view.edit.worktree ?? false,
+            worktree_base_ref: view.edit.worktree_base_ref ?? 'head',
             reports_to: view.edit.reports_to ?? '',
             scope: view.edit.scope ?? 'project',
             lucode_tools: view.edit.lucode_tools ?? LUCODE_TOOLS.map(t => t.name),

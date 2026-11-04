@@ -256,6 +256,8 @@ export interface Agent {
   lucode_tools: string[]        // lucode tools the agent has (task_*, agent_list, send_to_agent, task_info)
   persistent: boolean           // keep the claude -p process alive between messages
   auto_mode: boolean            // claude --permission-mode auto: no lucode approval requests
+  worktree: boolean             // claude --worktree: work in its own git worktree
+  worktree_base_ref: 'head' | 'fresh' // worktree.baseRef: branch off the current HEAD (default) or a fresh remote default branch
   reports_to: string            // id of the supervising agent ('' = none)
   runner_id: string             // runner the agent works on ('' = the project's)
   ai_profile_id: string         // preconfigured AI of that runner ('' = the project's)

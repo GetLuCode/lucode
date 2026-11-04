@@ -139,6 +139,8 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 		ClaudeConfigDir:    opts.ClaudeConfigDir,
 		ClaudeSettings:     m.claudeSettings,
 		PermissionMode:     permissionModeOf(opts),
+		Worktree:           opts.Worktree,
+		WorktreeBaseRef:    opts.WorktreeBaseRef,
 		NATSSettings:       m.backendNATSURL,
 		NATSCreds:          m.natsCreds,
 		ImageBase64:        opts.ImageBase64,
