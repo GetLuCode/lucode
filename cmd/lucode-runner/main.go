@@ -4,7 +4,7 @@
 // through JetStream, keeps the persistent claude processes between turns, and answers the
 // few requests a hub makes of a machine (browse folders, manage preconfigured AIs).
 //
-//	lucode-runner --nats-url hub-host --working-dir ~/dev
+//	lucode-runner --nats hub-host --working-dir ~/dev
 //
 // A runner keeps its conversations alive when the hub restarts: see internal/natsbus
 // (runner_exec.go) and internal/session (remote.go).
@@ -43,7 +43,8 @@ func main() {
 		return
 	}
 
-	natsURL := flag.String("nats-url", "nats://127.0.0.1:4222", "NATS server of the hub: host, host:port or a full URL (needs JetStream: nats-server -js)")
+	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "NATS server of the hub: host, host:port or a full URL (needs JetStream: nats-server -js)")
+	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
 	natsCreds := flag.String("nats-creds", "", "path to NATS credentials file (.creds)")
 	dataDir := flag.String("data", defaultDataDir(), "directory of the runner's database and identity")
 	workingDir := flag.String("working-dir", "", "root folder hubs may browse when choosing a project dir (default: home)")

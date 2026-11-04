@@ -43,7 +43,8 @@ func main() {
 	}
 
 	port := flag.Int("port", 8090, "HTTP listen port")
-	natsURL := flag.String("nats-url", "nats://127.0.0.1:4222", "External NATS server URL")
+	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "External NATS server: host, host:port or a full URL")
+	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
 	natsCreds := flag.String("nats-creds", "", "Path to NATS credentials file (.creds)")
 	aiAPIURL  := flag.String("aiapi-url", "http://localhost:8091", "URL of the aiapi service (Claude CLI + Ollama + Anthropic executor)")
 	authURL   := flag.String("auth-url", "http://localhost:8092", "URL of the centralized auth service")

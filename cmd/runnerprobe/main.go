@@ -2,7 +2,7 @@
 // discovers the runner, lists a directory and its preconfigured AIs through the RPC
 // bridge, and runs two turns of a persistent agent session.
 //
-//	runnerprobe --nats-url nats://192.168.1.5:4222 --dir /home/me/dev [--host name]
+//	runnerprobe --nats 192.168.1.5 --dir /home/me/dev [--host name]
 //
 // With the runner using a fake claude (LUCODE_CLAUDE_BIN, see internal/fakeclaude)
 // the turns replay a recording and spend no tokens.
@@ -29,7 +29,8 @@ import (
 )
 
 func main() {
-	natsURL := flag.String("nats-url", "nats://127.0.0.1:4222", "NATS server")
+	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "NATS server: host, host:port or a full URL")
+	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
 	dir := flag.String("dir", "", "directory of the runner to list")
 	host := flag.String("host", "", "hostname of the runner (default: the first other lucode peer)")
 	noTurns := flag.Bool("no-turns", false, "only check discovery and the RPC calls; run no turns (spends no tokens even with the real claude)")
