@@ -150,6 +150,19 @@ func (h *Handler) sttSetModel(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, resp)
 }
 
+// sttVoskModel serves the Vosk Spanish model as a .tar.gz for the browser's wasm hotword
+// detector. The browser keeps it in its HTTP cache (ServeFile sends Last-Modified).
+func (h *Handler) sttVoskModel(w http.ResponseWriter, r *http.Request) {
+	path, err := stt.VoskModelArchive()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Cache-Control", "no-cache") // revalidate each time; 304 when unchanged
+	http.ServeFile(w, r, path)
+}
+
 func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

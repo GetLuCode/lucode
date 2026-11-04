@@ -123,6 +123,16 @@ export const speakRequest = (text: string, signal: AbortSignal) => {
   if (token) headers['Authorization'] = `Bearer ${token}`
   return fetch(`${BASE}/api/tts`, { method: 'POST', headers, body: JSON.stringify({ text }), signal })
 }
+// The Vosk Spanish model (.tar.gz) for the hotword detector that runs in the browser. It is fetched here,
+// with the login token, because vosk-browser's worker cannot send headers; the result is a blob: URL.
+export const fetchVoskModel = async (): Promise<string> => {
+  const headers: Record<string, string> = {}
+  const token = getAuthToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${BASE}/api/stt/vosk-model.tar.gz`, { headers })
+  if (!res.ok) throw new Error(`hotword model: ${(await res.text()).trim() || res.status}`)
+  return URL.createObjectURL(await res.blob())
+}
 // The persistent claude process of a session: is it alive, and close it (the next message starts a new one).
 export const getSessionProcess = (id: string) => req<ClaudeProcess>('GET', `/api/sessions/${id}/process`)
 export const closeSessionProcess = (id: string) => req<void>('DELETE', `/api/sessions/${id}/process`)

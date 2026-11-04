@@ -1,0 +1,21 @@
+<!doctype html><meta charset=utf-8><title>vosk wasm</title>
+<script src="vosk.js"></script>
+<script>
+window.runTest = async (wavUrl, grammar) => {
+  const t0 = performance.now(), log = [];
+  const model = await Vosk.createModel('model-small-es.tar.gz');
+  const tLoad = performance.now() - t0;
+  const rec = (grammar ? new model.KaldiRecognizer(16000, JSON.stringify(grammar)) : new model.KaldiRecognizer(16000));
+  const finals = [];
+  rec.on('result', m => finals.push(m.result.text));
+  rec.on('error', m => log.push('error ' + m.error));
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  const buf = await ctx.decodeAudioData(await (await fetch(wavUrl)).arrayBuffer());
+  const t1 = performance.now();
+  rec.acceptWaveform(buf);
+  const final = await new Promise(res => { rec.on('result', m => res(m.result.text)); rec.retrieveFinalResult(); });
+  const tDec = performance.now() - t1;
+  model.terminate();
+  return { wavUrl, text: final, finals, loadMs: Math.round(tLoad), decodeMs: Math.round(tDec), audioSec: buf.duration, log };
+};
+</script>
