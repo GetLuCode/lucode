@@ -184,6 +184,10 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 		Wake        bool   `json:"wake"`
 		WakeBackend string `json:"wake_backend"`
 		WakePhrase  string `json:"wake_phrase"`
+		// WakeExternal: the page detects the hotword itself (Vosk in the browser) and sends audio only
+		// after it. The worker then frees the model from the GPU while the page waits, and the page
+		// says {"type":"awake"} / {"type":"armed"} to bring it back or let it go.
+		WakeExternal bool `json:"wake_external"`
 		// How the worker decides a phrase is over; each one that is absent keeps its default.
 		SilenceSeconds *float64 `json:"silence_seconds"` // audio silence, 0.2-5
 		StableSeconds  *float64 `json:"stable_seconds"`  // partial text unchanged, 0 = off, 0.3-5
@@ -197,6 +201,10 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 		send(map[string]any{"type": "error", "text": "wake_backend must be vosk or oww"})
 		return
 	}
+	if start.WakeExternal && start.Wake {
+		send(map[string]any{"type": "error", "text": "wake_external and wake are exclusive"})
+		return
+	}
 	if start.SampleRate < 8000 || start.SampleRate > 48000 {
 		send(map[string]any{"type": "error", "text": "sample_rate must be between 8000 and 48000"})
 		return
@@ -207,8 +215,8 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 
 	dbg := newSTTDebug() // ~/.lucode/stt-bridge.log, see sttdebug.go
 	defer dbg.Close()
-	dbg.Printf("start: sample_rate=%d wake=%v backend=%q silence=%s stable=%s repeats=%s",
-		start.SampleRate, start.Wake, start.WakeBackend, ptr(start.SilenceSeconds), ptr(start.StableSeconds), ptr(start.StableRepeats))
+	dbg.Printf("start: sample_rate=%d wake=%v backend=%q external=%v silence=%s stable=%s repeats=%s",
+		start.SampleRate, start.Wake, start.WakeBackend, start.WakeExternal, ptr(start.SilenceSeconds), ptr(start.StableSeconds), ptr(start.StableRepeats))
 
 	send(map[string]any{"type": "loading"})
 	c, _, err := stt.Ensure(ctx)
@@ -222,13 +230,18 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// takeover: a session left over from a closed tab must not block this one
-	sess, err := c.Listen(ctx, stt.ListenConfig{
+	cfg := stt.ListenConfig{
 		SampleRate: start.SampleRate, Takeover: true,
 		Wake: start.Wake, WakeBackend: start.WakeBackend, WakePhrase: start.WakePhrase,
 		SilenceSeconds: clampSilence(start.SilenceSeconds),
 		StableSeconds:  stableSecondsOr(start.StableSeconds),
 		StableRepeats:  clampRepeats(start.StableRepeats),
-	})
+	}
+	if start.WakeExternal {
+		// the page waits for the hotword: the worker holds the model out of the GPU meanwhile
+		cfg.Wake, cfg.WakeBackend, cfg.Park, cfg.Unload = true, "external", true, true
+	}
+	sess, err := c.Listen(ctx, cfg)
 	if err != nil {
 		send(map[string]any{"type": "error", "text": err.Error()})
 		return
@@ -331,9 +344,18 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 			var m struct {
 				Type string `json:"type"`
 			}
-			if json.Unmarshal(data, &m) == nil && m.Type == "flush" {
+			if json.Unmarshal(data, &m) != nil {
+				break
+			}
+			switch m.Type {
+			case "flush":
 				dbg.Printf("pagina: flush")
 				_ = sess.Flush()
+			case "awake", "armed": // only with wake_external: bring the model back / let it go
+				if start.WakeExternal {
+					dbg.Printf("pagina: %s", m.Type)
+					_ = sess.SetPark(m.Type == "armed")
+				}
 			}
 		}
 	}

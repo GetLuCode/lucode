@@ -163,6 +163,8 @@ export function useWorkerMic(handlers: Handlers) {
         awake = false
         clearTimeout(res.current.wakeTimer)
         if (flush && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'flush' }))
+        // waiting again: the worker may free its model from the GPU after a while
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'armed' }))
         wake?.rearm()
         setState('armed')
       }
@@ -170,6 +172,8 @@ export function useWorkerMic(handlers: Handlers) {
         if (awake || !ready) return
         awake = true; speechSeen = false
         setState('awake')
+        // first the model comes back to the GPU (it loads while the user speaks), then the audio
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'awake' }))
         if (ws.readyState === WebSocket.OPEN) for (const b of after) ws.send(b) // said while Vosk waited for the silence
         // nobody spoke after the hotword: go back to waiting (and close what the worker may hold)
         res.current.wakeTimer = setTimeout(() => { if (!speechSeen) backToArmed(true) }, WAKE_TIMEOUT_MS)
@@ -185,6 +189,7 @@ export function useWorkerMic(handlers: Handlers) {
       wakeMode.current = hw.enabled
       ws.onopen = () => ws.send(JSON.stringify({
         type: 'start', sample_rate: ctx.sampleRate, ...tuningMessage(getSttTuning()),
+        ...(wake ? { wake_external: true } : {}), // the browser detects the hotword: the worker unloads its model while waiting
         ...(hw.enabled && !wake ? { wake: true, wake_backend: hw.backend, wake_phrase: hw.backend === 'vosk' ? hw.phrase : undefined } : {}),
       }))
       ws.onmessage = e => {

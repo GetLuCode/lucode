@@ -15,8 +15,8 @@ import (
 // The worker is the one of SttApp (a Python gRPC server). There is ONE shared worker per
 // machine, on a fixed port (50700) and without a token: it listens on 127.0.0.1 only and every
 // app that needs speech (lucode, SttApp) connects to whichever worker answers there. lucode
-// starts one only when nothing answers, detached so it outlives lucode (it frees itself after
-// 30 minutes without use), with Parakeet TDT 0.6B v3 (NeMo, fp16) on the GPU.
+// starts one only when nothing answers, detached so it outlives lucode (after 30 minutes without
+// use it drops the model from VRAM but stays running), with Parakeet TDT 0.6B v3 (NeMo, fp16) on the GPU.
 //
 // A worker that is already there is used as it is, whatever started it and with whatever
 // model: lucode never shuts it down or replaces it on its own. Only the user's explicit choice
@@ -34,7 +34,7 @@ const (
 	defaultPython = `E:\dev\testing\voice\.venv\Scripts\python.exe`
 	modelName     = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 	voskName      = "vosk-model-small-es-0.42"
-	idleSeconds   = 1800 // the worker frees its RAM by itself after 30 minutes without use
+	idleSeconds   = 1800 // 30 minutes without use: the GPU worker unloads its model, the CPU one exits
 )
 
 // Port is the gRPC port of the shared worker.
@@ -134,7 +134,14 @@ func ensure(ctx context.Context) (*Client, Info, error) {
 		return nil, Info{}, err
 	}
 
-	args := []string{"-u", script, "--port", fmt.Sprint(port), "--no-token", "--idle-timeout", fmt.Sprint(idleSeconds)}
+	// GPU model: after idleSeconds without use the worker drops the model from VRAM and stays up
+	// (it loads again when the next session starts). The CPU int8 model has no VRAM to free, so
+	// that worker still exits to free its RAM.
+	idleArg := "--idle-unload"
+	if chosen == "sherpa-int8" {
+		idleArg = "--idle-timeout"
+	}
+	args := []string{"-u", script, "--port", fmt.Sprint(port), "--no-token", idleArg, fmt.Sprint(idleSeconds)}
 	args = append(args, modelArgs(chosen, model)...)
 	if hasVosk {
 		args = append(args, "--vosk-model-dir", vosk)

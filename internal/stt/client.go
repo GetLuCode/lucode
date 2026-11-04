@@ -154,8 +154,14 @@ type ListenConfig struct {
 	// Hotword: only transcribe after the wake word. Backend is "vosk" (Phrase is the wake
 	// phrase) or "oww" (openWakeWord, "hey jarvis").
 	Wake        bool
-	WakeBackend string
+	WakeBackend string // "vosk", "oww", or "external" (the client detects the hotword itself; see SetPark)
 	WakePhrase  string
+	// Park: while waiting for the hotword the worker frees the GPU model (Unload: dropped from VRAM,
+	// not moved to CPU/RAM) after UnloadAfter seconds (nil = worker default, 30). It comes back when
+	// the hotword is heard, or, with WakeBackend "external", when the client calls SetPark(false).
+	Park        bool
+	Unload      bool
+	UnloadAfter *float64
 }
 
 func encodeConfig(cfg ListenConfig) []byte {
@@ -186,13 +192,39 @@ func encodeConfig(cfg ListenConfig) []byte {
 			m = protowire.AppendString(m, cfg.WakePhrase)
 		}
 	}
+	if cfg.Park {
+		m = protowire.AppendTag(m, 8, protowire.VarintType)
+		m = protowire.AppendVarint(m, 1)
+	}
 	if cfg.StableSeconds > 0 {
 		m = protowire.AppendTag(m, 9, protowire.Fixed64Type)
 		m = protowire.AppendFixed64(m, math.Float64bits(cfg.StableSeconds))
 	}
+	if cfg.Unload {
+		m = protowire.AppendTag(m, 10, protowire.VarintType)
+		m = protowire.AppendVarint(m, 1)
+	}
+	if cfg.UnloadAfter != nil {
+		m = protowire.AppendTag(m, 11, protowire.Fixed64Type)
+		m = protowire.AppendFixed64(m, math.Float64bits(*cfg.UnloadAfter))
+	}
 	if cfg.StableRepeats != nil {
 		m = protowire.AppendTag(m, 12, protowire.VarintType)
 		m = protowire.AppendVarint(m, uint64(*cfg.StableRepeats))
+	}
+	req := protowire.AppendTag(nil, 1, protowire.BytesType)
+	return protowire.AppendBytes(req, m)
+}
+
+// encodePark is a ListenConfig with only `park` set: sent in the middle of a session it changes
+// just that option (the worker keeps the rest).
+func encodePark(park bool) []byte {
+	var m []byte
+	m = protowire.AppendTag(m, 8, protowire.VarintType)
+	if park {
+		m = protowire.AppendVarint(m, 1)
+	} else {
+		m = protowire.AppendVarint(m, 0)
 	}
 	req := protowire.AppendTag(nil, 1, protowire.BytesType)
 	return protowire.AppendBytes(req, m)
@@ -280,6 +312,11 @@ func (s *Session) send(msg []byte) error {
 	defer s.sendMu.Unlock()
 	return s.stream.SendMsg(msg)
 }
+
+// SetPark turns the parking on or off during the session. With it off the worker brings the model
+// back to the GPU right away (loading it from disk if it was unloaded); with it on it frees it
+// again after the session's UnloadAfter. Only effective when the session was opened with Wake.
+func (s *Session) SetPark(park bool) error { return s.send(encodePark(park)) }
 
 // Flush closes the phrase in progress.
 func (s *Session) Flush() error { return s.send(encodeFlush()) }
