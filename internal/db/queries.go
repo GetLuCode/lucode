@@ -1641,19 +1641,22 @@ type CardReview struct {
 	Branch       string `json:"branch"`
 	WorktreePath string `json:"worktree_path"`
 	RepoPath     string `json:"repo_path"`
+	// RunnerID is the runner that holds RepoPath and WorktreePath: it is the one that
+	// runs git on them. "" = this instance.
+	RunnerID string `json:"runner_id,omitempty"`
 }
 
 func SaveCardReview(db *sql.DB, r CardReview) error {
-	_, err := db.Exec(`INSERT INTO card_reviews (card_id, branch, worktree_path, repo_path) VALUES (?,?,?,?)
-		ON CONFLICT(card_id) DO UPDATE SET branch=excluded.branch, worktree_path=excluded.worktree_path, repo_path=excluded.repo_path`,
-		r.CardID, r.Branch, r.WorktreePath, r.RepoPath)
+	_, err := db.Exec(`INSERT INTO card_reviews (card_id, branch, worktree_path, repo_path, runner_id) VALUES (?,?,?,?,?)
+		ON CONFLICT(card_id) DO UPDATE SET branch=excluded.branch, worktree_path=excluded.worktree_path, repo_path=excluded.repo_path, runner_id=excluded.runner_id`,
+		r.CardID, r.Branch, r.WorktreePath, r.RepoPath, r.RunnerID)
 	return err
 }
 
 func GetCardReview(db *sql.DB, cardID string) (CardReview, error) {
 	var r CardReview
-	err := db.QueryRow(`SELECT card_id, branch, worktree_path, repo_path FROM card_reviews WHERE card_id=?`, cardID).
-		Scan(&r.CardID, &r.Branch, &r.WorktreePath, &r.RepoPath)
+	err := db.QueryRow(`SELECT card_id, branch, worktree_path, repo_path, runner_id FROM card_reviews WHERE card_id=?`, cardID).
+		Scan(&r.CardID, &r.Branch, &r.WorktreePath, &r.RepoPath, &r.RunnerID)
 	return r, err
 }
 

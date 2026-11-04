@@ -464,6 +464,9 @@ CREATE TABLE IF NOT EXISTS card_reviews (
 	}
 
 	// Column additions for tables created above (idempotent).
+	// card_reviews.runner_id — the runner whose disk holds the repository and worktree;
+	// git runs there, never on the hub. "" = this instance (legacy rows)
+	db.Exec(`ALTER TABLE card_reviews ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
 	// kanban_lists.kind — the workflow role of a list ("backlog", "todo", "inprogress",
 	// "review", "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
 	db.Exec(`ALTER TABLE kanban_lists ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)

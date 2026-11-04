@@ -50,13 +50,14 @@ func gitIn(dir string, args ...string) (string, error) {
 // resolveReview finds the worktree a task session worked in: the cwd its claude
 // process reported (--worktree) or else the worktree its transcript shows it created.
 func (h *Handler) resolveReview(sessID, cardID string) (dbpkg.CardReview, bool) {
+	runner := h.sessionRunner(sessID)
 	if h.manager != nil {
 		if ws := h.manager.WorkspaceOf(sessID); ws != nil {
 			path, _ := ws["path"].(string)
 			branch, _ := ws["branch"].(string)
 			repo, _ := ws["repo"].(string)
 			if wt, _ := ws["worktree"].(bool); wt && path != "" && branch != "" && repo != "" {
-				return dbpkg.CardReview{CardID: cardID, Branch: branch, WorktreePath: path, RepoPath: repo}, true
+				return dbpkg.CardReview{CardID: cardID, Branch: branch, WorktreePath: path, RepoPath: repo, RunnerID: runner}, true
 			}
 		}
 	}
@@ -64,11 +65,12 @@ func (h *Handler) resolveReview(sessID, cardID string) (dbpkg.CardReview, bool) 
 	if path == "" || branch == "" || !filepath.IsAbs(path) {
 		return dbpkg.CardReview{}, false
 	}
-	common, err := gitIn(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil || filepath.Base(common) != ".git" {
+	// which repository the worktree belongs to is a fact of the disk it is on
+	repo, ok := h.repoOn(runner, path)
+	if !ok {
 		return dbpkg.CardReview{}, false
 	}
-	return dbpkg.CardReview{CardID: cardID, Branch: branch, WorktreePath: path, RepoPath: filepath.Dir(filepath.FromSlash(common))}, true
+	return dbpkg.CardReview{CardID: cardID, Branch: branch, WorktreePath: path, RepoPath: repo, RunnerID: runner}, true
 }
 
 // ReviewStatus is what the review dialog shows about a task's branch.
@@ -157,7 +159,7 @@ func (h *Handler) getCardReview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	jsonResp(w, http.StatusOK, reviewStatus(rv))
+	jsonResp(w, http.StatusOK, h.reviewStatusOf(rv))
 }
 
 // mergeCardReview merges the task's branch into the main checkout's branch, removes
@@ -168,47 +170,21 @@ func (h *Handler) mergeCardReview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	st := reviewStatus(rv)
-	switch {
-	case st.Error != "":
-		http.Error(w, st.Error, http.StatusConflict)
-		return
-	case st.Conflicts:
-		http.Error(w, "the branch conflicts with "+st.Base+": send it to the agent to resolve", http.StatusConflict)
-		return
-	case st.Dirty:
-		http.Error(w, "the worktree has uncommitted changes: send it to the agent to commit them", http.StatusConflict)
+	// the runner that holds the repository does the git work; the hub keeps the state
+	res, code, err := h.mergeOnRunner(rv, card.Title)
+	if err != nil {
+		http.Error(w, err.Error(), code)
 		return
 	}
-	var warnings []string
-	if st.Ahead > 0 {
-		if _, err := gitIn(rv.RepoPath, "merge", "--no-ff", "-m", "Merge task: "+card.Title, rv.Branch); err != nil {
-			_, _ = gitIn(rv.RepoPath, "merge", "--abort")
-			http.Error(w, "git merge failed: "+err.Error(), http.StatusConflict)
-			return
-		}
-	}
-	if _, err := os.Stat(rv.WorktreePath); err == nil {
-		// claude locks the worktrees of its sessions and never unlocks them, and git
-		// will not remove a locked worktree with a single --force. The work is merged
-		// by now, so the lock has nothing left to protect. Not being locked is an
-		// error we ignore.
-		_, _ = gitIn(rv.RepoPath, "worktree", "unlock", rv.WorktreePath)
-		if _, err := gitIn(rv.RepoPath, "worktree", "remove", "--force", rv.WorktreePath); err != nil {
-			warnings = append(warnings, "could not remove the worktree: "+err.Error())
-		}
-	}
-	if _, err := os.Stat(rv.WorktreePath); os.IsNotExist(err) {
+	warnings := res.Warnings
+	if res.WorktreeRemoved {
 		// the agent's directory is gone: its chat can no longer start claude there
 		_ = dbpkg.MarkCardSessionsWorktreeRemoved(h.db, card.ID)
-	}
-	if _, err := gitIn(rv.RepoPath, "branch", "-d", rv.Branch); err != nil {
-		warnings = append(warnings, "could not delete the branch: "+err.Error())
 	}
 	_ = dbpkg.DeleteCardReview(h.db, card.ID)
 	_ = dbpkg.InsertCardComment(h.db, dbpkg.CardComment{
 		ID: uuid.New().String(), CardID: card.ID, Author: "lucode", Kind: "comment",
-		Body: fmt.Sprintf("Merged %s into %s.", rv.Branch, st.Base),
+		Body: fmt.Sprintf("Merged %s into %s.", rv.Branch, res.Base),
 	})
 	moved, err := h.moveCardToKind(card, dbpkg.KanbanDone)
 	if err != nil {
@@ -226,7 +202,7 @@ func (h *Handler) resolveCardReview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	st := reviewStatus(rv)
+	st := h.reviewStatusOf(rv)
 	var note string
 	switch {
 	case st.Conflicts:
@@ -272,7 +248,7 @@ func (h *Handler) reviewOnDone(sessID string, card dbpkg.KanbanCard) bool {
 	if !ok {
 		return false
 	}
-	if st := reviewStatus(rv); st.Error != "" || st.Merged {
+	if st := h.reviewStatusOf(rv); st.Error != "" || st.Merged {
 		return false
 	}
 	if err := dbpkg.EnsureReviewList(h.db, card.ProjectID); err != nil {

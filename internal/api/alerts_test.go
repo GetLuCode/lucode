@@ -104,6 +104,55 @@ func TestRunnerReportsStaleWorktrees(t *testing.T) {
 	}
 }
 
+// The runner serves the review git work over RPC: status, merge (with a locked
+// worktree) and which repository a worktree belongs to.
+func TestRunnerServesReview(t *testing.T) {
+	repo, wt := reviewRepo(t)
+	write(t, filepath.Join(wt, "b.txt"), "new\n")
+	rgit(t, wt, "add", ".")
+	rgit(t, wt, "commit", "-q", "-m", "add b")
+	rgit(t, repo, "worktree", "lock", "--reason", "claude session x (pid 99999999)", wt)
+	h, _, _ := newTaskTestHandler(t)
+
+	post := func(fn http.HandlerFunc, body any) *httptest.ResponseRecorder {
+		b, _ := json.Marshal(body)
+		rec := httptest.NewRecorder()
+		fn(rec, httptest.NewRequest("POST", "/", strings.NewReader(string(b))))
+		return rec
+	}
+	ref := reviewRef{RepoPath: repo, Branch: "task/x", WorktreePath: wt}
+
+	var st ReviewStatus
+	rec := post(h.reviewStatusRPC, ref)
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil || rec.Code != 200 || st.Ahead != 1 || st.Base != "main" {
+		t.Fatalf("status: %d %s", rec.Code, rec.Body)
+	}
+
+	var gotRepo struct{ Repo string }
+	rec = post(h.reviewRepoRPC, map[string]string{"path": wt})
+	if err := json.Unmarshal(rec.Body.Bytes(), &gotRepo); err != nil || !samePath(gotRepo.Repo, repo) {
+		t.Errorf("repo: %d %s, want %s", rec.Code, rec.Body, repo)
+	}
+	if rec = post(h.reviewRepoRPC, map[string]string{"path": t.TempDir()}); rec.Code != http.StatusNotFound {
+		t.Errorf("repo of a plain dir: %d", rec.Code)
+	}
+
+	var res mergeResult
+	rec = post(h.reviewMergeRPC, mergeRequest{ref, "Add b"})
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != 200 {
+		t.Fatalf("merge: %d %s", rec.Code, rec.Body)
+	}
+	if res.Base != "main" || !res.WorktreeRemoved || len(res.Warnings) != 0 {
+		t.Errorf("result = %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "b.txt")); err != nil {
+		t.Errorf("not merged: %v", err)
+	}
+	if _, err := os.Stat(wt); err == nil {
+		t.Errorf("the locked worktree is still there")
+	}
+}
+
 func TestFreshWorktreeIsNotStale(t *testing.T) {
 	// a new worktree with no commits looks merged (its tip is in HEAD): it may belong to a running agent
 	repo, _ := reviewRepo(t)

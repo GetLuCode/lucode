@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -215,25 +214,15 @@ func (h *Handler) listProjectAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := url.Values{"dir": dirs, "review": review}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "/api/worktrees/stale?"+q.Encode(), http.NoBody)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	resp, err := h.bus.RPCRequest(proj.RunnerID, req)
-	if err != nil {
-		http.Error(w, "runner unavailable: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		// a runner built before this endpoint answers 404: nothing to show, not a failure
+	var alerts []Alert
+	code, err := h.runnerCall(r.Context(), proj.RunnerID, http.MethodGet, "/api/worktrees/stale?"+q.Encode(), nil, &alerts)
+	if code == http.StatusNotFound {
+		// a runner built before this endpoint: nothing to show, not a failure
 		jsonResp(w, http.StatusOK, []Alert{})
 		return
 	}
-	var alerts []Alert
-	if err := json.NewDecoder(resp.Body).Decode(&alerts); err != nil {
-		http.Error(w, "bad answer from the runner: "+err.Error(), http.StatusBadGateway)
+	if err != nil {
+		http.Error(w, err.Error(), code)
 		return
 	}
 	if alerts == nil {

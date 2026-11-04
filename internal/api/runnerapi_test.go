@@ -25,6 +25,7 @@ func TestRunnerHandlerServesOnlyWhatAHubNeeds(t *testing.T) {
 		}
 	}
 	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/review/status"}, // POST only
 		{"GET", "/api/projects"},
 		{"POST", "/api/projects"},
 		{"GET", "/api/agents"},
