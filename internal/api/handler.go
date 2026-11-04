@@ -38,7 +38,7 @@ type cachedEntry struct {
 }
 
 type Handler struct {
-	// hubOnly: this instance orchestrates and runs no claude of its own (--role=hub);
+	// hubOnly: this instance orchestrates and runs no claude of its own (--hub-only);
 	// every turn goes to a runner.
 	hubOnly    bool
 	db         *sql.DB
@@ -641,7 +641,7 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.hubOnly && opts.Executor == "claude" { // this path would start claude on this machine
-		http.Error(w, "this instance only orchestrates (--role=hub) and runs no claude: run this session through its card or the orchestrator, on a runner", http.StatusBadRequest)
+		http.Error(w, "this instance only orchestrates (--hub-only) and runs no claude: run this session through its card or the orchestrator, on a runner", http.StatusBadRequest)
 		return
 	}
 

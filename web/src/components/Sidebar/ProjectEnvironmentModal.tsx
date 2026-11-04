@@ -27,7 +27,7 @@ export function ProjectEnvironmentModal({
     api.listRunners()
       .then(rs => {
         setRunners(rs)
-        // A hub (--role=hub) is not in the list: a project still on "this instance" moves to the first runner.
+        // A hub (--hub-only) is not in the list: a project still on "this instance" moves to the first runner.
         if (rs.length > 0 && !rs.some(r => r.self) && !rs.some(r => r.id === runnerId)) setRunnerId(rs[0].id)
       })
       .catch(() => setRunners([]))

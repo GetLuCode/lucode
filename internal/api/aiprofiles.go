@@ -294,7 +294,7 @@ func (h *Handler) resolveTurnEnv(agent dbpkg.Agent, p dbpkg.Project) (turnEnv, e
 	}
 	env := turnEnv{RunnerID: runner, AIProfileID: aiID}
 	if runner == "" && h.hubOnly {
-		return env, fmt.Errorf("this instance only orchestrates (--role=hub) and runs no claude: choose a runner for project %q in its settings", p.Name)
+		return env, fmt.Errorf("this instance only orchestrates (--hub-only) and runs no claude: choose a runner for project %q in its settings", p.Name)
 	}
 	if runner != "" {
 		env.WorkDirs = p.EnvDirs[runner]

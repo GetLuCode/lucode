@@ -215,7 +215,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   }, [peersVersion])
   // this machine is shown by its own name
   const selfName = runners.find(r => r.self)?.hostname || 'this'
-  // A hub (--role=hub) is not in the list: it runs no claude, so "local" is not an option
+  // A hub (--hub-only) is not in the list: it runs no claude, so "local" is not an option
   // and the chat starts on the first runner.
   const canRunLocally = !runnersLoaded || runners.some(r => r.self)
   useEffect(() => {

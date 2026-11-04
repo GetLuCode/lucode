@@ -5,7 +5,7 @@ tmp_dir = "tmp"
 [build]
   cmd = "go build -o ./tmp/lucode.exe ./cmd/lucode"
   entrypoint = "./tmp/lucode.exe"
-  args_bin = ["--port=8090", "--nats-url=nats://127.0.0.1:4222", "--nats-creds=C:\\path\\to\\platform.creds", "--working-dir=C:\\projects", "--aiapi-url=http://localhost:8091", "--role=hub"]
+  args_bin = ["--port=8090", "--nats-url=nats://127.0.0.1:4222", "--nats-creds=C:\\path\\to\\platform.creds", "--working-dir=C:\\projects", "--aiapi-url=http://localhost:8091", "--hub-only"]
   include_ext = ["go", "tpl", "tmpl", "html"]
   include_dir = ["cmd", "internal", "web/dist"]
   exclude_dir = ["node_modules", "web/node_modules"]

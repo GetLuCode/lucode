@@ -52,7 +52,7 @@ func TestResolveTurnEnv(t *testing.T) {
 	}
 }
 
-// A hub (--role=hub) runs no claude: a project or agent that would run on this
+// A hub (--hub-only) runs no claude: a project or agent that would run on this
 // instance is an error that says what to do, and the runners it offers do not include
 // itself. Projects on a runner are unaffected.
 func TestHubOnlyNeverRunsLocally(t *testing.T) {
@@ -63,7 +63,7 @@ func TestHubOnlyNeverRunsLocally(t *testing.T) {
 	local := dbpkg.Project{Name: "p", WorkDirs: []string{"/w"}}
 	remote := dbpkg.Project{Name: "p", RunnerID: "peer1", EnvDirs: map[string][]string{"peer1": {"/peer/w"}}}
 
-	if _, err := h.resolveTurnEnv(dbpkg.Agent{}, local); err == nil || !strings.Contains(err.Error(), "--role=hub") {
+	if _, err := h.resolveTurnEnv(dbpkg.Agent{}, local); err == nil || !strings.Contains(err.Error(), "--hub-only") {
 		t.Errorf("a project without runner must fail with a hint, got %v", err)
 	}
 	if _, err := h.resolveTurnEnv(dbpkg.Agent{RunnerID: "local"}, remote); err == nil {

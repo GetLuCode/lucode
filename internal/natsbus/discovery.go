@@ -35,25 +35,16 @@ type InstanceInfo struct {
 	Extra     map[string]any `json:"extra,omitempty"`
 }
 
-// What an instance does, announced in Extra["role"]: a hub orchestrates and runs no
-// claude, a runner runs claude for hubs, "both" is a single instance doing everything.
-// An instance that announces none (an older version) is "both".
-const (
-	RoleHub    = "hub"
-	RoleRunner = "runner"
-	RoleBoth   = "both"
-)
-
-// Role is the announced role of the instance.
-func (i InstanceInfo) Role() string {
-	if r, _ := i.Extra["role"].(string); r != "" {
-		return r
-	}
-	return RoleBoth
+// HubOnly reports whether the instance orchestrates and runs no claude of its own
+// (started with --hub-only, announced in Extra["hub_only"]). Every other instance, an
+// older one included, can run turns for a hub.
+func (i InstanceInfo) HubOnly() bool {
+	v, _ := i.Extra["hub_only"].(bool)
+	return v
 }
 
 // IsRunner reports whether the instance can run turns for a hub.
-func (i InstanceInfo) IsRunner() bool { return i.Role() != RoleHub }
+func (i InstanceInfo) IsRunner() bool { return !i.HubOnly() }
 
 type peerEntry struct {
 	info     InstanceInfo
