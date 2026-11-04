@@ -248,6 +248,36 @@ func lucodeToolEnabled(agent dbpkg.Agent, name string) bool {
 	return false
 }
 
+// hasBuiltinTool reports whether the agent may use a Claude Code built-in tool
+// (an empty list means no restriction).
+func hasBuiltinTool(agent dbpkg.Agent, name string) bool {
+	return len(agent.Tools) == 0 || contains(agent.Tools, name)
+}
+
+// worktreePrompt tells the agent to do its edits in a private git worktree, so
+// several agents on the same repo never step on each other or on the user's
+// checkout. It names only what the agent can actually use; with neither
+// EnterWorktree nor Bash it says nothing.
+func worktreePrompt(agent dbpkg.Agent) string {
+	enter := hasBuiltinTool(agent, "EnterWorktree")
+	bash := hasBuiltinTool(agent, "Bash")
+	if !enter && !bash {
+		return ""
+	}
+	var how string
+	switch {
+	case enter && hasBuiltinTool(agent, "ExitWorktree"):
+		how = "Call EnterWorktree before your first edit and work only inside it; ExitWorktree when you finish."
+	case enter:
+		how = "Call EnterWorktree before your first edit and work only inside it."
+	default:
+		how = "Create one before your first edit with `git worktree add ../<repo>-<short-task-id> -b task/<short-task-id>` and work only inside that folder."
+	}
+	return "\n\nWork in a git worktree: never edit files in the main checkout, the user and other agents are using it. " + how +
+		" Commit your work on that branch as you go. Do not merge into the main branch, push, or delete the worktree; the user reviews and integrates it, so say in your final report the branch and the worktree path." +
+		" If the folder is not a git repository, work in place."
+}
+
 // agentSystemPrompt is what gets appended to the agent's system prompt: its own
 // personality followed by how to work with lucode. Only the tools the agent
 // actually has are described, so it is never told to call one it cannot.
@@ -260,6 +290,7 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 	}
 	fmt.Fprintf(&sb, "# Working inside lucode\nYou are %q, an agent in lucode working on the task %q (id %s) from this project's board. The user follows your progress on that board.\n\nYour task is described in your first message. Work only on it.",
 		agent.Name, card.Title, card.ID)
+	sb.WriteString(worktreePrompt(agent))
 
 	// Reporting on the task.
 	var report []string

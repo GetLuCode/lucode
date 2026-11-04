@@ -232,6 +232,22 @@ func TestSystemPromptOnlyDescribesTheToolsTheAgentHas(t *testing.T) {
 	}
 }
 
+func TestSystemPromptAsksForAWorktree(t *testing.T) {
+	card := dbpkg.KanbanCard{ID: "T", Title: "t"}
+	p := agentSystemPrompt(dbpkg.Agent{Name: "A"}, card, "")
+	if !strings.Contains(p, "Call EnterWorktree") || !strings.Contains(p, "ExitWorktree") {
+		t.Errorf("an unrestricted agent should be told to use EnterWorktree:\n%s", p)
+	}
+	p = agentSystemPrompt(dbpkg.Agent{Name: "A", Tools: []string{"Bash", "Edit"}}, card, "")
+	if !strings.Contains(p, "git worktree add") || strings.Contains(p, "EnterWorktree") {
+		t.Errorf("without EnterWorktree it should use git worktree add:\n%s", p)
+	}
+	p = agentSystemPrompt(dbpkg.Agent{Name: "A", Tools: []string{"Read"}}, card, "")
+	if strings.Contains(p, "worktree") {
+		t.Errorf("an agent that can neither enter nor create a worktree is not told about it:\n%s", p)
+	}
+}
+
 func TestCreateAgentRequestShape(t *testing.T) {
 	h, pid, _ := newTaskTestHandler(t)
 	post := func(body string) (int, dbpkg.Agent) {
