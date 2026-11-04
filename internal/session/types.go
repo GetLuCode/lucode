@@ -32,19 +32,19 @@ const (
 )
 
 type TurnOptions struct {
-	SessionID string
-	ProjectID string
-	Message   string
-	Model     string
-	Name      string
-	WorkDirs  []string
+	SessionID       string
+	ProjectID       string
+	Message         string
+	Model           string
+	Name            string
+	WorkDirs        []string
 	ClaudeConfigDir string
-	Resume    bool
-	ForkFrom  string
-	Effort    string
-	Thinking  string
-	ImageBase64    string
-	ImageMediaType string
+	Resume          bool
+	ForkFrom        string
+	Effort          string
+	Thinking        string
+	ImageBase64     string
+	ImageMediaType  string
 
 	Provider               Provider
 	OllamaHost             string
@@ -61,13 +61,15 @@ type TurnOptions struct {
 
 	// Agent-driven turns (task sessions). Executor selects how the agent runs:
 	// "claude" spawns `claude -p` locally, anything else goes through aiapi.
-	Executor     string
-	SystemPrompt string // agent personality, appended to the system prompt
-	AgentName    string
-	Tools        []string // built-in tools the agent may use (claude names); empty = all
-	Persistent   bool     // keep the claude process alive between turns (Executor "claude" only)
-	AutoMode     bool     // claude --permission-mode auto: no approval hook (Executor "claude" only)
-	RunnerID     string   // run the turn on this peer runner instead of here ("" = this instance)
-	AIProfileID  string   // preconfigured AI of that runner; it resolves the claude_config_dir
-	LucodeTools  []string // lucode tools the agent has (task_*, agent_list, ...); nil = all, empty = none
+	Executor        string
+	SystemPrompt    string // agent personality, appended to the system prompt
+	AgentName       string
+	Tools           []string // built-in tools the agent may use (claude names); empty = all
+	Persistent      bool     // keep the claude process alive between turns (Executor "claude" only)
+	AutoMode        bool     // claude --permission-mode auto: no approval hook (Executor "claude" only)
+	Worktree        bool     // claude --worktree: work in its own git worktree (Executor "claude" only)
+	WorktreeBaseRef string   // worktree.baseRef setting: "head" (default) or "fresh"
+	RunnerID        string   // run the turn on this peer runner instead of here ("" = this instance)
+	AIProfileID     string   // preconfigured AI of that runner; it resolves the claude_config_dir
+	LucodeTools     []string // lucode tools the agent has (task_*, agent_list, ...); nil = all, empty = none
 }

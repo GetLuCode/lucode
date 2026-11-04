@@ -139,6 +139,8 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 		ClaudeConfigDir:    opts.ClaudeConfigDir,
 		ClaudeSettings:     m.claudeSettings,
 		PermissionMode:     permissionModeOf(opts),
+		Worktree:           opts.Worktree,
+		WorktreeBaseRef:    opts.WorktreeBaseRef,
 		NATSSettings:       m.backendNATSURL,
 		NATSCreds:          m.natsCreds,
 		ImageBase64:        opts.ImageBase64,
@@ -184,8 +186,8 @@ func (m *Manager) runLiveTurn(ctx context.Context, req execpkg.TurnRequest, opts
 
 	select {
 	case <-done:
-	case <-ctx.Done(): // turn cancelled by the user: stop the process
-		live.Kill()
+	case <-ctx.Done(): // turn cancelled by the user: interrupt it, keep the process
+		live.Stop(done)
 	}
 }
 
@@ -237,6 +239,7 @@ func (m *Manager) CloseLive(sessID string) {
 	delete(m.lives, sessID)
 	runner := m.remoteRunnerOf[sessID]
 	delete(m.remoteRunnerOf, sessID)
+	delete(m.remotePID, sessID)
 	m.liveMu.Unlock()
 	if runner != "" {
 		m.bus.RunnerClose(runner, sessID) // the process lives on that runner

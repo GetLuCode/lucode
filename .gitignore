@@ -7,6 +7,7 @@ cmd/desktop/frontend/
 /lucode
 /lucodehook
 cmd/lucode/embedded/lucodehook
+cmd/lucode-runner/embedded/lucodehook
 dist/
 tmp/
 

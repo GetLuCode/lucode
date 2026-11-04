@@ -35,6 +35,17 @@ type InstanceInfo struct {
 	Extra     map[string]any `json:"extra,omitempty"`
 }
 
+// HubOnly reports whether the instance orchestrates and runs no claude of its own
+// (started with --hub-only, announced in Extra["hub_only"]). Every other instance, an
+// older one included, can run turns for a hub.
+func (i InstanceInfo) HubOnly() bool {
+	v, _ := i.Extra["hub_only"].(bool)
+	return v
+}
+
+// IsRunner reports whether the instance can run turns for a hub.
+func (i InstanceInfo) IsRunner() bool { return !i.HubOnly() }
+
 type peerEntry struct {
 	info     InstanceInfo
 	lastSeen time.Time

@@ -38,6 +38,9 @@ type cachedEntry struct {
 }
 
 type Handler struct {
+	// hubOnly: this instance orchestrates and runs no claude of its own (--hub-only);
+	// every turn goes to a runner.
+	hubOnly    bool
 	db         *sql.DB
 	bus        *natspkg.Bus
 	manager    *sessionpkg.Manager
@@ -75,6 +78,10 @@ func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir s
 func (h *Handler) SetAuthURL(url string) {
 	h.auth = authclient.New(url)
 }
+
+// SetHubOnly makes this instance refuse to run claude itself: it is not offered as a
+// runner and a turn without a runner fails with a clear message.
+func (h *Handler) SetHubOnly(v bool) { h.hubOnly = v }
 
 func (h *Handler) SetAIAPIURL(url string) {
 	h.aiAPIURL = url
@@ -626,6 +633,8 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		opts.Tools = agent.Tools
 		opts.Persistent = agent.Persistent && agent.Executor == "claude"
 		opts.AutoMode = agent.AutoMode && agent.Executor == "claude"
+		opts.Worktree = agent.Worktree && agent.Executor == "claude"
+		opts.WorktreeBaseRef = agent.WorktreeBaseRef
 		opts.LucodeTools = agent.LucodeTools
 		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
 			opts.SystemPrompt = agentSystemPrompt(*agent, card, h.supervisorName(*agent))
@@ -636,6 +645,22 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 
 	if aimode.IsModel(model) { // local model: Google AI Mode in Edge, no claude and no tools
 		opts.Executor, opts.Persistent, opts.Resume = "aimode", false, false
+	}
+
+	if opts.Executor != "aimode" {
+		// Where it runs and with which AI: the agent's runner, else the project's.
+		// On a hub this sends the turn to the runner instead of starting claude here.
+		var envAgent dbpkg.Agent
+		if agent != nil {
+			envAgent = *agent
+		}
+		env, err := h.resolveTurnEnv(envAgent, proj)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		opts.WorkDirs, opts.ClaudeConfigDir = env.WorkDirs, env.ConfigDir
+		opts.RunnerID, opts.AIProfileID = env.RunnerID, env.AIProfileID
 	}
 
 	// If the session has an account, pass it to aiapi (which will resolve it to the claude_config_dir)
@@ -2330,6 +2355,14 @@ func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(agents)
 }
 
+// normalizeBaseRef is the worktree.baseRef of an agent: "fresh" or, by default, "head".
+func normalizeBaseRef(v string) string {
+	if v == "fresh" {
+		return v
+	}
+	return "head"
+}
+
 func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	var body struct {
@@ -2341,6 +2374,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Executor    string   `json:"executor"`
 		Persistent  bool     `json:"persistent"`
 		AutoMode    bool     `json:"auto_mode"`
+		Worktree    bool     `json:"worktree"`
+		WorktreeBaseRef string `json:"worktree_base_ref"` // "head" (default) | "fresh"
 		ReportsTo   string   `json:"reports_to"`
 		Scope       string   `json:"scope"`        // "project" (default) or "global"
 		LucodeTools []string `json:"lucode_tools"` // nil = all
@@ -2380,6 +2415,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Executor:    body.Executor,
 		Persistent:  body.Persistent && body.Executor == "claude",
 		AutoMode:    body.AutoMode && body.Executor == "claude",
+		Worktree:    body.Worktree && body.Executor == "claude",
+		WorktreeBaseRef: normalizeBaseRef(body.WorktreeBaseRef),
 		ReportsTo:   body.ReportsTo,
 		RunnerID:    body.RunnerID,
 		AIProfileID: body.AIProfileID,
@@ -2423,6 +2460,8 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Executor    *string  `json:"executor"`
 		Persistent  *bool    `json:"persistent"`
 		AutoMode    *bool    `json:"auto_mode"`
+		Worktree    *bool    `json:"worktree"`
+		WorktreeBaseRef *string `json:"worktree_base_ref"`
 		ReportsTo   *string  `json:"reports_to"`
 		Scope       *string  `json:"scope"`      // "project" | "global"
 		ProjectID   *string  `json:"project_id"` // needed when a global agent becomes project-only
@@ -2452,6 +2491,12 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.AutoMode != nil {
 		a.AutoMode = *body.AutoMode
+	}
+	if body.Worktree != nil {
+		a.Worktree = *body.Worktree
+	}
+	if body.WorktreeBaseRef != nil {
+		a.WorktreeBaseRef = *body.WorktreeBaseRef
 	}
 	if body.Scope != nil {
 		switch *body.Scope {
@@ -2501,6 +2546,8 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Persistent = a.Persistent && a.Executor == "claude" // only the claude CLI can stay alive
 	a.AutoMode = a.AutoMode && a.Executor == "claude"     // --permission-mode is a claude CLI flag
+	a.Worktree = a.Worktree && a.Executor == "claude"     // --worktree is a claude CLI flag
+	a.WorktreeBaseRef = normalizeBaseRef(a.WorktreeBaseRef)
 	if err := dbpkg.UpdateAgent(h.db, a); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

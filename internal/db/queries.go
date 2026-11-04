@@ -1415,32 +1415,40 @@ type Agent struct {
 	// LucodeTools are the lucode tools (task_*, agent_list, send_to_agent,
 	// task_info) the agent has. nil in memory means all of them; an empty list
 	// means none.
-	LucodeTools []string  `json:"lucode_tools"`
-	Executor    string    `json:"executor"`   // "aiapi" | "claude"
-	Persistent  bool      `json:"persistent"` // keep the claude -p process alive between turns
-	ReportsTo   string    `json:"reports_to"` // id of the supervising agent ("" = none)
+	LucodeTools []string `json:"lucode_tools"`
+	Executor    string   `json:"executor"`   // "aiapi" | "claude"
+	Persistent  bool     `json:"persistent"` // keep the claude -p process alive between turns
+	ReportsTo   string   `json:"reports_to"` // id of the supervising agent ("" = none)
 	// RunnerID and AIProfileID override the project's environment for this agent
 	// ("" = use the project's). The AI belongs to the runner it is set with.
-	RunnerID    string    `json:"runner_id"`
-	AIProfileID string    `json:"ai_profile_id"`
+	RunnerID    string `json:"runner_id"`
+	AIProfileID string `json:"ai_profile_id"`
 	// AutoMode runs claude with --permission-mode auto: it decides on its own which
 	// tools are safe, so lucode's approval hook is not installed for this agent.
-	AutoMode  bool      `json:"auto_mode"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	AutoMode bool `json:"auto_mode"`
+	// Worktree makes claude work in its own git worktree (--worktree). WorktreeBaseRef
+	// is the worktree.baseRef setting passed through --settings: "head" (the
+	// current branch/commit, the default) or "fresh" (the remote default branch).
+	Worktree        bool      `json:"worktree"`
+	WorktreeBaseRef string    `json:"worktree_base_ref"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // DefaultLucodeTools is every lucode tool; new agents start with all of them.
 var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete", "project_info"}
 
-const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, created_at, updated_at`
+const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, worktree, worktree_base_ref, created_at, updated_at`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var toolsJSON, lucodeJSON, createdAt, updatedAt string
 	if err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &lucodeJSON,
-		&a.Executor, &a.Persistent, &a.ReportsTo, &a.RunnerID, &a.AIProfileID, &a.AutoMode, &createdAt, &updatedAt); err != nil {
+		&a.Executor, &a.Persistent, &a.ReportsTo, &a.RunnerID, &a.AIProfileID, &a.AutoMode, &a.Worktree, &a.WorktreeBaseRef, &createdAt, &updatedAt); err != nil {
 		return a, err
+	}
+	if a.WorktreeBaseRef != "fresh" {
+		a.WorktreeBaseRef = "head"
 	}
 	json.Unmarshal([]byte(toolsJSON), &a.Tools)
 	if err := json.Unmarshal([]byte(lucodeJSON), &a.LucodeTools); err != nil || a.LucodeTools == nil {
@@ -1466,10 +1474,18 @@ func lucodeToolsJSON(tools []string) string {
 func InsertAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode,
+		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, worktree, worktree_base_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.Worktree, worktreeBaseRef(a.WorktreeBaseRef),
 	)
 	return err
+}
+
+// worktreeBaseRef normalizes the stored worktree.baseRef: anything but "fresh" is "head".
+func worktreeBaseRef(v string) string {
+	if v == "fresh" {
+		return v
+	}
+	return "head"
 }
 
 // ListAgents returns the agents available in a project: its own plus the global ones.
@@ -1500,8 +1516,8 @@ func GetAgent(db *sql.DB, id string) (Agent, error) {
 func UpdateAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, runner_id=?, ai_profile_id=?, auto_mode=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.ID,
+		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, runner_id=?, ai_profile_id=?, auto_mode=?, worktree=?, worktree_base_ref=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.Worktree, worktreeBaseRef(a.WorktreeBaseRef), a.ID,
 	)
 	return err
 }

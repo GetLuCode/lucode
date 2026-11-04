@@ -148,6 +148,9 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 	if runnerID == "" {
 		runnerID = "local" // explicit: do not inherit the project's runner
 	}
+	if h.hubOnly && runnerID == "local" {
+		runnerID = "" // a hub has no claude of its own: the chat runs where the project does
+	}
 	env, err := h.resolveTurnEnv(dbpkg.Agent{RunnerID: runnerID, AIProfileID: aiProfileID}, proj)
 	if err != nil {
 		return sessionpkg.TurnOptions{}, err

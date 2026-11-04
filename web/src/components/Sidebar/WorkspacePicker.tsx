@@ -28,7 +28,13 @@ export function WorkspacePicker({ isOpen, onClose, onConfirm }: Props) {
   useEffect(() => {
     if (!isOpen) return
     setRunnerId('')
-    api.listRunners().then(setRunners).catch(() => setRunners([]))
+    api.listRunners()
+      .then(rs => {
+        setRunners(rs)
+        // A hub (--hub-only) is not in the list: start on the first runner, not on "this instance".
+        if (rs.length > 0 && !rs.some(r => r.self)) setRunnerId(rs[0].id)
+      })
+      .catch(() => setRunners([]))
   }, [isOpen])
 
   // Load the AIs and the starting directory of the chosen runner.
