@@ -17,6 +17,7 @@ import { ProjectHeader } from './components/Header/ProjectHeader'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { HomeView } from './components/Home/HomeView'
 import { RunningView } from './components/Running/RunningView'
+import { RunnersView } from './components/Runners/RunnersView'
 import { OrchestratorPanel } from './components/Orchestrator/OrchestratorPanel'
 import { OrchestratorOpenButton } from './components/Orchestrator/OrchestratorOpenButton'
 
@@ -105,7 +106,7 @@ export default function App() {
   useEffect(() => {
     const path = location.pathname
     if (path === '/') return // the start page
-    if (['/agents', '/agent', '/kanban', '/running', '/checkpoints'].some(p => path.includes(p))) return
+    if (['/agents', '/agent', '/kanban', '/running', '/runners', '/checkpoints'].some(p => path.includes(p))) return
     if (!activeProjectId) return
     if (path.includes('/sessions/')) {
       if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
@@ -118,6 +119,7 @@ export default function App() {
   const isAgentsRoute = location.pathname.includes('/agents')
   const isKanbanRoute = location.pathname.includes('/kanban')
   const isRunningRoute = location.pathname.includes('/running')
+  const isRunnersRoute = location.pathname.includes('/runners')
   const isAgentTab = /\/agent\/?$/.test(location.pathname)
   const isCheckpointsOpen = location.pathname.includes('/checkpoints')
 
@@ -135,7 +137,7 @@ export default function App() {
           <div className="main__content">
             {/* a render error stays inside the page and clears when the route changes */}
             <ErrorBoundary key={location.pathname}>
-              {isHome ? <HomeView /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isAgentTab ? null : <ChatView />}
+              {isHome ? <HomeView /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
             </ErrorBoundary>
           </div>
           {/* same button on every tab except the chat; the Agent tab already shows the panel */}

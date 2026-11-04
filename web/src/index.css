@@ -7105,3 +7105,46 @@ input[type="date"].kmodal__input { color-scheme: dark; }
   overflow: hidden;
   word-break: break-word;
 }
+
+/* ── Runners section and command details ────────────────────────────────── */
+.runners { display: flex; height: 100%; min-height: 0; }
+.runners__list { width: 290px; flex-shrink: 0; padding: 14px 12px; border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.runners__detail { flex: 1; min-width: 0; padding: 14px 18px; overflow-y: auto; }
+.runners__title { margin: 0 0 8px; font-size: 15px; font-weight: 700; }
+.runner-card { display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text); cursor: pointer; }
+.runner-card:hover { border-color: var(--border-bright); }
+.runner-card--active { border-color: var(--accent); background: var(--bg-active); }
+.runner-card__host { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; }
+.runner-card__line { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-muted); }
+.runner-card__ver { font-family: var(--font-mono, monospace); color: var(--accent); }
+.runner-card__id { justify-content: flex-start; }
+.runner-detail__head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.runner-detail__actions { display: flex; gap: 8px; }
+.runner-detail__actions .kmodal__btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; }
+.runner-detail__sub { color: var(--text-muted); font-family: inherit; }
+.runner-detail__sub-title { margin: 18px 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); }
+.runner-cmds { display: flex; flex-direction: column; gap: 4px; }
+.runner-cmd { border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); }
+.runner-cmd--failed { border-color: rgba(239, 68, 68, 0.5); }
+.runner-cmd__row { display: flex; align-items: baseline; gap: 12px; width: 100%; padding: 6px 10px; background: transparent; border: none; color: var(--text); font-size: 12px; text-align: left; cursor: pointer; }
+.runner-cmd__row:hover { background: var(--bg-hover); }
+.runner-cmd__time { color: var(--text-muted); white-space: nowrap; }
+.runner-cmd__session { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runner-cmd__sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.runner-cmd__badge { padding: 0 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #ef4444; font-size: 11px; }
+.cmd { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.cmd__meta { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; }
+.cmd__meta dt { color: var(--text-muted); }
+.cmd__meta dd { margin: 0; min-width: 0; word-break: break-all; }
+.cmd__mono { font-family: var(--font-mono, monospace); }
+.cmd__error { padding: 6px 10px; border-radius: 6px; background: rgba(239, 68, 68, 0.12); color: #ef4444; }
+.cmd__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cmd__exe { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
+.cmd__copy { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+.cmd__copy:hover { color: var(--text); border-color: var(--border-bright); }
+.cmd__args { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 6px; background: var(--bg); font-family: var(--font-mono, monospace); }
+.cmd__arg { display: flex; gap: 8px; align-items: baseline; }
+.cmd__flag { color: var(--accent); flex-shrink: 0; }
+.cmd__value { min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.cmd__more { margin-left: 8px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 10px; cursor: pointer; }
+.kmodal--wide { width: min(820px, calc(100vw - 32px)); }

@@ -1,67 +1,42 @@
-import { IconBrandApple, IconBrandUbuntu, IconBrandWindows, IconRefresh, IconServer, IconTrash, IconX } from '@tabler/icons-react'
+import { IconRefresh, IconServer, IconTrash, IconX } from '@tabler/icons-react'
 import { useCallback, useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import * as api from '../../api'
 import { useStore } from '../../store'
 import type { AIProfile, Runner } from '../../types'
 import './SpacesList.css'
 import { backdropClose } from '../../lib/backdropClose'
 
-function osIcon(os: string) {
-  if (os === 'windows') return <IconBrandWindows size={14} />
-  if (os === 'darwin') return <IconBrandApple size={14} />
-  return <IconBrandUbuntu size={14} />
-}
-
-// Runners: the machines a project can work on. An icon button (top right) lists
-// them; picking one opens its settings (the preconfigured AIs it offers). It never
-// changes the active project.
+// Runners: the machines that execute claude (the hub never does). The icon button
+// (top right) opens the Runners section; it never changes the active project.
 export function RunnersButton() {
-  const [runners, setRunners] = useState<Runner[]>([])
-  const [open, setOpen] = useState<Runner | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const activeProjectId = useStore(s => s.activeProjectId)
+  const [count, setCount] = useState(0)
   // Bumped by the server when a runner shows up or leaves: refetch right away.
   const peersVersion = useStore(s => s.peersVersion)
 
   useEffect(() => {
-    const load = () => api.listRunners().then(setRunners).catch(() => {})
+    const load = () => api.listRunners().then(rs => setCount(rs.filter(r => r.runner_only).length)).catch(() => {})
     load()
     const id = setInterval(load, 20_000)
     return () => clearInterval(id)
   }, [peersVersion])
 
-  if (runners.length === 0) return null
+  if (!activeProjectId) return null
+  const active = pathname.includes('/runners')
 
   return (
-    <div className="header-menu">
-      <button
-        className={`header-icon-btn${menuOpen ? ' header-icon-btn--active' : ''}`}
-        onClick={() => setMenuOpen(v => !v)}
-        title="Runners"
-        aria-label="Runners"
-      >
-        <IconServer size={16} />
-        {runners.length > 1 && <span className="header-icon-btn__badge">{runners.length}</span>}
-      </button>
-      {menuOpen && (
-        <>
-          <div className="header-menu__backdrop" onClick={() => setMenuOpen(false)} />
-          <div className="nav-tree__dropdown header-menu__dropdown">
-            {runners.map(r => (
-              <button
-                key={r.id}
-                className="nav-tree__menu-item"
-                onClick={() => { setOpen(r); setMenuOpen(false) }}
-                title={`${r.hostname} · ${r.os}`}
-              >
-                {osIcon(r.os)}
-                <span>{r.self ? `${r.hostname} (this)` : r.hostname}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-      {open && <RunnerPanel runner={open} onClose={() => setOpen(null)} />}
-    </div>
+    <button
+      className={`header-icon-btn${active ? ' header-icon-btn--active' : ''}`}
+      onClick={() => navigate(`/projects/${activeProjectId}/runners`)}
+      title="Runners"
+      aria-label="Runners"
+    >
+      <IconServer size={16} />
+      {count > 0 && <span className="header-icon-btn__badge">{count}</span>}
+    </button>
   )
 }
 
@@ -69,7 +44,7 @@ function accountLine(p: AIProfile) {
   return [p.email, p.organization, p.plan].filter(Boolean).join(' · ')
 }
 
-function RunnerPanel({ runner, onClose }: { runner: Runner; onClose: () => void }) {
+export function RunnerPanel({ runner, onClose }: { runner: Runner; onClose: () => void }) {
   const [profiles, setProfiles] = useState<AIProfile[]>([])
   const [name, setName] = useState('')
   const [dir, setDir] = useState('')

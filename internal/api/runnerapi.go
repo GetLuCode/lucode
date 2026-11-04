@@ -17,6 +17,8 @@ func NewRunnerHandler(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager,
 	h := New(db, bus, manager, workingDir)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", h.health)
+	mux.HandleFunc("GET /api/version", h.version("runner"))
+	mux.HandleFunc("GET /api/commands", h.listCommands)
 	mux.HandleFunc("GET /api/fs/dirs", h.listDirs)
 	mux.HandleFunc("GET /api/ai-profiles", h.listAIProfiles)
 	mux.HandleFunc("POST /api/ai-profiles", h.createAIProfile)

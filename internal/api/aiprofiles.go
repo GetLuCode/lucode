@@ -12,6 +12,7 @@ import (
 	"time"
 
 	dbpkg "claude-orchestrator/internal/db"
+	versionpkg "claude-orchestrator/internal/version"
 
 	"github.com/google/uuid"
 )
@@ -193,10 +194,13 @@ func parseAnthropicProfile(body []byte) (email, display, org, plan string) {
 // ---- hub side: the same actions on any runner ----
 
 type runnerInfo struct {
-	ID       string `json:"id"`
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Self     bool   `json:"self"`
+	ID         string `json:"id"`
+	Hostname   string `json:"hostname"`
+	OS         string `json:"os"`
+	Self       bool   `json:"self"`
+	Version    string `json:"version,omitempty"`    // short git commit it was built from
+	StartedAt  string `json:"started_at,omitempty"` // RFC3339
+	RunnerOnly bool   `json:"runner_only"`          // lucode-runner: no web, no API of a hub
 }
 
 // listRunners returns this instance first, then the lucode peers.
@@ -204,11 +208,18 @@ func (h *Handler) listRunners(w http.ResponseWriter, r *http.Request) {
 	self := h.bus.SelfInfo()
 	out := []runnerInfo{}
 	if !h.hubOnly { // a hub runs nothing itself: it is not a place to send a project to
-		out = append(out, runnerInfo{ID: self.ID, Hostname: self.Hostname, OS: self.OS, Self: true})
+		v := versionpkg.Current("hub")
+		out = append(out, runnerInfo{ID: self.ID, Hostname: self.Hostname, OS: self.OS, Self: true, Version: v.Short, StartedAt: v.StartedAt.Format(time.RFC3339)})
 	}
 	for _, p := range h.bus.Peers() {
 		if p.Type == "lucode" && p.ID != self.ID && p.IsRunner() {
-			out = append(out, runnerInfo{ID: p.ID, Hostname: p.Hostname, OS: p.OS})
+			ver, _ := p.Extra["version"].(string)
+			only, _ := p.Extra["runner_only"].(bool)
+			started := ""
+			if !p.StartedAt.IsZero() {
+				started = p.StartedAt.Format(time.RFC3339)
+			}
+			out = append(out, runnerInfo{ID: p.ID, Hostname: p.Hostname, OS: p.OS, Version: ver, StartedAt: started, RunnerOnly: only})
 		}
 	}
 	jsonResp(w, http.StatusOK, out)

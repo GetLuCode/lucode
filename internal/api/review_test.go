@@ -1,11 +1,13 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	dbpkg "claude-orchestrator/internal/db"
@@ -171,5 +173,71 @@ func TestListedCardCarriesItsSessionError(t *testing.T) {
 	dbpkg.UpdateSessionStatus(h.db, "s1", "idle") // recovered: no error shown
 	if got := dbpkg.LatestCardErrors(h.db, pid)[card.ID]; got != "" {
 		t.Errorf("after recovering: %q", got)
+	}
+}
+
+func TestCardMovedToAListGoesOnTop(t *testing.T) {
+	h, pid, lists := newTaskTestHandler(t)
+	older := newCard(t, h, pid, lists["done"], "older")
+	newer := newCard(t, h, pid, lists["inprogress"], "newer")
+	moved, err := h.moveCardToKind(newer, dbpkg.KanbanDone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.ListID != lists["done"].ID || moved.Position >= older.Position {
+		t.Errorf("moved card at %d, the existing one at %d: it should be first", moved.Position, older.Position)
+	}
+	// moving into an empty list works too
+	alone, err := h.moveCardToKind(older, dbpkg.KanbanBlocked)
+	if err != nil || alone.ListID != lists["blocked"].ID {
+		t.Fatalf("empty list: %v %+v", err, alone)
+	}
+}
+
+func TestRunnerAnswersItsVersion(t *testing.T) {
+	h, _, _ := newTaskTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.version("runner")(rec, httptest.NewRequest("GET", "/api/version", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"role":"runner"`) || !strings.Contains(rec.Body.String(), `"short"`) {
+		t.Errorf("version: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestCommandHistoryAndSessionCommand(t *testing.T) {
+	h, pid, _ := newTaskTestHandler(t)
+	sess := dbpkg.Session{ID: "s1", ProjectID: pid, Name: "s", Model: "haiku", Status: "idle"}
+	if err := dbpkg.InsertSession(h.db, sess); err != nil {
+		t.Fatal(err)
+	}
+	// one launched here, one reported by a runner
+	local := dbpkg.ClaudeCommandFromEvent(map[string]any{"session_id": "s1", "exe": "claude", "args": []string{"-p", "--model=haiku"}, "cwd": "E:/dev/lucode", "pid": 42, "at": "2026-11-04T10:00:00Z"}, "")
+	remote := dbpkg.ClaudeCommandFromEvent(map[string]any{"session_id": "s1", "exe": "/usr/bin/claude", "args": []any{"-p", "--resume=x"}, "cwd": "/home/m4rk/dev", "pid": float64(7), "at": "2026-11-04T11:00:00Z"}, "runner-1")
+	for _, c := range []dbpkg.ClaudeCommand{local, remote} {
+		if err := dbpkg.InsertClaudeCommand(h.db, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.listCommands(rec, httptest.NewRequest("GET", "/api/commands", nil))
+	var list []dbpkg.ClaudeCommand
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list) != 1 || list[0].PID != 42 || list[0].Args[1] != "--model=haiku" {
+		t.Errorf("this instance's history = %v (%v)", rec.Body, err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.SetPathValue("id", "s1")
+	rec = httptest.NewRecorder()
+	h.getSessionCommand(rec, req)
+	var got dbpkg.ClaudeCommand
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.RunnerID != "runner-1" || got.PID != 7 || got.Args[1] != "--resume=x" {
+		t.Errorf("session command = %v (%v)", rec.Body, err)
+	}
+
+	req.SetPathValue("id", "none")
+	rec = httptest.NewRecorder()
+	h.getSessionCommand(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown session: %d", rec.Code)
 	}
 }

@@ -1,4 +1,4 @@
-import type { AIProfile, Runner, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -283,6 +283,15 @@ export const getInstances = () =>
   req<{ self: InstanceInfo; peers: InstanceInfo[] }>('GET', '/api/instances')
 // Runners and their preconfigured AIs
 export const listRunners = () => req<Runner[]>('GET', '/api/runners')
+// What a runner launched, newest first, and which build it is. The hub only relays them:
+// the runner is the one that knows.
+export const listRunnerCommands = (runnerId: string, limit = 100) =>
+  req<ClaudeCommand[]>('GET', `/api/runners/${runnerId}/commands?limit=${limit}`)
+export const getRunnerVersion = (runnerId: string) =>
+  req<RunnerVersion>('GET', `/api/runners/${runnerId}/version`)
+// The command a session's claude was last started with (reported by the runner).
+export const getSessionCommand = (sessionId: string) =>
+  req<ClaudeCommand>('GET', `/api/sessions/${sessionId}/command`)
 export const listAIProfiles = (runnerId: string) =>
   req<AIProfile[]>('GET', `/api/runners/${runnerId}/ai-profiles`)
 export const addAIProfile = (runnerId: string, data: { name: string; claude_config_dir: string }) =>

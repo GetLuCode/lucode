@@ -50,7 +50,7 @@ type Live struct {
 // onExit is called once, after the process is gone.
 func StartLive(req TurnRequest, publish func(map[string]any), onExit func()) (*Live, <-chan struct{}, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	sr, err := spawnClaude(ctx, req)
+	sr, err := spawnClaude(ctx, req, publish)
 	if err != nil {
 		cancel()
 		return nil, nil, err

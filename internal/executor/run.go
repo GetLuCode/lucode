@@ -32,7 +32,7 @@ func Run(ctx context.Context, req TurnRequest, publish func(event map[string]any
 // ─── Claude CLI path ──────────────────────────────────────────────────────────
 
 func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any)) {
-	sr, err := spawnClaude(ctx, req)
+	sr, err := spawnClaude(ctx, req, publish)
 	if err != nil {
 		publish(map[string]any{"type": "error", "session_id": req.SessionID, "message": err.Error()})
 		publish(map[string]any{"type": "session_status", "session_id": req.SessionID, "status": "error"})

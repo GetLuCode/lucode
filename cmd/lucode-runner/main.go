@@ -27,6 +27,7 @@ import (
 	natspkg "claude-orchestrator/internal/natsbus"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
+	versionpkg "claude-orchestrator/internal/version"
 )
 
 // embeddedHook is the lucodehook binary baked into this executable at build time (see
@@ -89,11 +90,13 @@ func main() {
 		manager.SetNATSCreds(*natsCreds)
 	}
 
+	v := versionpkg.Current("runner")
+	log.Printf("[runner] version %s (commit time %s, built %s)", v.Short, v.CommitTime, v.BuiltAt.Format(time.RFC3339))
 	instanceID, _ := natspkg.LoadOrCreateInstanceID(*dataDir)
 	if err := bus.StartDiscovery(natspkg.InstanceInfo{
 		ID:    instanceID,
 		Type:  "lucode",
-		Extra: map[string]any{"runner_only": true},
+		Extra: map[string]any{"runner_only": true, "version": versionpkg.Current("runner").Short},
 	}); err != nil {
 		log.Fatalf("discovery: %v", err)
 	}

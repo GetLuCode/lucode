@@ -418,6 +418,26 @@ CREATE TABLE IF NOT EXISTS card_images (
 		return fmt.Errorf("create card_images: %w", err)
 	}
 
+	// claude_commands — every claude command line this instance started or was told about:
+	// runner_id '' = started here, otherwise the runner that reported it
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS claude_commands (
+    id         TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    runner_id  TEXT NOT NULL DEFAULT '',
+    at         TEXT NOT NULL,
+    exe        TEXT NOT NULL DEFAULT '',
+    args       TEXT NOT NULL DEFAULT '[]',
+    cwd        TEXT NOT NULL DEFAULT '',
+    pid        INTEGER NOT NULL DEFAULT 0,
+    error      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_claude_commands_session ON claude_commands(session_id, at);
+CREATE INDEX IF NOT EXISTS idx_claude_commands_runner ON claude_commands(runner_id, at);
+`); err != nil {
+		return fmt.Errorf("create claude_commands: %w", err)
+	}
+
 	// session_workspaces — where claude last worked in a session (cwd, branch, worktree...), as JSON
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS session_workspaces (

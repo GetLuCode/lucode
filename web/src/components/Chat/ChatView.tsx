@@ -23,6 +23,7 @@ import { CacheBadge, useCacheCountdown } from './CacheBadge'
 import { ClaudeProcess } from './ClaudeProcess'
 import { TaskStatus } from './TaskStatus'
 import { CopyIdItems } from './CopyIdsMenu'
+import { SessionInfoModal } from './SessionInfoModal'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import { listOllamaModels, cancelTurn } from '../../api'
 import type { Message } from '../../types'
@@ -152,6 +153,7 @@ function ChatViewFull() {
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
+  const [infoOpen, setInfoOpen] = useState(false)
   const headerMenuRef = useRef<HTMLDivElement>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -586,6 +588,7 @@ function ChatViewFull() {
 
   return (
     <div className={`chat${filePreview ? ' chat--preview-open' : ''}${fileBrowserOpen ? ' chat--file-browser-open' : ''}`} onWheel={forwardWheelToMessages}>
+      {infoOpen && activeSessionId && <SessionInfoModal sessionId={activeSessionId} onClose={() => setInfoOpen(false)} />}
       <div className="chat__header">
         <div className="chat__header-menu" ref={headerMenuRef}>
           <button
@@ -636,7 +639,11 @@ function ChatViewFull() {
               <div className="chat__header-dropdown-divider" />
 
               {activeSessionId && !pendingSession ? (
-                <CopyIdItems sessionId={activeSessionId} taskId={session?.card_id} />
+                <CopyIdItems
+                  sessionId={activeSessionId}
+                  taskId={session?.card_id}
+                  onInfo={() => { setHeaderMenuOpen(false); setInfoOpen(true) }}
+                />
               ) : (() => {
                 const sessionIsOllama = activeSessionId != null && model.startsWith('ollama:')
                 const sessionIsClaude = activeSessionId != null && !model.startsWith('ollama:')

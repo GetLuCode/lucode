@@ -23,6 +23,7 @@ import (
 	natspkg "claude-orchestrator/internal/natsbus"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
+	versionpkg "claude-orchestrator/internal/version"
 	webui "claude-orchestrator/web"
 )
 
@@ -117,7 +118,7 @@ func main() {
 	if err := bus.StartDiscovery(natspkg.InstanceInfo{
 		ID:    instanceID,
 		Type:  "lucode",
-		Extra: map[string]any{"hub_only": *hubOnly},
+		Extra: map[string]any{"hub_only": *hubOnly, "version": versionpkg.Current("hub").Short},
 	}); err != nil {
 		log.Printf("[discovery] start error: %v", err)
 	}

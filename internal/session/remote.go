@@ -301,6 +301,12 @@ func (m *Manager) followRemoteTurn(ctx context.Context, t dbpkg.RunnerTurn, publ
 // and does not care whether the hub is listening.
 func (m *Manager) ServeRemoteTurn(payload []byte, sink *natspkg.TurnSink) {
 	send := func(ev map[string]any) {
+		if t, _ := ev["type"].(string); t == "claude_command" {
+			// what this machine launched, for its own history (the hub gets the event too)
+			if err := dbpkg.InsertClaudeCommand(m.db, dbpkg.ClaudeCommandFromEvent(ev, "")); err != nil {
+				log.Printf("[runner] save command: %v", err)
+			}
+		}
 		data, _ := json.Marshal(ev)
 		_ = sink.Event(data)
 	}

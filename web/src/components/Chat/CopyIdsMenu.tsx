@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { IconCopy, IconCheck } from '@tabler/icons-react'
+import { IconCopy, IconCheck, IconInfoCircle } from '@tabler/icons-react'
 import { copyText } from '../../lib/copyText'
 
 // Items of the chat header dropdown for an existing session: the model cannot be changed
-// there, so it offers "Copy session id" and, when the session works on a board card, "Copy task id".
-export function CopyIdItems({ sessionId, taskId }: { sessionId: string; taskId?: string | null }) {
+// there, so it offers "Info" (the command claude was started with), "Copy session id" and, when the
+// session works on a board card, "Copy task id".
+export function CopyIdItems({ sessionId, taskId, onInfo }: { sessionId: string; taskId?: string | null; onInfo?: () => void }) {
   const [copied, setCopied] = useState<'session' | 'task' | ''>('')
 
   const copy = async (kind: 'session' | 'task', id: string) => {
@@ -22,6 +23,12 @@ export function CopyIdItems({ sessionId, taskId }: { sessionId: string; taskId?:
 
   return (
     <>
+      {onInfo && (
+        <button className="chat__header-dropdown-item" onClick={onInfo}>
+          <IconInfoCircle size={14} />
+          <span>Info</span>
+        </button>
+      )}
       {item('session', sessionId)}
       {taskId && item('task', taskId)}
     </>

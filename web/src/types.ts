@@ -22,6 +22,36 @@ export interface Runner {
   hostname: string
   os: string
   self: boolean
+  version?: string      // short git commit it was built from ("+dirty" = uncommitted changes)
+  started_at?: string   // RFC3339
+  runner_only?: boolean // lucode-runner: it only executes; the hub never does
+}
+
+// A claude command line a runner launched (or failed to launch).
+export interface ClaudeCommand {
+  id: string
+  session_id: string
+  runner_id?: string
+  at: string            // RFC3339
+  exe: string
+  args: string[]
+  cwd: string
+  pid: number
+  error?: string
+}
+
+// GET /api/version of a runner.
+export interface RunnerVersion {
+  commit?: string
+  short: string
+  commit_time?: string
+  dirty: boolean
+  built_at?: string
+  started_at: string
+  go: string
+  os: string
+  arch: string
+  role?: string
 }
 
 // A preconfigured AI of a runner: a claude_config_dir plus the account it belongs to.

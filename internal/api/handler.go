@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/uuid"
 	"claude-orchestrator/internal/taskmcp"
+	versionpkg "claude-orchestrator/internal/version"
 )
 
 // toolNameRe matches valid Anthropic tool names: ^[a-zA-Z0-9_-]{1,128}$
@@ -93,6 +94,7 @@ func (h *Handler) SetMinimaxSubscriptionKey(key string) {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/health", h.health)
+	mux.HandleFunc("GET /api/version", h.version("hub"))
 
 	mux.HandleFunc("POST /api/projects", h.createProject)
 	mux.HandleFunc("GET /api/projects", h.listProjects)
@@ -229,6 +231,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)
 	mux.HandleFunc("DELETE /api/ai-profiles/{id}", h.deleteAIProfile)
 	mux.HandleFunc("GET /api/runners", h.listRunners)
+	mux.HandleFunc("GET /api/sessions/{id}/command", h.getSessionCommand)
+	// the hub is not an executor: what a runner launched and which build it is come from the runner
+	mux.HandleFunc("GET /api/runners/{rid}/commands", h.runnerAI(notARunner, func(*http.Request) string { return "/api/commands" }))
+	mux.HandleFunc("GET /api/runners/{rid}/version", h.runnerAI(notARunner, func(*http.Request) string { return "/api/version" }))
 	root := func(*http.Request) string { return "/api/ai-profiles" }
 	byID := func(tail string) func(*http.Request) string {
 		return func(r *http.Request) string { return "/api/ai-profiles/" + r.PathValue("id") + tail }
@@ -400,6 +406,14 @@ func spaHandler(spaFS fs.FS) http.Handler {
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// version says which build is running here (git commit, dirty flag, build and start
+// times). A hub answers it for itself; on a runner it is reached over the RPC bridge.
+func (h *Handler) version(role string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		jsonResp(w, http.StatusOK, versionpkg.Current(role))
+	}
 }
 
 func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {

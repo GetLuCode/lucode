@@ -78,6 +78,7 @@ func main() {
 		}
 		fmt.Printf("GET %s -> %d %s\n", path, resp.StatusCode, s)
 	}
+	call("/api/version")
 	call("/api/ai-profiles")
 	call("/api/fs/dirs?path=" + url.QueryEscape(*dir))
 	if *noTurns {
@@ -134,6 +135,7 @@ func main() {
 	}
 	turn(1, "Remember the secret word PINEAPPLE. Reply with just: ok")
 	turn(2, "What was the secret word? Answer with just the word.")
+	call("/api/commands?limit=5") // what the runner says it launched
 	bus.RunnerClose(runner.ID, sess)
 	time.Sleep(500 * time.Millisecond)
 	os.Exit(0)

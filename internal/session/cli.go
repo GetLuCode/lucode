@@ -275,6 +275,12 @@ func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]
 				"session_id": sessID,
 				"message":    map[string]any{"role": role, "content": content},
 			}
+		case "claude_command":
+			// the command a claude process was started with, here or on the runner
+			if err := dbpkg.InsertClaudeCommand(m.db, dbpkg.ClaudeCommandFromEvent(ev, opts.RunnerID)); err != nil {
+				log.Printf("[session] save command of %s: %v", sessID, err)
+			}
+			return // it can carry the whole system prompt: not for the chat stream
 		case "claude_workspace":
 			// each turn's init reports the start cwd; once the agent entered a worktree
 			// that one stays the session's workspace (resuming does not leave it)
