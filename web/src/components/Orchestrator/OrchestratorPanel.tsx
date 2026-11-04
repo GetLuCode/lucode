@@ -323,8 +323,20 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     )
   }
 
+  // Wheel outside the message column (side margins, header, input) scrolls the messages too,
+  // unless the pointer is over something that scrolls by itself.
+  const forwardWheel = (e: React.WheelEvent<HTMLElement>) => {
+    const list = scrollRef.current
+    if (!list || e.ctrlKey || list.contains(e.target as Node)) return
+    for (let el = e.target as HTMLElement | null; el && el !== e.currentTarget; el = el.parentElement) {
+      const oy = getComputedStyle(el).overflowY
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return
+    }
+    list.scrollTop += e.deltaY
+  }
+
   return (
-    <aside className={`orch${full ? ' orch--full' : ''}`}>
+    <aside className={`orch${full ? ' orch--full' : ''}`} onWheel={forwardWheel}>
       <header className="orch__header">
         <ModelIcon model={model} size={17} className="orch__model-icon" />
         <span className="orch__title">Orchestrator</span>
