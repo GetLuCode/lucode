@@ -118,8 +118,9 @@ export function RunningView() {
                       return (
                         <>
                           {c && (
-                            <span className="running-item__meta">
-                              Task: {c.title} · <span className="running-item__task-status">{lists[c.list_id] ?? '—'}</span>
+                            <span className="running-item__meta running-item__task">
+                              <span className="running-item__task-title" title={c.title}>Task: {c.title}</span>
+                              <span className="running-item__task-status"> · {lists[c.list_id] ?? '—'}</span>
                             </span>
                           )}
                           <span className="running-item__meta">
