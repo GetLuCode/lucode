@@ -2,7 +2,7 @@ import type { ClaudeCommand } from '../types'
 
 // One argument as a shell would need it: quoted when it has spaces or quotes.
 function quoteArg(a: string): string {
-  return /^[\w@%+=:,./\-]+$/.test(a) ? a : `"${a.replace(/(["\])/g, '\$1').replace(/\r?\n/g, '\n')}"`
+  return /^[\w@%+=:,./\\-]+$/.test(a) ? a : `"${a.replace(/(["\\])/g, '\\$1').replace(/\r?\n/g, '\\n')}"`
 }
 
 // The command as one line, to copy it.
