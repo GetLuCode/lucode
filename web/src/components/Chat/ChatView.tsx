@@ -22,7 +22,7 @@ import { ContextBar } from './ContextBar'
 import { CacheBadge, useCacheCountdown } from './CacheBadge'
 import { ClaudeProcess } from './ClaudeProcess'
 import { TaskStatus } from './TaskStatus'
-import { CopySessionId, CopyId } from './CopySessionId'
+import { CopyIdsMenu } from './CopyIdsMenu'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import { listOllamaModels, cancelTurn } from '../../api'
 import type { Message } from '../../types'
@@ -705,8 +705,7 @@ function ChatViewFull() {
         <div className="chat__header-right">
           {activeSessionId && !pendingSession && isClaudeModel && <CacheBadge cache={cache} />}
           {activeSessionId && !pendingSession && isClaudeModel && <ClaudeProcess sessionId={activeSessionId} />}
-          {session?.card_id && <CopyId id={session.card_id} label="task" />}
-          {activeSessionId && !pendingSession && <CopySessionId sessionId={activeSessionId} />}
+          {activeSessionId && !pendingSession && <CopyIdsMenu sessionId={activeSessionId} taskId={session?.card_id} />}
           {sessionUsage && (
             <span className="chat__usage-total">
               ↑{fmt(sessionUsage.input_tokens)} ↓{fmt(sessionUsage.output_tokens)} tokens

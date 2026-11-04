@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import {
   IconPlus, IconX, IconTrash, IconArchive,
   IconArchiveOff, IconRobot, IconCalendar, IconLink,
-  IconTag, IconGripVertical, IconRefresh,
+  IconTag, IconGripVertical, IconRefresh, IconCopy,
 } from '@tabler/icons-react'
+import { copyText } from '../../lib/copyText'
 import { useStore } from '../../store'
 import type { Agent, CardComment, KanbanCard, KanbanList } from '../../types'
 import * as api from '../../api'
@@ -249,6 +250,10 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
               >⋯</button>
               {menuOpen && (
                 <div className="nav-tree__dropdown" style={{ right: 0, left: 'auto' }}>
+                  <button className="nav-tree__menu-item" onClick={() => { copyText(card.id); setMenuOpen(false) }} title={card.id}>
+                    <IconCopy size={14} />
+                    <span>Copy task id</span>
+                  </button>
                   <button className="nav-tree__menu-item" onClick={handleReset}>
                     <IconRefresh size={14} />
                     <span>Reset</span>
