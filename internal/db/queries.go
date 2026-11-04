@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -140,6 +141,10 @@ type Session struct {
 	// Kind is "" for an ordinary chat and SessionKindOrchestrator for the project's
 	// main chat (the right-hand panel), which is not listed with the other sessions.
 	Kind string `json:"kind,omitempty"`
+	// Worktree and Branch are where the agent works on its task, read from its transcript
+	// (EnterWorktree / git worktree add); only listSessions fills them.
+	Worktree string `json:"worktree,omitempty"`
+	Branch   string `json:"branch,omitempty"`
 }
 
 const SessionKindOrchestrator = "orchestrator"
@@ -273,6 +278,29 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+var (
+	enterWorktreeRe = regexp.MustCompile(`Created worktree at "([^"]+)" on branch "([^"]+)"`)
+	gitWorktreeRe   = regexp.MustCompile(`git worktree add (\S+) -b ([^\s"\\]+)`)
+	quoteNorm       = strings.NewReplacer(`“`, `"`, `”`, `"`, "“", `"`, "”", `"`, `\"`, `"`)
+)
+
+// SessionWorktree finds the git worktree path and branch a session's agent created, from its
+// newest EnterWorktree result or `git worktree add -b` command; empty when it has none.
+func SessionWorktree(db *sql.DB, sessionID string) (path, branch string) {
+	var content string
+	if db.QueryRow(`SELECT content FROM messages WHERE session_id=? AND content LIKE '%Created worktree at%' ORDER BY seq DESC LIMIT 1`, sessionID).Scan(&content) == nil {
+		if m := enterWorktreeRe.FindStringSubmatch(quoteNorm.Replace(content)); m != nil {
+			return m[1], m[2]
+		}
+	}
+	if db.QueryRow(`SELECT content FROM messages WHERE session_id=? AND role='tool_use' AND content LIKE '%git worktree add%' ORDER BY seq DESC LIMIT 1`, sessionID).Scan(&content) == nil {
+		if m := gitWorktreeRe.FindStringSubmatch(content); m != nil {
+			return m[1], m[2]
+		}
+	}
+	return "", ""
 }
 
 // UpdateSessionContextUsage persists the last known context window breakdown for a session.

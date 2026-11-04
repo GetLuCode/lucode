@@ -503,6 +503,11 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	if sessions == nil {
 		sessions = []dbpkg.Session{}
 	}
+	for i := range sessions {
+		if sessions[i].CardID != "" {
+			sessions[i].Worktree, sessions[i].Branch = dbpkg.SessionWorktree(h.db, sessions[i].ID)
+		}
+	}
 	jsonResp(w, http.StatusOK, sessions)
 }
 

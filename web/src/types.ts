@@ -60,6 +60,8 @@ export interface Session {
   card_id?: string        // the task (kanban card) this session belongs to
   agent_id?: string       // the agent running it
   kind?: 'orchestrator' | '' // the project's main chat (right-hand panel)
+  worktree?: string       // git worktree the agent works in (from its transcript)
+  branch?: string         // its branch
 }
 
 export interface MessageUsage {
