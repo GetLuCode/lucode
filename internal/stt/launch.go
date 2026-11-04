@@ -16,10 +16,11 @@ import (
 )
 
 // The worker is the one of SttApp (a Python gRPC server). lucode starts it on demand
-// with the small int8 model (about 0.6 GB, runs on CPU) and keeps its port and token
-// in ~/.lucode/stt-worker.json so a later lucode finds it again.
+// with Parakeet TDT 0.6B v3 (NeMo, fp16) on the GPU and keeps its port and token in
+// ~/.lucode/stt-worker.json so a later lucode finds it again.
 //
-// Overrides: LUCODE_STT_DIR (folder with stt_worker.py and models\), LUCODE_STT_PYTHON.
+// Overrides: LUCODE_STT_DIR (folder with stt_worker.py and models\), LUCODE_STT_PYTHON,
+// LUCODE_STT_ENGINE=sherpa (the int8 ONNX model on the CPU, about 0.6 GB of RAM, instead).
 
 const (
 	defaultDir    = `C:\projects\fishaudio_oct\SttApp`
@@ -34,6 +35,24 @@ type state struct {
 	Token string `json:"token"`
 	PID   int    `json:"pid"`
 	Vosk  bool   `json:"vosk"` // started with the Vosk model (needed for a custom wake phrase)
+	// Engine it was started with ("nemo" = GPU, "sherpa" = CPU int8); empty in files written
+	// before the GPU model existed, which were always sherpa.
+	Engine string `json:"engine"`
+}
+
+// engine is the model lucode starts the worker with: nemo (GPU, default) or sherpa (CPU).
+func engine() string {
+	if os.Getenv("LUCODE_STT_ENGINE") == "sherpa" {
+		return "sherpa"
+	}
+	return "nemo"
+}
+
+func (st state) engineName() string {
+	if st.Engine == "" {
+		return "sherpa"
+	}
+	return st.Engine
 }
 
 func stateDir() string {
@@ -108,11 +127,12 @@ func Ensure(ctx context.Context) (*Client, Info, error) {
 
 	if c, info, ok := Running(ctx); ok {
 		st, _ := readState()
-		if !hasVosk || st.Vosk {
+		if (!hasVosk || st.Vosk) && st.engineName() == engine() {
 			return c, info, nil
 		}
-		// A worker started without the Vosk model cannot detect a custom wake phrase:
-		// replace it (the model is reloaded, a few seconds).
+		// A worker started without the Vosk model cannot detect a custom wake phrase, and one
+		// started with another model than the wanted one is the wrong one: replace it (the
+		// model is reloaded, a few seconds).
 		_ = c.Shutdown(ctx)
 		c.Close()
 		for i := 0; i < 20; i++ {
@@ -129,7 +149,11 @@ func Ensure(ctx context.Context) (*Client, Info, error) {
 	python := envOr("LUCODE_STT_PYTHON", defaultPython)
 	script := filepath.Join(dir, "stt_worker.py")
 	model := filepath.Join(dir, "models", modelName)
-	for _, p := range []string{python, script, model} {
+	need := []string{python, script}
+	if engine() == "sherpa" {
+		need = append(need, model) // the GPU model comes from the Hugging Face cache instead
+	}
+	for _, p := range need {
 		if _, err := os.Stat(p); err != nil {
 			return nil, Info{}, fmt.Errorf("voice worker: %s not found (set LUCODE_STT_DIR / LUCODE_STT_PYTHON)", p)
 		}
@@ -147,9 +171,13 @@ func Ensure(ctx context.Context) (*Client, Info, error) {
 	if err != nil {
 		return nil, Info{}, err
 	}
-	cmd := exec.Command(python, "-u", script,
-		"--port", fmt.Sprint(port), "--engine-key", "sherpa-int8", "--idle-timeout", fmt.Sprint(idleSeconds),
-		"--engine", "sherpa", "--model-dir", model)
+	args := []string{"-u", script, "--port", fmt.Sprint(port), "--idle-timeout", fmt.Sprint(idleSeconds)}
+	if engine() == "sherpa" {
+		args = append(args, "--engine-key", "sherpa-int8", "--engine", "sherpa", "--model-dir", model)
+	} else {
+		args = append(args, "--engine-key", "nemo-fp16", "--engine", "nemo", "--fp16")
+	}
+	cmd := exec.Command(python, args...)
 	if hasVosk {
 		cmd.Args = append(cmd.Args, "--vosk-model-dir", vosk)
 	}
@@ -162,7 +190,7 @@ func Ensure(ctx context.Context) (*Client, Info, error) {
 		return nil, Info{}, err
 	}
 	go func() { _ = cmd.Wait(); logf.Close() }()
-	data, _ := json.Marshal(state{Port: port, Token: token, PID: cmd.Process.Pid, Vosk: hasVosk})
+	data, _ := json.Marshal(state{Port: port, Token: token, PID: cmd.Process.Pid, Vosk: hasVosk, Engine: engine()})
 	_ = os.WriteFile(filepath.Join(stateDir(), "stt-worker.json"), data, 0o600)
 
 	c, err := Dial(port, token)

@@ -20,7 +20,8 @@ import (
 // it to the voice worker (Parakeet, int8 model) over gRPC and sends the transcripts
 // back. Protocol of GET /ws/stt:
 //
-//	client -> {"type":"start","sample_rate":48000,"wake":true,"wake_backend":"vosk","wake_phrase":"hey veronica"}   text, first message (wake* optional)
+//	client -> {"type":"start","sample_rate":48000,"wake":true,"wake_backend":"vosk","wake_phrase":"hey veronica",
+//	           "silence_seconds":0.6,"stable_seconds":2,"stable_repeats":10}   text, first message (wake* and the phrase-end options are optional)
 //	client -> PCM16 mono little-endian               binary, ~40 ms per frame
 //	client -> {"type":"flush"}                       closes the phrase in progress
 //	server -> {"type":"loading"|"ready"|"speech"|"wake"|"wake_timeout"|"realtime"|"final"|"error", "text":...}
@@ -39,6 +40,36 @@ func sttStableSeconds() float64 {
 		return math.Min(5, math.Max(0.3, v))
 	}
 	return 0
+}
+
+// clampSilence is the audio silence that closes a phrase (worker silence_seconds, 0.2-5);
+// 0 leaves the worker default (0.6 s).
+func clampSilence(v *float64) float64 {
+	if v == nil || math.IsNaN(*v) {
+		return 0
+	}
+	return math.Min(5, math.Max(0.2, *v))
+}
+
+// stableSecondsOr is the page's stable_seconds (0 = off, else 0.3-5) or, when it sends none,
+// the LUCODE_STT_STABLE_SECONDS default.
+func stableSecondsOr(v *float64) float64 {
+	if v == nil || math.IsNaN(*v) {
+		return sttStableSeconds()
+	}
+	if *v <= 0 {
+		return 0
+	}
+	return math.Min(5, math.Max(0.3, *v))
+}
+
+// clampRepeats is stable_repeats (0 = off, up to 1000); nil keeps the worker default.
+func clampRepeats(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	n := min(1000, max(0, *v))
+	return &n
 }
 
 // sttEndpointIdle is how long the partial text may stay unchanged before lucode closes
@@ -102,6 +133,10 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 		Wake        bool   `json:"wake"`
 		WakeBackend string `json:"wake_backend"`
 		WakePhrase  string `json:"wake_phrase"`
+		// How the worker decides a phrase is over; each one that is absent keeps its default.
+		SilenceSeconds *float64 `json:"silence_seconds"` // audio silence, 0.2-5
+		StableSeconds  *float64 `json:"stable_seconds"`  // partial text unchanged, 0 = off, 0.3-5
+		StableRepeats  *int     `json:"stable_repeats"`  // identical partials in a row, 0 = off, 0-1000
 	}
 	if _, data, err := conn.ReadMessage(); err != nil || json.Unmarshal(data, &start) != nil || start.Type != "start" {
 		send(map[string]any{"type": "error", "text": "expected a start message"})
@@ -134,7 +169,9 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 	sess, err := c.Listen(ctx, stt.ListenConfig{
 		SampleRate: start.SampleRate, Takeover: true,
 		Wake: start.Wake, WakeBackend: start.WakeBackend, WakePhrase: start.WakePhrase,
-		StableSeconds: sttStableSeconds(),
+		SilenceSeconds: clampSilence(start.SilenceSeconds),
+		StableSeconds:  stableSecondsOr(start.StableSeconds),
+		StableRepeats:  clampRepeats(start.StableRepeats),
 	})
 	if err != nil {
 		send(map[string]any{"type": "error", "text": err.Error()})

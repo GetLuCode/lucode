@@ -145,6 +145,7 @@ type ListenConfig struct {
 	SampleRate     int
 	SilenceSeconds float64 // 0 = worker default
 	StableSeconds  float64 // 0 = off
+	StableRepeats  *int    // identical partials in a row that close a phrase; nil = worker default (10), 0 = off
 	Takeover       bool
 	// Hotword: only transcribe after the wake word. Backend is "vosk" (Phrase is the wake
 	// phrase) or "oww" (openWakeWord, "hey jarvis").
@@ -184,6 +185,10 @@ func encodeConfig(cfg ListenConfig) []byte {
 	if cfg.StableSeconds > 0 {
 		m = protowire.AppendTag(m, 9, protowire.Fixed64Type)
 		m = protowire.AppendFixed64(m, math.Float64bits(cfg.StableSeconds))
+	}
+	if cfg.StableRepeats != nil {
+		m = protowire.AppendTag(m, 12, protowire.VarintType)
+		m = protowire.AppendVarint(m, uint64(*cfg.StableRepeats))
 	}
 	req := protowire.AppendTag(nil, 1, protowire.BytesType)
 	return protowire.AppendBytes(req, m)
