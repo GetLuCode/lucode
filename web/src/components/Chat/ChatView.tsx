@@ -557,10 +557,22 @@ function ChatViewFull() {
 
   const virtualItems = virtualizer.getVirtualItems()
 
+  // Wheel over the chat outside the message list (side margins, header, input area) scrolls the
+  // list too, unless the pointer is over something that scrolls by itself.
+  const forwardWheelToMessages = (e: React.WheelEvent<HTMLDivElement>) => {
+    const list = scrollRef.current
+    if (!list || e.ctrlKey || list.contains(e.target as Node)) return
+    for (let el = e.target as HTMLElement | null; el && el !== e.currentTarget; el = el.parentElement) {
+      const oy = getComputedStyle(el).overflowY
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return
+    }
+    list.scrollTop += e.deltaY
+  }
+
   const headerName = isPending ? 'New session' : (session?.name || 'Session')
 
   return (
-    <div className={`chat${filePreview ? ' chat--preview-open' : ''}${fileBrowserOpen ? ' chat--file-browser-open' : ''}`}>
+    <div className={`chat${filePreview ? ' chat--preview-open' : ''}${fileBrowserOpen ? ' chat--file-browser-open' : ''}`} onWheel={forwardWheelToMessages}>
       <div className="chat__header">
         <div className="chat__header-menu" ref={headerMenuRef}>
           <button
@@ -755,6 +767,7 @@ function ChatViewFull() {
           ))}
         </div>
 
+        <div className="chat__column">
         {/* Sending indicator: shown while message is in-flight to server */}
         {isSending && (
           <div className="msg msg--user" style={{ marginTop: '12px' }}>
@@ -792,6 +805,8 @@ function ChatViewFull() {
         {sessionStatus === 'error' && sessionError && (
           <SessionErrorBanner error={sessionError} />
         )}
+
+        </div>
 
         <div ref={bottomRef} />
       </div>
