@@ -16,6 +16,9 @@ import (
 const fakeAnswer = `<!doctype html><body>
 <div data-scope-id="turn"><div data-container-id="main-col">
  <div role="heading" aria-level="3">Elementos <!--x--></div>
+ <h4>Una sección</h4>
+ <div role="heading" aria-level="5">Un detalle</div>
+ <h6>Una nota</h6>
  <div style="display:block">Un párrafo con <strong>negritas</strong> y <em>cursiva</em>, y un enlace a
    <div style="display:inline"><a href="/goto?url=CAESabc">Wikipedia<!--TgQPHd|||[[&quot;https://es.wikipedia.org/wiki/A?x=1&amp;y=2&quot;,null,[1]]]--></a></div>.
    <button>Copiar</button></div>
@@ -52,7 +55,11 @@ func TestMarkdownConversion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Google's h4 and h5 are shown as h2 and h3; the other levels stay
 	want := "### Elementos\n\n" +
+		"## Una sección\n\n" +
+		"### Un detalle\n\n" +
+		"###### Una nota\n\n" +
 		"Un párrafo con **negritas** y *cursiva*, y un enlace a [Wikipedia](https://es.wikipedia.org/wiki/A?x=1&y=2).\n\n" +
 		"- Uno\n- Dos\n\n" +
 		"1. Primero\n2. Segundo\n\n" +
