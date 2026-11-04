@@ -141,7 +141,9 @@
     const level = role === 'heading' ? parseInt(node.getAttribute('aria-level') || '3', 10) : (/^H[2-6]$/.test(tag) ? parseInt(tag[1], 10) : 0);
     if (level) {
       const text = children(node, ctx).replace(/\s+/g, ' ').trim();
-      return text ? '\n\n' + '#'.repeat(Math.min(Math.max(level, 1), 6)) + ' ' + text + '\n\n' : '';
+      // Google's answers use h4/h5 for what are really sections: shown as h2/h3
+      const shown = level === 4 ? 2 : level === 5 ? 3 : level;
+      return text ? '\n\n' + '#'.repeat(Math.min(Math.max(shown, 1), 6)) + ' ' + text + '\n\n' : '';
     }
     const inner = children(node, ctx);
     if (isInline(node)) return inner;
