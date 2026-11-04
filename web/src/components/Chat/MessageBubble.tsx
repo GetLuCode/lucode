@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { marked } from 'marked'
+import { marked, type Token, type TokensList } from 'marked'
 import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
@@ -17,9 +17,7 @@ marked.use({
     // fenced code gets syntax highlighting (the language comes after the opening fence)
     code({ text, lang }) {
       const { html, language } = highlightCode(text, lang)
-      // a mermaid block is drawn as a diagram by MarkdownContent (and stays as code if it cannot)
-      const diagram = /^mermaid/i.test((lang ?? '').trim()) ? ' data-diagram="mermaid"' : ''
-      return `<pre${diagram}><code class="hljs${language ? ` language-${language}` : ''}">${html}</code></pre>`
+      return `<pre><code class="hljs${language ? ` language-${language}` : ''}">${html}</code></pre>`
     },
   },
 })
@@ -228,25 +226,54 @@ function UserContent({ content }: { content: string }) {
   )
 }
 
+type Segment = { kind: 'html'; html: string } | { kind: 'mermaid'; source: string }
+
+// The markdown as html pieces with the mermaid blocks apart, so each diagram is a React
+// component of its own (the html is React's: drawing into it by hand would be undone on re-render).
+function splitSegments(content: string): Segment[] {
+  const tokens = marked.lexer(content)
+  const out: Segment[] = []
+  let buf: Token[] = []
+  const flush = () => {
+    if (!buf.length) return
+    const piece = Object.assign([...buf], { links: tokens.links }) as unknown as TokensList
+    out.push({ kind: 'html', html: marked.parser(piece) })
+    buf = []
+  }
+  for (const t of tokens) {
+    if (t.type === 'code' && /^mermaid/i.test((t.lang ?? '').trim())) {
+      flush()
+      out.push({ kind: 'mermaid', source: t.text })
+    } else buf.push(t)
+  }
+  flush()
+  return out
+}
+
 function MarkdownContent({ content }: { content: string }) {
-  const html = useMemo(() => marked.parse(content) as string, [content])
-  const ref = useRef<HTMLDivElement>(null)
-  // draw the mermaid blocks; one that does not parse (or is still streaming) stays as code
+  const segments = useMemo(() => splitSegments(content), [content])
+  return (
+    <div className="msg__markdown">
+      {segments.map((seg, i) => seg.kind === 'mermaid'
+        ? <MermaidDiagram key={i} source={seg.source} />
+        : <div key={i} className="msg__md-part" dangerouslySetInnerHTML={{ __html: seg.html }} />)}
+    </div>
+  )
+}
+
+// A mermaid block: the diagram once drawn; as code while it loads, if it is still streaming in
+// or if it is not valid mermaid.
+function MermaidDiagram({ source }: { source: string }) {
+  const [svg, setSvg] = useState<string | null>(null)
   useEffect(() => {
-    const root = ref.current
-    if (!root) return
     let cancelled = false
-    root.querySelectorAll<HTMLElement>('pre[data-diagram="mermaid"]').forEach(async pre => {
-      const svg = await renderMermaid(pre.textContent ?? '')
-      if (cancelled || !svg || !pre.isConnected) return
-      const box = document.createElement('div')
-      box.className = 'mermaid-diagram'
-      box.innerHTML = svg
-      pre.replaceWith(box)
-    })
+    setSvg(null)
+    renderMermaid(source).then(r => { if (!cancelled) setSvg(r) })
     return () => { cancelled = true }
-  }, [html])
-  return <div ref={ref} className="msg__markdown" dangerouslySetInnerHTML={{ __html: html }} />
+  }, [source])
+  if (svg) return <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} />
+  const { html } = highlightCode(source, '')
+  return <pre><code className="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>
 }
 
 function TokenBadge({ usage }: { usage: NonNullable<Message['usage']> }) {

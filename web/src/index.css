@@ -7045,4 +7045,4 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 
 /* mermaid diagrams in the chat */
 .mermaid-diagram { margin: 12px 0; padding: 12px; overflow-x: auto; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
-.mermaid-diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.mermaid-diagram svg { display: block; min-width: 560px; max-width: 100%; height: auto; margin: 0 auto; }
