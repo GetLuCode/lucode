@@ -9,13 +9,22 @@ function osLabel(os: string) {
   return 'Linux'
 }
 
+// What an instance does: a hub orchestrates and runs no claude (--hub-only), a runner
+// runs claude for a hub (lucode-runner), a plain lucode does both.
+function roleLabel(info: InstanceInfo) {
+  if (info.type === 'aiapi') return 'aiapi'
+  if (info.extra?.hub_only) return 'hub'
+  if (info.extra?.runner_only) return 'runner'
+  return 'lucode'
+}
+
 function InstanceCard({ info, badge }: { info: InstanceInfo; badge?: string }) {
   const elapsed = Math.round((Date.now() - new Date(info.started_at).getTime()) / 60000)
   const uptime = elapsed < 60 ? `${elapsed}m` : `${Math.round(elapsed / 60)}h`
   return (
     <div className="instance-card">
       <div className="instance-card__header">
-        <span className="instance-card__type">{info.type}</span>
+        <span className="instance-card__type">{roleLabel(info)}</span>
         {badge && <span className="instance-card__badge">{badge}</span>}
       </div>
       <div className="instance-card__hostname">{info.hostname}</div>
