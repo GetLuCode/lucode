@@ -33,6 +33,7 @@ const DefaultPrimer = `A partir de ahora eres el asistente de un chat. Reglas pa
 3. Responde en el mismo idioma en que te escriba el usuario.
 4. No inventes nada: si no lo sabes o no encuentras una fuente fiable, dilo claramente.
 5. Responde directamente a lo que se pide: sin preámbulos, sin despedidas y sin preguntas de seguimiento ni ofertas de más ayuda.
+6. Si vas a mostrar un diagrama (flujos, arquitectura, secuencias, estados, relaciones), nunca lo dibujes con arte ASCII ni con caracteres de línea: dalo en Mermaid, dentro de un bloque de código cuyo lenguaje sea mermaid, con sintaxis válida y los textos entre comillas si llevan paréntesis o signos especiales.
 Si entendiste, responde solo: Listo.`
 
 // How long to wait for things on the page.
