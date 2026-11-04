@@ -300,6 +300,11 @@ export const refreshAIProfile = (runnerId: string, id: string) =>
   req<AIProfile>('POST', `/api/runners/${runnerId}/ai-profiles/${id}/refresh`)
 export const deleteAIProfile = (runnerId: string, id: string) =>
   req<void>('DELETE', `/api/runners/${runnerId}/ai-profiles/${id}`)
+// Plan usage windows of an AI's account (Anthropic /api/oauth/usage). utilization is 0-100.
+export interface UsageWindow { utilization: number | null; resets_at: string | null }
+export interface AIProfileUsage { five_hour?: UsageWindow | null; seven_day?: UsageWindow | null; seven_day_opus?: UsageWindow | null; seven_day_sonnet?: UsageWindow | null }
+export const getAIProfileUsage = (runnerId: string, id: string) =>
+  req<AIProfileUsage>('GET', `/api/runners/${runnerId}/ai-profiles/${id}/usage`)
 export const setProjectAIAPI = (projectId: string, aiapiInstanceId: string) =>
   req<void>('PATCH', `/api/projects/${projectId}/aiapi`, { aiapi_instance_id: aiapiInstanceId })
 
