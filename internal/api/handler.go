@@ -640,9 +640,20 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		opts.Executor, opts.Persistent, opts.Resume = "aimode", false, false
 	}
 
-	if h.hubOnly && opts.Executor == "claude" { // this path would start claude on this machine
-		http.Error(w, "this instance only orchestrates (--hub-only) and runs no claude: run this session through its card or the orchestrator, on a runner", http.StatusBadRequest)
-		return
+	if opts.Executor != "aimode" {
+		// Where it runs and with which AI: the agent's runner, else the project's.
+		// On a hub this sends the turn to the runner instead of starting claude here.
+		var envAgent dbpkg.Agent
+		if agent != nil {
+			envAgent = *agent
+		}
+		env, err := h.resolveTurnEnv(envAgent, proj)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		opts.WorkDirs, opts.ClaudeConfigDir = env.WorkDirs, env.ConfigDir
+		opts.RunnerID, opts.AIProfileID = env.RunnerID, env.AIProfileID
 	}
 
 	// If the session has an account, pass it to aiapi (which will resolve it to the claude_config_dir)
