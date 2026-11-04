@@ -554,6 +554,9 @@ function KanbanCardItem({ card, agents, onClick, onReview, onDragStart, onDragOv
       {card.description && (
         <p className="kcard__desc">{card.description}</p>
       )}
+      {runStatus === 'error' && card.last_error && (
+        <p className="kcard__error" title={card.last_error}>{card.last_error}</p>
+      )}
       {onReview && (
         <button
           className="kcard__review-btn"
@@ -575,7 +578,7 @@ function KanbanCardItem({ card, agents, onClick, onReview, onDragStart, onDragOv
           <span key={t} className="kcard__tag">{t}</span>
         ))}
         {badge && (
-          <span className="kcard__status" style={{ color: badge.color }}>{badge.label}</span>
+          <span className="kcard__status" style={{ color: badge.color }} title={runStatus === 'error' ? card.last_error : undefined}>{badge.label}</span>
         )}
         {card.depends_on.length > 0 && (
           <span className="kcard__deps" title={`${card.depends_on.length} dependency`}>

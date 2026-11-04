@@ -152,3 +152,24 @@ func TestEnsureReviewListOnOldProject(t *testing.T) {
 		}
 	}
 }
+
+func TestListedCardCarriesItsSessionError(t *testing.T) {
+	h, pid, lists := newTaskTestHandler(t)
+	card := newCard(t, h, pid, lists["inprogress"], "Fails")
+	sess := dbpkg.Session{ID: "s1", ProjectID: pid, Name: "s", Model: "haiku", Status: "error", CardID: card.ID}
+	if err := dbpkg.InsertSession(h.db, sess); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{"old failure", "start claude: chdir lucode: not found"} {
+		if err := dbpkg.InsertCardComment(h.db, dbpkg.CardComment{ID: body, CardID: card.ID, SessionID: "s1", Author: "lucode", Kind: "error", Body: body}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := dbpkg.LatestCardErrors(h.db, pid)[card.ID]; got != "start claude: chdir lucode: not found" {
+		t.Errorf("last error = %q", got)
+	}
+	dbpkg.UpdateSessionStatus(h.db, "s1", "idle") // recovered: no error shown
+	if got := dbpkg.LatestCardErrors(h.db, pid)[card.ID]; got != "" {
+		t.Errorf("after recovering: %q", got)
+	}
+}

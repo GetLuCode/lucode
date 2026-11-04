@@ -242,6 +242,7 @@ export interface KanbanCard {
   position: number
   archived: boolean
   parent_id: string
+  last_error?: string  // why the task's session is in error (newest error note)
   created_at: string
   updated_at: string
 }

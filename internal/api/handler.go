@@ -2680,6 +2680,11 @@ func (h *Handler) listKanbanCards(w http.ResponseWriter, r *http.Request) {
 	if cards == nil {
 		cards = []dbpkg.KanbanCard{}
 	}
+	if errs := dbpkg.LatestCardErrors(h.db, pid); len(errs) > 0 {
+		for i := range cards {
+			cards[i].LastError = errs[cards[i].ID]
+		}
+	}
 	json.NewEncoder(w).Encode(cards)
 }
 

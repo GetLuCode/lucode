@@ -1044,6 +1044,8 @@ export const useStore = create<AppState>((set, get) => ({
 
       case 'error':
         set(s => ({
+          // a task's error note is saved by the hub just before this event: re-read the board
+          boardVersion: s.sessions.some(x => x.id === event.session_id && x.card_id) ? s.boardVersion + 1 : s.boardVersion,
           sessionStatus: { ...s.sessionStatus, [event.session_id]: 'error' },
           sessions: s.sessions.map(sess =>
             sess.id === event.session_id ? { ...sess, status: 'error' } : sess

@@ -1729,6 +1729,9 @@ type KanbanCard struct {
 	ParentID    string    `json:"parent_id"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// LastError is why the task's session is in error (its newest error note); only
+	// listKanbanCards fills it, nothing is stored on the card.
+	LastError string `json:"last_error,omitempty"`
 }
 
 func scanKanbanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
@@ -2051,6 +2054,27 @@ func InsertCardComment(db *sql.DB, c CardComment) error {
 		c.ID, c.CardID, c.SessionID, c.Author, c.Kind, c.Body,
 	)
 	return err
+}
+
+// LatestCardErrors maps each task of the project whose session is in error to its
+// newest error note.
+func LatestCardErrors(db *sql.DB, projectID string) map[string]string {
+	out := map[string]string{}
+	rows, err := db.Query(`SELECT c.card_id, c.body FROM card_comments c
+		JOIN kanban_cards k ON k.id=c.card_id AND k.project_id=?
+		WHERE c.kind='error' AND EXISTS (SELECT 1 FROM sessions s WHERE s.card_id=c.card_id AND s.status='error')
+		ORDER BY c.created_at ASC, c.rowid ASC`, projectID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, body string
+		if rows.Scan(&id, &body) == nil {
+			out[id] = body
+		}
+	}
+	return out
 }
 
 func ListCardComments(db *sql.DB, cardID string) ([]CardComment, error) {

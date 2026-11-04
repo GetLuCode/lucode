@@ -7093,3 +7093,15 @@ input[type="date"].kmodal__input { color-scheme: dark; }
   cursor: pointer;
 }
 .kcard__review-btn:hover { background: var(--accent); color: #000; }
+
+.kcard__error {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #ef4444;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}

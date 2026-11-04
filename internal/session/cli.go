@@ -299,9 +299,12 @@ func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]
 				dbpkg.UpdateSessionStatus(m.db, sessID, status)
 			}
 		case "error":
+			msg, _ := ev["message"].(string)
 			if code, _ := ev["code"].(string); code != "" && m.OnTurnFailed != nil {
-				msg, _ := ev["message"].(string)
 				go m.OnTurnFailed(sessID, code, msg)
+			} else if msg != "" {
+				// keep the reason on the task: the event only reaches the chat that is open
+				m.noteTaskError(sessID, msg)
 			}
 		case "turn_usage":
 			tu := dbpkg.TurnUsage{
