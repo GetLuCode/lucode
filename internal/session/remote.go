@@ -1,9 +1,9 @@
 package session
 
 import (
-	"fmt"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 	"time"
