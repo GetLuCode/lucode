@@ -1,4 +1,4 @@
-import type { AIProfile, Runner, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { AIProfile, Runner, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -100,7 +100,13 @@ export const newOrchestratorSession = (pid: string) => req<Session>('POST', `/ap
 // History of the local Google AI Mode model: its conversations by url, and bringing one back to work on.
 export const listAIModeConversations = (pid: string) => req<AIModeConversation[]>('GET', `/api/projects/${pid}/aimode/conversations`)
 export const continueAIModeConversation = (id: string) => req<Session>('POST', `/api/aimode/conversations/${id}/continue`)
-export const sendOrchestratorTurn = (id: string, message: string, env: { runnerId: string; aiProfileId: string; model?: string }, image?: { base64: string; mediaType: string } | null) =>
+// History of the orchestrator conversations (all projects unless `project`), to rename, move and find them.
+export const listOrchestratorChats = (q = '', project = '') =>
+  req<OrchestratorChat[]>('GET', `/api/orchestrator/chats?q=${encodeURIComponent(q)}&project=${encodeURIComponent(project)}`)
+export const updateOrchestratorChat = (id: string, data: { name?: string; project_id?: string }) =>
+  req<Session>('PATCH', `/api/orchestrator/chats/${id}`, data)
+export const openOrchestratorChat = (id: string) => req<Session>('POST', `/api/orchestrator/chats/${id}/open`)
+export const sendOrchestratorTurn =(id: string, message: string, env: { runnerId: string; aiProfileId: string; model?: string }, image?: { base64: string; mediaType: string } | null) =>
   req<void>('POST', `/api/sessions/${id}/turn`, { message, runner_id: env.runnerId, ai_profile_id: env.aiProfileId, model: env.model, ...(image ? { image } : {}) })
 // Voice output (Fish Audio through the voice worker). The key is write-only.
 export interface TTSSettings { configured: boolean; model: string; voice_id: string; speed: number }

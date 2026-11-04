@@ -98,6 +98,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/projects/{pid}/orchestrator", h.getOrchestrator)
 	mux.HandleFunc("POST /api/projects/{pid}/orchestrator/new", h.newOrchestrator)
+	mux.HandleFunc("GET /api/orchestrator/chats", h.listOrchestratorChats)
+	mux.HandleFunc("PATCH /api/orchestrator/chats/{id}", h.updateOrchestratorChat)
+	mux.HandleFunc("POST /api/orchestrator/chats/{id}/open", h.openOrchestratorChat)
 	mux.HandleFunc("GET /api/projects/{pid}/aimode/conversations", h.listAIModeConversations)
 	mux.HandleFunc("POST /api/aimode/conversations/{id}/continue", h.continueAIModeConversation)
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)

@@ -161,6 +161,67 @@ func MakeOrchestratorCurrent(db *sql.DB, id string) error {
 	return err
 }
 
+// OrchestratorChat is a stored orchestrator conversation as the history lists it.
+type OrchestratorChat struct {
+	Session
+	ProjectName string `json:"project_name"`
+	FirstUser   string `json:"-"` // raw content of the first user message, for the preview
+}
+
+// ListOrchestratorChats lists the orchestrator conversations that have messages, the latest
+// first. projectID "" lists every project's, so an old chat can be found again by name.
+func ListOrchestratorChats(db *sql.DB, projectID string) ([]OrchestratorChat, error) {
+	rows, err := db.Query(`SELECT s.id, COALESCE(p.name,''),
+		COALESCE((SELECT content FROM messages m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.seq LIMIT 1),'')
+		FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
+		WHERE s.kind=? AND (?='' OR s.project_id=?) AND s.message_count>0
+		ORDER BY s.last_active DESC`, SessionKindOrchestrator, projectID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	type row struct{ id, project, first string }
+	var found []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.project, &r.first); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		found = append(found, r)
+	}
+	rows.Close()
+	var out []OrchestratorChat
+	for _, r := range found {
+		s, err := GetSession(db, r.id)
+		if err != nil {
+			continue
+		}
+		out = append(out, OrchestratorChat{Session: s, ProjectName: r.project, FirstUser: r.first})
+	}
+	return out, nil
+}
+
+// MoveOrchestratorChat assigns an orchestrator conversation to another project (its Google AI
+// Mode conversation goes with it). The chat stops being the current one of the project it left.
+func MoveOrchestratorChat(db *sql.DB, id, projectID string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE sessions SET project_id=?, current_at='' WHERE id=? AND kind=?`, projectID, id, SessionKindOrchestrator)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	if _, err := tx.Exec(`UPDATE aimode_conversations SET project_id=? WHERE session_id=?`, projectID, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func InsertSession(db *sql.DB, s Session) error {
 	_, err := db.Exec(
 		`INSERT INTO sessions (id, project_id, name, model, status, parent_id, account_id, card_id, agent_id, kind) VALUES (?,?,?,?,?,?,?,?,?,?)`,

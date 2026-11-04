@@ -10,6 +10,7 @@ import { ContextBar } from '../Chat/ContextBar'
 import { CacheBadge, useCacheCountdown } from '../Chat/CacheBadge'
 import { ClaudeProcess } from '../Chat/ClaudeProcess'
 import { AIModeHistory } from './AIModeHistory'
+import { OrchestratorEdit } from './OrchestratorEdit'
 import { ModelIcon } from './ModelIcon'
 import { EnvPicker } from './EnvPicker'
 import { useWorkerMic } from '@/hooks/useWorkerMic'
@@ -329,6 +330,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         <span className="orch__title">Orchestrator</span>
         {!isLocalModel && <CacheBadge cache={cache} />}
         {sid && !isLocalModel && <ClaudeProcess sessionId={sid} />}
+        {sid && <OrchestratorEdit projectId={projectId} sessionId={sid} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
         {isLocalModel && projectId && <AIModeHistory projectId={projectId} onContinue={continueConversation} />}
         <button
           className="orch__icon-btn"

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { IconExternalLink, IconHistory } from '@tabler/icons-react'
+import { IconExternalLink, IconHistory, IconSearch } from '@tabler/icons-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import * as api from '../../api'
 import type { AIModeConversation, Session } from '../../types'
@@ -21,6 +21,7 @@ export function AIModeHistory({ projectId, onContinue }: { projectId: string; on
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<AIModeConversation[] | null>(null)
   const [error, setError] = useState('')
+  const [q, setQ] = useState('')
 
   const load = () => {
     setError('')
@@ -38,7 +39,7 @@ export function AIModeHistory({ projectId, onContinue }: { projectId: string; on
   }
 
   return (
-    <Popover open={open} onOpenChange={v => { setOpen(v); if (v) load() }}>
+    <Popover open={open} onOpenChange={v => { setOpen(v); if (v) { setQ(''); load() } }}>
       <PopoverTrigger asChild>
         <button className="orch__icon-btn" title="Google AI Mode conversations" aria-label="Google AI Mode conversations">
           <IconHistory size={16} />
@@ -46,12 +47,16 @@ export function AIModeHistory({ projectId, onContinue }: { projectId: string; on
       </PopoverTrigger>
       <PopoverContent side="bottom" align="end" className="aimode-history">
         <div className="aimode-history__title">AI Mode conversations</div>
+        <div className="orch-history__search">
+          <IconSearch size={13} />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" />
+        </div>
         {error && <div className="aimode-history__error">{error}</div>}
         {items === null && <div className="aimode-history__empty">Loading…</div>}
         {items !== null && items.length === 0 && !error && (
           <div className="aimode-history__empty">None yet. Each conversation you have with Google AI Mode is saved here by its address.</div>
         )}
-        {(items ?? []).map(c => (
+        {(items ?? []).filter(c => !q.trim() || (c.title || 'Untitled').toLowerCase().includes(q.trim().toLowerCase())).map(c => (
           <div key={c.id} className={`aimode-history__row${c.current ? ' aimode-history__row--current' : ''}`}>
             <button className="aimode-history__main" onClick={() => pick(c)} title="Continue this conversation">
               <span className="aimode-history__name">{c.title || 'Untitled'}</span>

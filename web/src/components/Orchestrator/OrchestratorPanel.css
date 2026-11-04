@@ -183,6 +183,16 @@
 .aimode-history__meta { font-size: 11px; color: var(--text-muted); }
 .aimode-history__link { display: grid; place-items: center; padding: 6px; color: var(--text-muted); }
 .aimode-history__link:hover { color: var(--accent); }
+.aimode-history__link { background: none; border: 0; cursor: pointer; }
+
+.orch-history { width: 360px; }
+.orch-history__search { display: flex; align-items: center; gap: 6px; margin: 2px 2px 4px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted); }
+.orch-history__search input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text); font-size: 12px; }
+.orch-history__scope { display: flex; align-items: center; gap: 6px; padding: 2px 8px 6px; font-size: 11px; color: var(--text-muted); cursor: pointer; }
+.orch-history__edit { display: flex; flex-direction: column; gap: 6px; padding: 6px; margin: 2px 0; border-radius: 6px; background: var(--bg-hover); }
+.orch-history__edit > input, .orch-history__edit select { min-width: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; color: var(--text); font-size: 12px; }
+.orch-history__edit-row { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.orch-history__edit-row select { flex: 1; }
 
 /* speech recognition test */
 .stt-test { width: min(560px, 94vw); }

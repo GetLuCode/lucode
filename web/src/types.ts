@@ -365,6 +365,18 @@ export interface ClaudeProcess {
 
 // A Google AI Mode conversation of the local model: the chat it belongs to and the url that
 // reopens it (it works with the browser profile lucode keeps for it).
+export interface OrchestratorChat {
+  id: string
+  name: string // '' until the user renames it
+  preview: string // the first thing the user wrote
+  project_id: string
+  project_name: string
+  model: string
+  message_count: number
+  last_active: string
+  current: boolean // the chat its project's panel shows now
+}
+
 export interface AIModeConversation {
   id: string
   session_id: string
