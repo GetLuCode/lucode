@@ -184,8 +184,8 @@ func (m *Manager) runLiveTurn(ctx context.Context, req execpkg.TurnRequest, opts
 
 	select {
 	case <-done:
-	case <-ctx.Done(): // turn cancelled by the user: stop the process
-		live.Kill()
+	case <-ctx.Done(): // turn cancelled by the user: interrupt it, keep the process
+		live.Stop(done)
 	}
 }
 

@@ -254,8 +254,8 @@ func (m *Manager) serveRemoteLive(ctx context.Context, req execpkg.TurnRequest, 
 		case <-seen:
 		case <-time.After(3 * time.Second):
 		}
-	case <-ctx.Done(): // cancelled by the user (or the turn timed out): stop the process
-		rl.live.Kill()
+	case <-ctx.Done(): // cancelled by the user (or the turn timed out): interrupt, keep the process
+		rl.live.Stop(done)
 	}
 }
 
