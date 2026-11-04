@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { marked } from 'marked'
 import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces } from '@tabler/icons-react'
@@ -7,6 +7,7 @@ import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
 import { ToolExecutionMessage } from './ToolExecutionMessage'
 import { highlightCode } from '../../lib/highlight'
+import { renderMermaid } from '../../lib/mermaid'
 import type { Message, ToolInputField } from '../../types'
 
 marked.use({
@@ -15,6 +16,11 @@ marked.use({
   renderer: {
     // fenced code gets syntax highlighting (the language comes after the opening fence)
     code({ text, lang }) {
+      // a diagram: shown as code until MarkdownContent draws it (and if it cannot)
+      if (/^mermaid/i.test((lang ?? '').trim())) {
+        const { html } = highlightCode(text, '')
+        return `<pre class="mermaid-src"><code>${html}</code></pre>`
+      }
       const { html, language } = highlightCode(text, lang)
       return `<pre><code class="hljs${language ? ` language-${language}` : ''}">${html}</code></pre>`
     },
@@ -227,7 +233,23 @@ function UserContent({ content }: { content: string }) {
 
 function MarkdownContent({ content }: { content: string }) {
   const html = useMemo(() => marked.parse(content) as string, [content])
-  return <div className="msg__markdown" dangerouslySetInnerHTML={{ __html: html }} />
+  const ref = useRef<HTMLDivElement>(null)
+  // draw the mermaid blocks; one that does not parse (or is still streaming) stays as code
+  useEffect(() => {
+    const root = ref.current
+    if (!root) return
+    let cancelled = false
+    root.querySelectorAll<HTMLElement>('pre.mermaid-src').forEach(async pre => {
+      const svg = await renderMermaid(pre.textContent ?? '')
+      if (cancelled || !svg || !pre.isConnected) return
+      const box = document.createElement('div')
+      box.className = 'mermaid-diagram'
+      box.innerHTML = svg
+      pre.replaceWith(box)
+    })
+    return () => { cancelled = true }
+  }, [html])
+  return <div ref={ref} className="msg__markdown" dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 function TokenBadge({ usage }: { usage: NonNullable<Message['usage']> }) {
