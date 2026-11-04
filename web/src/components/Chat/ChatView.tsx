@@ -22,7 +22,7 @@ import { ContextBar } from './ContextBar'
 import { CacheBadge, useCacheCountdown } from './CacheBadge'
 import { ClaudeProcess } from './ClaudeProcess'
 import { TaskStatus } from './TaskStatus'
-import { CopyIdsMenu } from './CopyIdsMenu'
+import { CopyIdItems } from './CopyIdsMenu'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import { listOllamaModels, cancelTurn } from '../../api'
 import type { Message } from '../../types'
@@ -635,8 +635,9 @@ function ChatViewFull() {
 
               <div className="chat__header-dropdown-divider" />
 
-              {/* Claude models */}
-              {(() => {
+              {activeSessionId && !pendingSession ? (
+                <CopyIdItems sessionId={activeSessionId} taskId={session?.card_id} />
+              ) : (() => {
                 const sessionIsOllama = activeSessionId != null && model.startsWith('ollama:')
                 const sessionIsClaude = activeSessionId != null && !model.startsWith('ollama:')
                 const claudeDisabled = sessionIsOllama
@@ -717,7 +718,6 @@ function ChatViewFull() {
         <div className="chat__header-right">
           {activeSessionId && !pendingSession && isClaudeModel && <CacheBadge cache={cache} />}
           {activeSessionId && !pendingSession && isClaudeModel && <ClaudeProcess sessionId={activeSessionId} />}
-          {activeSessionId && !pendingSession && <CopyIdsMenu sessionId={activeSessionId} taskId={session?.card_id} />}
           {sessionUsage && (
             <span className="chat__usage-total">
               ↑{fmt(sessionUsage.input_tokens)} ↓{fmt(sessionUsage.output_tokens)} tokens
