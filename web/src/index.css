@@ -1803,6 +1803,12 @@ html, body, #root {
   padding: 20px;
 }
 
+.chat__column {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
 .chat__loading-more {
   text-align: center;
   padding: 8px 0 12px;
