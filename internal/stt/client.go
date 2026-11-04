@@ -14,8 +14,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
@@ -59,6 +60,9 @@ type Event struct {
 	Text  string
 	Where string
 	OK    bool
+	// Unchanged is a REALTIME with changes=false (field 5): the partial is the same as the last
+	// one the worker sent, so the event carries no text. It must not be shown or counted as text.
+	Unchanged bool
 }
 
 // Info is the part of EngineInfo lucode uses.
@@ -69,33 +73,33 @@ type Info struct {
 	PID       int
 }
 
-// Client is a connection to one worker.
+// Client is a connection to one worker. No token is sent: the shared worker listens on
+// 127.0.0.1 only and runs with --no-token (see launch.go).
 type Client struct {
-	conn  *grpc.ClientConn
-	token string
+	conn *grpc.ClientConn
 }
 
 // Dial connects (lazily) to a worker on 127.0.0.1:port.
-func Dial(port int, token string) (*Client, error) {
+func Dial(port int) (*Client, error) {
 	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", port), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
-	return &Client{conn: conn, token: token}, nil
+	return &Client{conn: conn}, nil
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
 
-func (c *Client) ctx(parent context.Context) context.Context {
-	return metadata.AppendToOutgoingContext(parent, "x-stt-token", c.token)
-}
+// NeedsToken reports that the worker answered but wants an x-stt-token: it was started
+// with a token (for example by an older SttApp) instead of --no-token.
+func NeedsToken(err error) bool { return status.Code(err) == codes.Unauthenticated }
 
 // GetInfo asks the worker about itself; an error means it is not reachable.
 func (c *Client) GetInfo(ctx context.Context) (Info, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var out []byte
-	err := c.conn.Invoke(c.ctx(ctx), "/voice.v1.VoiceEngine/GetInfo", []byte{}, &out, grpc.ForceCodec(rawCodec{}))
+	err := c.conn.Invoke(ctx, "/voice.v1.VoiceEngine/GetInfo", []byte{}, &out, grpc.ForceCodec(rawCodec{}))
 	if err != nil {
 		return Info{}, err
 	}
@@ -137,7 +141,7 @@ func (c *Client) Shutdown(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var out []byte
-	return c.conn.Invoke(c.ctx(ctx), "/voice.v1.VoiceEngine/Shutdown", []byte{}, &out, grpc.ForceCodec(rawCodec{}))
+	return c.conn.Invoke(ctx, "/voice.v1.VoiceEngine/Shutdown", []byte{}, &out, grpc.ForceCodec(rawCodec{}))
 }
 
 // ListenConfig is the subset of ListenConfig lucode sets.
@@ -221,6 +225,8 @@ func decodeEvent(b []byte) Event {
 				ev.Type = int(v)
 			case 4:
 				ev.OK = v != 0
+			case 5:
+				ev.Unchanged = v == 0 // `changes`; absent (older workers) means the event carries text
 			}
 		case protowire.BytesType:
 			v, m := protowire.ConsumeString(b)
@@ -252,7 +258,7 @@ type Session struct {
 // Listen opens a recognition session with cfg.
 func (c *Client) Listen(ctx context.Context, cfg ListenConfig) (*Session, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	stream, err := c.conn.NewStream(c.ctx(ctx), &grpc.StreamDesc{ClientStreams: true, ServerStreams: true},
+	stream, err := c.conn.NewStream(ctx, &grpc.StreamDesc{ClientStreams: true, ServerStreams: true},
 		"/voice.v1.VoiceEngine/Listen", grpc.ForceCodec(rawCodec{}))
 	if err != nil {
 		cancel()

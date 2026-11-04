@@ -112,6 +112,44 @@ func (h *Handler) sttStart(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]any{"state": state, "engine": info.EngineKey})
 }
 
+// sttModels lists the voice models, the one chosen in the voice settings and what the shared
+// worker is running right now (null when none answers).
+func (h *Handler) sttModels(w http.ResponseWriter, r *http.Request) {
+	resp := map[string]any{"models": stt.Models, "selected": stt.Selected(), "worker": nil}
+	if c, info, ok := stt.Running(r.Context()); ok {
+		c.Close()
+		resp["worker"] = map[string]any{"model": info.EngineKey, "ready": info.Ready, "listening": info.Listening}
+	}
+	jsonResp(w, http.StatusOK, resp)
+}
+
+// sttSetModel chooses the voice model: it is saved, and a worker running another model is
+// replaced (the page asks for this explicitly). It returns once the new worker answers; the
+// model may still be loading, which /api/stt/models then reports as ready=false.
+func (h *Handler) sttSetModel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Model string `json:"model"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.Model == "" {
+		http.Error(w, "expected {\"model\": \"<id>\"}", http.StatusBadRequest)
+		return
+	}
+	if !stt.KnownModel(body.Model) {
+		http.Error(w, "unknown voice model "+body.Model, http.StatusBadRequest)
+		return
+	}
+	info, err := stt.Switch(r.Context(), body.Model)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	resp := map[string]any{"selected": stt.Selected(), "worker": nil} // no worker: it starts when somebody needs it
+	if info.EngineKey != "" {
+		resp["worker"] = map[string]any{"model": info.EngineKey, "ready": info.Ready, "listening": info.Listening}
+	}
+	jsonResp(w, http.StatusOK, resp)
+}
+
 func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -153,6 +191,11 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+
+	dbg := newSTTDebug() // ~/.lucode/stt-bridge.log, see sttdebug.go
+	defer dbg.Close()
+	dbg.Printf("start: sample_rate=%d wake=%v backend=%q silence=%s stable=%s repeats=%s",
+		start.SampleRate, start.Wake, start.WakeBackend, ptr(start.SilenceSeconds), ptr(start.StableSeconds), ptr(start.StableRepeats))
 
 	send(map[string]any{"type": "loading"})
 	c, _, err := stt.Ensure(ctx)
@@ -198,6 +241,7 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 				// and tell the worker to close its recording too.
 				if c.Text != "" {
 					log.Printf("[stt] no changes for %v: closing the phrase with %q", end.Idle, c.Text)
+					dbg.Printf("bridge: sin cambios %v, cierra la frase y manda a la pagina final %q", end.Idle, c.Text)
 					send(map[string]any{"type": "final", "text": c.Text})
 				} else {
 					log.Printf("[stt] no changes for %v and no speech text: closing as noise", end.Idle)
@@ -210,6 +254,9 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		for {
 			ev, err := sess.Recv()
+			if err == nil {
+				dbg.Printf("worker: type=%d text=%q unchanged=%v where=%q", ev.Type, ev.Text, ev.Unchanged, ev.Where)
+			}
 			if err != nil {
 				if ctx.Err() == nil {
 					send(map[string]any{"type": "error", "text": "voice worker: " + err.Error()})
@@ -231,6 +278,9 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 			case stt.EvWakePhrase:
 				send(map[string]any{"type": "wake_phrase", "ok": ev.OK, "text": ev.Text})
 			case stt.EvRealtime:
+				if ev.Unchanged {
+					break // same partial as before (changes=false): nothing new to show
+				}
 				if end.Partial(ev.Text, time.Now()) {
 					send(map[string]any{"type": "realtime", "text": ev.Text})
 				}
@@ -242,6 +292,7 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 				if fromPartial {
 					log.Printf("[stt] final %q was much shorter than what was heard; using %q", ev.Text, text)
 				}
+				dbg.Printf("bridge: final del worker %q -> a la pagina %q", ev.Text, text)
 				send(map[string]any{"type": "final", "text": text})
 			case stt.EvError:
 				send(map[string]any{"type": "error", "text": ev.Text})
@@ -258,6 +309,7 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		switch mt {
 		case websocket.BinaryMessage:
+			dbg.Audio(data)
 			if err := sess.SendAudio(data); err != nil {
 				log.Printf("[stt] send audio: %v", err)
 				return
@@ -267,6 +319,7 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 				Type string `json:"type"`
 			}
 			if json.Unmarshal(data, &m) == nil && m.Type == "flush" {
+				dbg.Printf("pagina: flush")
 				_ = sess.Flush()
 			}
 		}

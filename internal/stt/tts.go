@@ -45,7 +45,7 @@ const SampleRate = 44100
 // Synthesize streams the audio of r to onAudio as the worker produces it. gRPC errors
 // (PERMISSION_DENIED for a bad key or no credit, FAILED_PRECONDITION, ...) are returned as is.
 func (c *Client) Synthesize(ctx context.Context, r TTSRequest, onAudio func(pcm []byte) error) error {
-	stream, err := c.conn.NewStream(c.ctx(ctx), &grpc.StreamDesc{ServerStreams: true},
+	stream, err := c.conn.NewStream(ctx, &grpc.StreamDesc{ServerStreams: true},
 		"/voice.v1.VoiceEngine/Synthesize", grpc.ForceCodec(rawCodec{}))
 	if err != nil {
 		return err
