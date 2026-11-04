@@ -42,3 +42,5 @@ build/
 /desktop.exe
 
 /lucode.exe
+/.claude/
+/.impeccable/
