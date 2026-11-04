@@ -364,6 +364,8 @@ func (h *Handler) resolveTurnEnv(agent dbpkg.Agent, p dbpkg.Project) (turnEnv, e
 	}
 	if agent.AIProfileID != "" {
 		aiID = agent.AIProfileID
+	} else if act := loadActiveAI(); act.AIProfileID != "" && norm(act.RunnerID) == runner {
+		aiID = act.AIProfileID // "Project's AI" / default: the account picked in the usage container
 	}
 	env := turnEnv{RunnerID: runner, AIProfileID: aiID}
 	if runner == "" && h.hubOnly {

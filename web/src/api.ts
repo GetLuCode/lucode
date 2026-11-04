@@ -303,7 +303,11 @@ export const deleteAIProfile = (runnerId: string, id: string) =>
 // Plan usage windows of an AI's account (Anthropic /api/oauth/usage). utilization is 0-100.
 export interface UsageWindow { utilization: number | null; resets_at: string | null }
 export interface AIProfileUsage { five_hour?: UsageWindow | null; seven_day?: UsageWindow | null; seven_day_opus?: UsageWindow | null; seven_day_sonnet?: UsageWindow | null }
-export const getAIProfileUsage = (runnerId: string, id: string) =>
+// The AI picked in the usage container: orchestrator/agents without an AI of their own use it.
+export interface ActiveAI { runner_id: string; ai_profile_id: string }
+export const getActiveAI = () => req<ActiveAI>('GET', '/api/active-ai')
+export const setActiveAI = (a: ActiveAI) => req<ActiveAI>('PUT', '/api/active-ai', a)
+export const getAIProfileUsage =(runnerId: string, id: string) =>
   req<AIProfileUsage>('GET', `/api/runners/${runnerId}/ai-profiles/${id}/usage`)
 export const setProjectAIAPI = (projectId: string, aiapiInstanceId: string) =>
   req<void>('PATCH', `/api/projects/${projectId}/aiapi`, { aiapi_instance_id: aiapiInstanceId })
