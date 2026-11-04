@@ -202,9 +202,12 @@ type runnerInfo struct {
 // listRunners returns this instance first, then the lucode peers.
 func (h *Handler) listRunners(w http.ResponseWriter, r *http.Request) {
 	self := h.bus.SelfInfo()
-	out := []runnerInfo{{ID: self.ID, Hostname: self.Hostname, OS: self.OS, Self: true}}
+	out := []runnerInfo{}
+	if !h.hubOnly { // a hub runs nothing itself: it is not a place to send a project to
+		out = append(out, runnerInfo{ID: self.ID, Hostname: self.Hostname, OS: self.OS, Self: true})
+	}
 	for _, p := range h.bus.Peers() {
-		if p.Type == "lucode" && p.ID != self.ID {
+		if p.Type == "lucode" && p.ID != self.ID && p.IsRunner() {
 			out = append(out, runnerInfo{ID: p.ID, Hostname: p.Hostname, OS: p.OS})
 		}
 	}
@@ -290,6 +293,9 @@ func (h *Handler) resolveTurnEnv(agent dbpkg.Agent, p dbpkg.Project) (turnEnv, e
 		aiID = agent.AIProfileID
 	}
 	env := turnEnv{RunnerID: runner, AIProfileID: aiID}
+	if runner == "" && h.hubOnly {
+		return env, fmt.Errorf("this instance only orchestrates (--hub-only) and runs no claude: choose a runner for project %q in its settings", p.Name)
+	}
 	if runner != "" {
 		env.WorkDirs = p.EnvDirs[runner]
 		if len(env.WorkDirs) == 0 {

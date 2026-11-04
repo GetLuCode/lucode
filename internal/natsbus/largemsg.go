@@ -84,7 +84,11 @@ func (b *Bus) encodeLarge(data []byte) ([]byte, error) {
 }
 
 // decodeLarge undoes encodeLarge on the receiving side.
-func (b *Bus) decodeLarge(data []byte) ([]byte, error) {
+func (b *Bus) decodeLarge(data []byte) ([]byte, error) { return b.readLarge(data, true) }
+
+// readLarge is decodeLarge with a choice: keep=false leaves the object in the store,
+// for messages that may be delivered again (it expires by itself after largeTTL).
+func (b *Bus) readLarge(data []byte, del bool) ([]byte, error) {
 	if !bytes.HasPrefix(data, []byte(largePrefix)) {
 		return data, nil
 	}
@@ -102,6 +106,8 @@ func (b *Bus) decodeLarge(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read large message %s: %w", ref.Obj, err)
 	}
-	_ = store.Delete(ref.Obj) // single receiver: free the space now
+	if del {
+		_ = store.Delete(ref.Obj) // single receiver: free the space now
+	}
 	return full, nil
 }

@@ -60,6 +60,8 @@ export interface Session {
   card_id?: string        // the task (kanban card) this session belongs to
   agent_id?: string       // the agent running it
   kind?: 'orchestrator' | '' // the project's main chat (right-hand panel)
+  worktree?: string       // git worktree the agent works in (from its transcript)
+  branch?: string         // its branch
 }
 
 export interface MessageUsage {
@@ -154,6 +156,7 @@ export type WSEvent =
   | { type: 'info'; session_id: string; message: string }
   | { type: 'progress'; session_id: string; text: string }
   | { type: 'claude_process'; session_id: string; alive: boolean; pid?: number; runner?: string }
+  | ({ type: 'claude_workspace'; session_id: string } & ClaudeWorkspace)
   | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
   | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
   | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
@@ -218,7 +221,7 @@ export interface KanbanList {
   project_id: string
   name: string
   position: number
-  kind?: string  // workflow role: backlog, todo, inprogress, done, blocked (custom lists have none)
+  kind?: string  // workflow role: backlog, todo, inprogress, review, done, blocked (custom lists have none)
   created_at: string
 }
 
@@ -256,6 +259,8 @@ export interface Agent {
   lucode_tools: string[]        // lucode tools the agent has (task_*, agent_list, send_to_agent, task_info)
   persistent: boolean           // keep the claude -p process alive between messages
   auto_mode: boolean            // claude --permission-mode auto: no lucode approval requests
+  worktree: boolean             // claude --worktree: work in its own git worktree
+  worktree_base_ref: 'head' | 'fresh' // worktree.baseRef: branch off the current HEAD (default) or a fresh remote default branch
   reports_to: string            // id of the supervising agent ('' = none)
   runner_id: string             // runner the agent works on ('' = the project's)
   ai_profile_id: string         // preconfigured AI of that runner ('' = the project's)
@@ -362,6 +367,16 @@ export interface ClaudeProcess {
   alive: boolean
   pid?: number     // local processes only
   runner?: string  // the runner holding it, when it is not this instance
+  workspace?: ClaudeWorkspace
+}
+
+// Where claude works, as the machine that runs it reported when the process started.
+export interface ClaudeWorkspace {
+  cwd: string
+  path?: string      // git root of the cwd (the worktree itself, when it is one)
+  branch?: string
+  worktree?: boolean // a linked git worktree, not the main checkout
+  repo?: string      // the main checkout a worktree belongs to
 }
 
 // A Google AI Mode conversation of the local model: the chat it belongs to and the url that

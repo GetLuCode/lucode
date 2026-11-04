@@ -60,17 +60,17 @@ func TestLargeMessagesGoThroughTheObjectStore(t *testing.T) {
 	bigOut := strings.Repeat("b", 4<<20)
 
 	gotIn := make(chan int, 1)
-	err := runner.StartRunnerServer(func(payload []byte, reply string) {
+	err := runner.StartRunnerServer(func(payload []byte, sink *TurnSink) {
 		var rt struct {
 			Image string `json:"image"`
 		}
 		json.Unmarshal(payload, &rt)
 		gotIn <- len(rt.Image)
 		ev, _ := json.Marshal(map[string]any{"type": "message_ready", "content": bigOut})
-		if err := runner.PublishStreamEvent(reply, ev); err != nil {
+		if err := sink.Event(ev); err != nil {
 			t.Errorf("publish big event: %v", err)
 		}
-		runner.PublishStreamDone(reply)
+		sink.Done()
 	}, func(string) {}, func(string) {})
 	if err != nil {
 		t.Fatal(err)
@@ -81,16 +81,30 @@ func TestLargeMessagesGoThroughTheObjectStore(t *testing.T) {
 		t.Fatalf("test payload (%d) must exceed max_payload (%d)", len(payload), hub.nc.MaxPayload())
 	}
 	var gotOut int
-	err = hub.RunnerExecute(runnerID, payload, func(ev []byte) bool {
+	done := make(chan struct{})
+	f, err := hub.FollowRunnerTurn(runnerID, "s-large", false, nil, func(ev RunnerEvent) error {
+		if ev.Done {
+			close(done)
+			return nil
+		}
 		var m struct {
 			Content string `json:"content"`
 		}
-		json.Unmarshal(ev, &m)
+		json.Unmarshal(ev.Event, &m)
 		gotOut = len(m.Content)
-		return true
+		return nil
 	})
 	if err != nil {
-		t.Fatalf("RunnerExecute: %v", err)
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := hub.RunnerStartTurn(runnerID, "s-large", "t-large", payload); err != nil {
+		t.Fatalf("RunnerStartTurn: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("no turn_done")
 	}
 	if n := <-gotIn; n != len(bigIn) {
 		t.Errorf("runner received an image of %d bytes, want %d", n, len(bigIn))
@@ -99,13 +113,14 @@ func TestLargeMessagesGoThroughTheObjectStore(t *testing.T) {
 		t.Errorf("hub received %d bytes of content, want %d", gotOut, len(bigOut))
 	}
 
-	// objects are deleted once read
+	// The turn's payload is deleted once the runner read it; the event's object stays
+	// (it may be delivered again) until the bucket's TTL removes it.
 	store, err := hub.objectStore()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if objs, _ := store.List(); len(objs) != 0 {
-		t.Errorf("%d objects left in the store", len(objs))
+	if objs, _ := store.List(); len(objs) != 1 {
+		t.Errorf("%d objects left in the store, want only the event's", len(objs))
 	}
 }
 
@@ -116,7 +131,7 @@ func TestLargeMessageWithoutJetStreamExplainsWhy(t *testing.T) {
 	if _, err := hub.objectStore(); err == nil {
 		t.Skip("the local NATS server has JetStream enabled")
 	}
-	err := hub.RunnerExecute("nobody", bytes.Repeat([]byte("x"), int(hub.nc.MaxPayload())+10), func([]byte) bool { return true })
+	err := hub.RunnerStartTurn("nobody", "s", "t", bytes.Repeat([]byte("x"), int(hub.nc.MaxPayload())+10))
 	if err == nil || !strings.Contains(err.Error(), "-js") {
 		t.Errorf("want an error pointing at nats-server -js, got %v", err)
 	}

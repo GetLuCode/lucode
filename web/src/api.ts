@@ -341,6 +341,26 @@ export const deleteCardImage = (cardId: string, name: string) =>
 export const resetKanbanCard = (id: string) =>
   req<void>('POST', `/api/kanban/cards/${id}/reset`)
 
+// Review: the git branch an agent left in a worktree, waiting to be merged.
+export interface ReviewStatus {
+  branch: string
+  base: string              // the branch checked out in the main checkout
+  worktree_path: string
+  repo_path: string
+  ahead: number             // commits not in base yet
+  files: string[]           // "M path" per changed file
+  dirty: boolean            // uncommitted changes in the worktree
+  conflicts: boolean
+  conflict_files: string[]
+  merged: boolean
+  error?: string
+}
+export const getCardReview = (id: string) => req<ReviewStatus>('GET', `/api/kanban/cards/${id}/review`)
+export const mergeCardReview = (id: string) =>
+  req<{ card: KanbanCard; warnings: string[] }>('POST', `/api/kanban/cards/${id}/review/merge`)
+export const resolveCardReview = (id: string) =>
+  req<{ card: KanbanCard }>('POST', `/api/kanban/cards/${id}/review/resolve`)
+
 // ── Checkpoints / Versioning (aiapi:8091) ────────────────────────────────
 
 export const listCheckpoints = (workDir: string) =>

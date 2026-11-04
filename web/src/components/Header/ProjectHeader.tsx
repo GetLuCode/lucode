@@ -17,6 +17,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const renameProject = useStore(s => s.renameProject)
   const importSession = useStore(s => s.importSession)
   const importRef = useRef<HTMLInputElement>(null)
+  const runningCount = useStore(s => s.sessions.filter(x => x.card_id && (s.sessionStatus[x.id] ?? x.status) === 'running').length)
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -114,7 +115,10 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
         <button
           className={`project-tab${onRunning ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/running`)}
-        >Running</button>
+        >
+          Running
+          {runningCount > 0 && <span className="project-tab__badge" title={`${runningCount} agent(s) running`}>{runningCount}</span>}
+        </button>
         <button
           className={`project-tab${onAgentTab ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/agent`)}

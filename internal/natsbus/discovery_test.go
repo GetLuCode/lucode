@@ -65,3 +65,20 @@ func hasPeer(b *Bus, id string) bool {
 	}
 	return false
 }
+
+func TestInstanceHubOnly(t *testing.T) {
+	cases := []struct {
+		extra   map[string]any
+		hubOnly bool
+	}{
+		{nil, false}, // an older instance announces nothing: it can run turns
+		{map[string]any{"hub_only": false}, false},
+		{map[string]any{"hub_only": true}, true},
+	}
+	for _, c := range cases {
+		i := InstanceInfo{Extra: c.extra}
+		if i.HubOnly() != c.hubOnly || i.IsRunner() == c.hubOnly {
+			t.Errorf("extra %v: hub-only %v runner %v, want hub-only %v", c.extra, i.HubOnly(), i.IsRunner(), c.hubOnly)
+		}
+	}
+}

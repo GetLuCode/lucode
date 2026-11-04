@@ -20,6 +20,7 @@ type ParsedEvent struct {
 	APIError      string          `json:"api_error,omitempty"`        // result: e.g. "usage_limit_reached"
 	ResetsAt      int64           `json:"resets_at,omitempty"`        // rate_limit: unix seconds when the limit lifts
 	LimitRejected bool            `json:"limit_rejected,omitempty"`   // rate_limit: the request was rejected
+	Cwd           string          `json:"cwd,omitempty"`             // init: directory claude really works in (the worktree, with --worktree)
 }
 
 // ParseLine parses one newline-delimited JSON line from claude stdout.
@@ -37,6 +38,7 @@ func ParseLine(sessID string, line []byte) (ParsedEvent, bool, error) {
 				EventType: "session_status",
 				SessionID: sessID,
 				Status:    "running",
+				Cwd:       jsonStr(raw["cwd"]),
 			}, false, nil
 		}
 		return ParsedEvent{}, false, nil

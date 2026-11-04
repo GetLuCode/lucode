@@ -1138,7 +1138,13 @@ export const useStore = create<AppState>((set, get) => ({
       }
 
       case 'claude_process': {
-        set(s => ({ claudeProcess: { ...s.claudeProcess, [event.session_id]: { alive: event.alive, pid: event.pid, runner: event.runner } } }))
+        set(s => ({ claudeProcess: { ...s.claudeProcess, [event.session_id]: { alive: event.alive, pid: event.pid, runner: event.runner, workspace: s.claudeProcess[event.session_id]?.workspace } } }))
+        break
+      }
+
+      case 'claude_workspace': {
+        const { type: _t, session_id, ...workspace } = event
+        set(s => ({ claudeProcess: { ...s.claudeProcess, [session_id]: { alive: false, ...s.claudeProcess[session_id], workspace } } }))
         break
       }
 

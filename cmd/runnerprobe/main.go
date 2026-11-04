@@ -2,7 +2,7 @@
 // discovers the runner, lists a directory and its preconfigured AIs through the RPC
 // bridge, and runs two turns of a persistent agent session.
 //
-//	runnerprobe --nats-url nats://192.168.1.5:4222 --dir /home/me/dev [--host name]
+//	runnerprobe --nats 192.168.1.5 --dir /home/me/dev [--host name]
 //
 // With the runner using a fake claude (LUCODE_CLAUDE_BIN, see internal/fakeclaude)
 // the turns replay a recording and spend no tokens.
@@ -29,11 +29,13 @@ import (
 )
 
 func main() {
-	natsURL := flag.String("nats-url", "nats://127.0.0.1:4222", "NATS server")
+	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "NATS server: host, host:port or a full URL")
+	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
 	dir := flag.String("dir", "", "directory of the runner to list")
 	host := flag.String("host", "", "hostname of the runner (default: the first other lucode peer)")
 	noTurns := flag.Bool("no-turns", false, "only check discovery and the RPC calls; run no turns (spends no tokens even with the real claude)")
 	flag.Parse()
+	*natsURL = natspkg.NormalizeURL(*natsURL)
 	log.SetFlags(0)
 
 	nc, err := nats.Connect(*natsURL, nats.Timeout(5*time.Second))
@@ -92,10 +94,19 @@ func main() {
 		payload, _ := json.Marshal(rt)
 		var text strings.Builder
 		var usage bool
-		err := bus.RunnerExecute(runner.ID, payload, func(raw []byte) bool {
+		turnID := uuid.New().String()
+		done := make(chan struct{})
+		f, err := bus.FollowRunnerTurn(runner.ID, sess, false, nil, func(re natspkg.RunnerEvent) error {
+			if re.TurnID != turnID {
+				return nil
+			}
+			if re.Done {
+				close(done)
+				return nil
+			}
 			var ev map[string]any
-			if json.Unmarshal(raw, &ev) != nil {
-				return true
+			if json.Unmarshal(re.Event, &ev) != nil {
+				return nil
 			}
 			switch ev["type"] {
 			case "message_ready":
@@ -107,8 +118,18 @@ func main() {
 			case "error":
 				fmt.Printf("  error event: %v\n", ev)
 			}
-			return true
+			return nil
 		})
+		if err == nil {
+			defer f.Close()
+			if err = bus.RunnerStartTurn(runner.ID, sess, turnID, payload); err == nil {
+				select {
+				case <-done:
+				case <-time.After(3 * time.Minute):
+					err = fmt.Errorf("timeout waiting for turn_done")
+				}
+			}
+		}
 		fmt.Printf("turn %d: reply=%q context_usage=%v err=%v\n", n, strings.TrimSpace(text.String()), usage, err)
 	}
 	turn(1, "Remember the secret word PINEAPPLE. Reply with just: ok")

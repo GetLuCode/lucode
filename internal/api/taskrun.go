@@ -166,7 +166,11 @@ func (h *Handler) moveCardToKind(card dbpkg.KanbanCard, kind string) (dbpkg.Kanb
 
 // runTask starts a turn for the card on its agent. The first run sends the
 // task itself; a re-run (card moved back to In Progress) asks to continue.
-func (h *Handler) runTask(card dbpkg.KanbanCard) error {
+func (h *Handler) runTask(card dbpkg.KanbanCard) error { return h.runTaskNote(card, "") }
+
+// runTaskNote is runTask with an instruction for the agent put before the task
+// (used when the user sends a task back from Review).
+func (h *Handler) runTaskNote(card dbpkg.KanbanCard, note string) error {
 	agent, err := dbpkg.GetAgent(h.db, card.AgentID)
 	if err != nil {
 		return fmt.Errorf("assigned agent not found: %w", err)
@@ -181,7 +185,9 @@ func (h *Handler) runTask(card dbpkg.KanbanCard) error {
 	}
 
 	message := h.taskPrompt(card)
-	if sess.MessageCount > 0 {
+	if note != "" {
+		message = note + "\n\n" + message
+	} else if sess.MessageCount > 0 {
 		message = "This task was moved back to In Progress. Review the current state of the work and continue.\n\n" + message
 	}
 
@@ -274,7 +280,7 @@ func worktreePrompt(agent dbpkg.Agent) string {
 		how = "Create one before your first edit with `git worktree add ../<repo>-<short-task-id> -b task/<short-task-id>` and work only inside that folder."
 	}
 	return "\n\nWork in a git worktree: never edit files in the main checkout, the user and other agents are using it. " + how +
-		" Commit your work on that branch as you go. Do not merge into the main branch, push, or delete the worktree; the user reviews and integrates it, so say in your final report the branch and the worktree path." +
+		" Commit your work on that branch as you go. Do not merge into the main branch, push, or delete the worktree: when you finish, the task goes to the Review list and the user merges your branch (or sends it back to you if it conflicts, in which case you merge the main branch INTO your branch and resolve it there). Say in your final report the branch and the worktree path." +
 		" If the folder is not a git repository, work in place."
 }
 
@@ -297,8 +303,14 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 	if has("task_comment") {
 		report = append(report, "- task_comment(text): post a short progress note when you reach something worth telling the user. It does not change the status.")
 	}
+	// agents that work in a worktree never land in Done with unmerged work: it goes to Review
+	reviewNote, reviewRule := "", ""
+	if worktreePrompt(agent) != "" {
+		reviewNote = " If you worked in a git worktree and your branch is not merged yet, lucode moves the task to Review instead of Done (you are not allowed to merge: the user does it from Review) and the tasks that depend on it stay blocked until it is merged."
+		reviewRule = "\n- Never move your task to Done yourself and never merge your branch into the main branch: when your work is committed on a branch that is not merged, task_done sends it to Review and the user decides. Do not try to reach Done by another route (task_update on your own task, or merging)."
+	}
 	if has("task_done") {
-		report = append(report, "- task_done(summary): call it ONLY when the work is finished and you verified it. The summary says what you did and where the result is. It moves the task to Done and unblocks the tasks that depend on it.")
+		report = append(report, "- task_done(summary): call it ONLY when the work is finished and you verified it. The summary says what you did and where the result is. It moves the task to Done and unblocks the tasks that depend on it."+reviewNote)
 	}
 	if has("task_blocked") {
 		report = append(report, "- task_blocked(reason): call it when you cannot continue without the user (missing information, a decision, access, or a tool they denied). It moves the task to Blocked.")
@@ -313,6 +325,7 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 	sb.WriteString("\n\nRules:")
 	if has("task_done") {
 		sb.WriteString("\n- Never say the task is finished without calling task_done; do not call it for unfinished work.")
+		sb.WriteString(reviewRule)
 	}
 	if has("task_done") || has("task_blocked") {
 		sb.WriteString("\n- After task_done or task_blocked, stop: end your turn with one short closing message.")
@@ -458,6 +471,18 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		}
 		if err := comment("done", a.Summary); err != nil {
 			return "", err
+		}
+		// work left in a git worktree is reviewed (and merged) by the user before it is done
+		if h.reviewOnDone(sessID, card) {
+			moved, err := h.moveCardToKind(card, dbpkg.KanbanReview)
+			if err != nil {
+				return "", fmt.Errorf("could not move the task to Review: %w", err)
+			}
+			h.notifyTaskUpdated(sessID, moved)
+			if agentErr == nil {
+				h.notifySupervisor(agent, moved, fmt.Sprintf("Task %q is ready for review (its branch waits to be merged): %s", moved.Title, a.Summary))
+			}
+			return "Task sent to Review: the user will merge your branch, or send it back to you if it conflicts. End your turn now with a short closing message.", nil
 		}
 		moved, err := h.moveCardToKind(card, dbpkg.KanbanDone)
 		if err != nil {

@@ -418,9 +418,31 @@ CREATE TABLE IF NOT EXISTS card_images (
 		return fmt.Errorf("create card_images: %w", err)
 	}
 
+	// session_workspaces — where claude last worked in a session (cwd, branch, worktree...), as JSON
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS session_workspaces (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    data       TEXT NOT NULL
+);
+`); err != nil {
+		return fmt.Errorf("create session_workspaces: %w", err)
+	}
+
+	// card_reviews — the git branch/worktree of a task sitting in the Review list
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS card_reviews (
+    card_id       TEXT PRIMARY KEY REFERENCES kanban_cards(id) ON DELETE CASCADE,
+    branch        TEXT NOT NULL,
+    worktree_path TEXT NOT NULL DEFAULT '',
+    repo_path     TEXT NOT NULL
+);
+`); err != nil {
+		return fmt.Errorf("create card_reviews: %w", err)
+	}
+
 	// Column additions for tables created above (idempotent).
 	// kanban_lists.kind — the workflow role of a list ("backlog", "todo", "inprogress",
-	// "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
+	// "review", "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
 	db.Exec(`ALTER TABLE kanban_lists ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
 	// kanban_cards.started_at / finished_at — real timestamps, set when the card enters
 	// an "inprogress" / "done" list (start_date / end_date are the planned dates).
@@ -449,6 +471,23 @@ CREATE TABLE IF NOT EXISTS card_images (
 	db.Exec(`ALTER TABLE agents ADD COLUMN ai_profile_id TEXT NOT NULL DEFAULT ''`)
 	// agents.auto_mode — run claude with --permission-mode auto instead of asking through the PreToolUse hook
 	db.Exec(`ALTER TABLE agents ADD COLUMN auto_mode INTEGER NOT NULL DEFAULT 0`)
+	// agents.worktree / worktree_base_ref — run claude in its own git worktree (--worktree) and the worktree.baseRef setting ("head" | "fresh")
+	db.Exec(`ALTER TABLE agents ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0`)
+	db.Exec(`ALTER TABLE agents ADD COLUMN worktree_base_ref TEXT NOT NULL DEFAULT 'head'`)
+
+	// runner_turns — turns this hub has in flight on a runner, to pick them up again after a restart
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS runner_turns (
+    session_id TEXT PRIMARY KEY,
+    runner_id  TEXT NOT NULL,
+    turn_id    TEXT NOT NULL,
+    last_seq   INTEGER NOT NULL DEFAULT 0,
+    opts       TEXT NOT NULL DEFAULT '{}',
+    started_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`); err != nil {
+		return fmt.Errorf("create runner_turns: %w", err)
+	}
 
 	return nil
 }
