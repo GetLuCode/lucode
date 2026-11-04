@@ -103,6 +103,7 @@ func main() {
 	hookSettings := sessionpkg.InstallHookSettings(embeddedHook)
 
 	manager := sessionpkg.NewManager(db, bus, *natsURL, hookSettings)
+	manager.BaseDir = *workingDir
 	manager.SetAIAPIURL(*aiAPIURL)
 	if *natsCreds != "" {
 		manager.SetNATSCreds(*natsCreds)

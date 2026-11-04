@@ -197,6 +197,9 @@ func (l *Live) loop(stdout io.Reader) {
 		}
 		log.Printf("[executor/stdout] session=%s: %s", sid8, string(line))
 
+		if wt := EnteredWorktree(line); wt != "" {
+			l.publish(WorkspaceEvent(sessID, wt))
+		}
 		event, isResult, err := ParseLine(sessID, line)
 		if err != nil {
 			log.Printf("[executor] session=%s parse error: %v", sid8, err)

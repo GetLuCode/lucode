@@ -1,9 +1,12 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -43,4 +46,43 @@ func WorkspaceEvent(sessID, cwd string) map[string]any {
 		ev["repo"] = filepath.Dir(filepath.FromSlash(common)) // the main checkout the worktree belongs to
 	}
 	return ev
+}
+
+var enteredWorktreeRe = regexp.MustCompile(`Created worktree at [“"]([^”"]+)[”"] on branch`)
+
+// EnteredWorktree returns the path of the worktree claude just created for the
+// session (the result of its EnterWorktree tool), or "" when the line is anything
+// else. A session that enters a worktree keeps its init cwd, so without this the
+// hub would never know where the work really is.
+func EnteredWorktree(line []byte) string {
+	if !bytes.Contains(line, []byte("Created worktree at")) {
+		return ""
+	}
+	var v any
+	if json.Unmarshal(line, &v) != nil {
+		return ""
+	}
+	var found string
+	var walk func(any)
+	walk = func(x any) {
+		if found != "" {
+			return
+		}
+		switch t := x.(type) {
+		case string:
+			if m := enteredWorktreeRe.FindStringSubmatch(t); m != nil {
+				found = m[1]
+			}
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			for _, e := range t {
+				walk(e)
+			}
+		}
+	}
+	walk(v)
+	return found
 }

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,5 +62,25 @@ func TestInitEventCarriesCwd(t *testing.T) {
 	ev, _, err := ParseLine("s", []byte(`{"type":"system","subtype":"init","cwd":"E:\\wt","session_id":"x"}`))
 	if err != nil || ev.Cwd != `E:\wt` || ev.Status != "running" {
 		t.Errorf("init: %+v %v", ev, err)
+	}
+}
+
+func TestEnteredWorktreeFromToolResult(t *testing.T) {
+	// the user event claude emits with the result of EnterWorktree (curly quotes in the text)
+	path := filepath.Join("E:", "dev", "lucode", ".claude", "worktrees", "x")
+	text := "Created worktree at “" + path + "” on branch “worktree-x”. The session is now working in the worktree."
+	line, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{
+		"content": []any{map[string]any{"type": "tool_result", "content": text}}}})
+	if got := EnteredWorktree(line); got != path {
+		t.Errorf("got %q, want %q", got, path)
+	}
+	for _, other := range []string{
+		`{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}`,
+		`{"type":"stream_event","event":{"delta":{"partial_json":"Created worktree at"}}}`,
+		`not json Created worktree at`,
+	} {
+		if got := EnteredWorktree([]byte(other)); got != "" {
+			t.Errorf("%s: got %q", other, got)
+		}
 	}
 }

@@ -26,6 +26,10 @@ import (
 var ErrSessionBusy = errors.New("session already has an active turn")
 
 type Manager struct {
+	// BaseDir is the working dir of this instance (its --working-dir): the folder a
+	// relative project work dir is resolved against. Empty means the user's home.
+	BaseDir string
+
 	// Live claude processes by session (agents with Persistent set).
 	liveMu sync.Mutex
 	lives  map[string]*execpkg.Live

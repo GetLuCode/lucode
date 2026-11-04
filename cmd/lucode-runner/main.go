@@ -84,6 +84,7 @@ func main() {
 	// not started: those sessions belong to the hub, not to this machine.
 	bus := natspkg.NewBus(nc)
 	manager := sessionpkg.NewManager(db, bus, *natsURL, sessionpkg.InstallHookSettings(embeddedHook))
+	manager.BaseDir = *workingDir
 	if *natsCreds != "" {
 		manager.SetNATSCreds(*natsCreds)
 	}

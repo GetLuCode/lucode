@@ -117,6 +117,7 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 	sessID := ps.SessionID
 	defer m.finishTurn(sessID, ps)
 
+	opts.WorkDirs = m.ResolveWorkDirs(opts.WorkDirs)
 	if len(opts.WorkDirs) > 0 {
 		m.SetWorkDir(sessID, opts.WorkDirs[0])
 	}
@@ -275,6 +276,15 @@ func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]
 				"message":    map[string]any{"role": role, "content": content},
 			}
 		case "claude_workspace":
+			// each turn's init reports the start cwd; once the agent entered a worktree
+			// that one stays the session's workspace (resuming does not leave it)
+			if old := m.WorkspaceOf(sessID); old != nil {
+				if wt, _ := old["worktree"].(bool); wt {
+					if nw, _ := ev["worktree"].(bool); !nw {
+						return
+					}
+				}
+			}
 			m.liveMu.Lock()
 			if m.workspaces == nil {
 				m.workspaces = map[string]map[string]any{}
