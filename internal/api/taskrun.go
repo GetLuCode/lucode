@@ -64,6 +64,46 @@ func (h *Handler) afterCardSaved(card dbpkg.KanbanCard) dbpkg.KanbanCard {
 	return card
 }
 
+// moveBlocker checks whether a manual move of card from list oldListID to its
+// current list is allowed. It returns the reason when it is not ("" = allowed).
+// Rules: a task cannot enter In Progress without an agent, and a task cannot
+// leave Blocked for In Progress while its blockers (unfinished dependencies or
+// an error/blocked note nobody answered) are still there.
+func (h *Handler) moveBlocker(card dbpkg.KanbanCard, oldListID string) string {
+	if card.ListID == oldListID {
+		return ""
+	}
+	to, err := dbpkg.GetKanbanList(h.db, card.ListID)
+	if err != nil || to.Kind != dbpkg.KanbanInProgress {
+		return ""
+	}
+	if card.AgentID == "" {
+		return "Assign an agent to this task before moving it to In Progress."
+	}
+	from, err := dbpkg.GetKanbanList(h.db, oldListID)
+	if err != nil || from.Kind != dbpkg.KanbanBlocked {
+		return ""
+	}
+	if unmet := h.unmetDependencies(card); len(unmet) > 0 {
+		return "Still blocked by unfinished dependencies: " + strings.Join(unmet, ", ") + "."
+	}
+	if comments, err := dbpkg.ListCardComments(h.db, card.ID); err == nil {
+		pending := false
+		for _, c := range comments {
+			switch {
+			case c.Kind == "error":
+				pending = true
+			case c.Author != "lucode":
+				pending = false // someone reviewed it and answered
+			}
+		}
+		if pending {
+			return "Review the blocker first: add a comment on the task saying it is fixed (or reset the task), then move it to In Progress."
+		}
+	}
+	return ""
+}
+
 // startTask runs a card that entered "In Progress". With unmet dependencies it
 // is moved to "Blocked" instead.
 func (h *Handler) startTask(card dbpkg.KanbanCard) dbpkg.KanbanCard {

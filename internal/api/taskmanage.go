@@ -307,6 +307,9 @@ func (h *Handler) taskUpdate(sessID string, caller dbpkg.Session, args json.RawM
 			return "", err
 		}
 		if list.ID != card.ListID {
+			if reason := h.moveBlocker(dbpkg.KanbanCard{ID: card.ID, ListID: list.ID, AgentID: card.AgentID, DependsOn: card.DependsOn}, card.ListID); reason != "" {
+				return "", errors.New(reason)
+			}
 			card.ListID = list.ID
 			card.Position = h.endOf(card, list.ID)
 			changed = append(changed, "status")
