@@ -102,6 +102,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /api/projects/{pid}/sessions", h.createSession)
 	mux.HandleFunc("GET /api/projects/{pid}/sessions", h.listSessions)
+	mux.HandleFunc("GET /api/projects/{pid}/alerts", h.listProjectAlerts)
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.deleteSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", h.updateSessionName)
 
@@ -595,6 +596,10 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	sess, err := dbpkg.GetSession(h.db, id)
 	if err != nil {
 		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if sess.WorktreeRemoved {
+		http.Error(w, "this task's worktree was merged and deleted: the chat is closed", http.StatusConflict)
 		return
 	}
 	log.Printf("[sendTurn] session=%s account_id=%q from db", id, sess.AccountID)

@@ -94,6 +94,85 @@ func TestReviewStatusCleanThenMerge(t *testing.T) {
 	}
 }
 
+// claude leaves its session worktrees locked: merging must still remove the
+// worktree and delete the branch.
+func TestMergeRemovesLockedWorktree(t *testing.T) {
+	repo, wt := reviewRepo(t)
+	write(t, filepath.Join(wt, "b.txt"), "new\n")
+	rgit(t, wt, "add", ".")
+	rgit(t, wt, "commit", "-q", "-m", "add b")
+	rgit(t, repo, "worktree", "lock", "--reason", "claude session test (pid 1)", wt)
+
+	h, pid, lists := newTaskTestHandler(t)
+	card := newCard(t, h, pid, lists["review"], "Add b")
+	rv := dbpkg.CardReview{CardID: card.ID, Branch: "task/x", WorktreePath: wt, RepoPath: repo}
+	if err := dbpkg.SaveCardReview(h.db, rv); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/", nil)
+	req.SetPathValue("id", card.ID)
+	rec := httptest.NewRecorder()
+	h.mergeCardReview(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("merge: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "could not") {
+		t.Errorf("warnings: %s", rec.Body)
+	}
+	if _, err := os.Stat(wt); err == nil {
+		t.Errorf("the locked worktree was not removed")
+	}
+	if _, err := gitIn(repo, "rev-parse", "--verify", "--quiet", "refs/heads/task/x"); err == nil {
+		t.Errorf("the branch was not deleted")
+	}
+}
+
+// Once the merge deleted the worktree, the task's chat is closed: a turn would
+// start claude in a directory that no longer exists.
+func TestMergeClosesTheTaskChat(t *testing.T) {
+	repo, wt := reviewRepo(t)
+	write(t, filepath.Join(wt, "b.txt"), "new\n")
+	rgit(t, wt, "add", ".")
+	rgit(t, wt, "commit", "-q", "-m", "add b")
+
+	h, pid, lists := newTaskTestHandler(t)
+	card := newCard(t, h, pid, lists["review"], "Add b")
+	sess := dbpkg.Session{ID: "s1", ProjectID: pid, Name: "s", Model: "haiku", Status: "idle", CardID: card.ID}
+	if err := dbpkg.InsertSession(h.db, sess); err != nil {
+		t.Fatal(err)
+	}
+	rv := dbpkg.CardReview{CardID: card.ID, Branch: "task/x", WorktreePath: wt, RepoPath: repo}
+	if err := dbpkg.SaveCardReview(h.db, rv); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := func() int {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(`{"message":"hi"}`))
+		req.SetPathValue("id", "s1")
+		rec := httptest.NewRecorder()
+		h.sendTurn(rec, req)
+		return rec.Code
+	}
+	if got, _ := dbpkg.GetSession(h.db, "s1"); got.WorktreeRemoved {
+		t.Fatal("chat closed before the merge")
+	}
+
+	req := httptest.NewRequest("POST", "/", nil)
+	req.SetPathValue("id", card.ID)
+	rec := httptest.NewRecorder()
+	h.mergeCardReview(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("merge: %d %s", rec.Code, rec.Body)
+	}
+	if got, _ := dbpkg.GetSession(h.db, "s1"); !got.WorktreeRemoved {
+		t.Errorf("session not marked after the worktree was deleted")
+	}
+	if code := turn(); code != http.StatusConflict {
+		t.Errorf("turn on the closed chat: %d, want 409", code)
+	}
+}
+
 func TestReviewStatusConflictAndDirty(t *testing.T) {
 	repo, wt := reviewRepo(t)
 	write(t, filepath.Join(wt, "a.txt"), "from branch\n")

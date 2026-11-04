@@ -189,9 +189,18 @@ func (h *Handler) mergeCardReview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, err := os.Stat(rv.WorktreePath); err == nil {
+		// claude locks the worktrees of its sessions and never unlocks them, and git
+		// will not remove a locked worktree with a single --force. The work is merged
+		// by now, so the lock has nothing left to protect. Not being locked is an
+		// error we ignore.
+		_, _ = gitIn(rv.RepoPath, "worktree", "unlock", rv.WorktreePath)
 		if _, err := gitIn(rv.RepoPath, "worktree", "remove", "--force", rv.WorktreePath); err != nil {
 			warnings = append(warnings, "could not remove the worktree: "+err.Error())
 		}
+	}
+	if _, err := os.Stat(rv.WorktreePath); os.IsNotExist(err) {
+		// the agent's directory is gone: its chat can no longer start claude there
+		_ = dbpkg.MarkCardSessionsWorktreeRemoved(h.db, card.ID)
 	}
 	if _, err := gitIn(rv.RepoPath, "branch", "-d", rv.Branch); err != nil {
 		warnings = append(warnings, "could not delete the branch: "+err.Error())

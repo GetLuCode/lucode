@@ -5,6 +5,7 @@ import { useStore } from '../../store'
 import { RunnersButton } from '../Sidebar/RunnersList'
 import { ProjectEnvironmentModal } from '../Sidebar/ProjectEnvironmentModal'
 import { ProjectEnvInfo } from './ProjectEnvInfo'
+import { AlertsBell } from './AlertsBell'
 
 // Top bar of a project: its name and menu, the Kanban | Running | Agent tabs, and the
 // Runners / Agents actions at the right.
@@ -129,6 +130,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
         <button className="header-icon-btn" onClick={onOpenSearch} title="Search (Ctrl+K)" aria-label="Search">
           <IconSearch size={16} />
         </button>
+        <AlertsBell projectId={project.id} />
         <RunnersButton />
         <button
           className={`header-icon-btn${onAgents ? ' header-icon-btn--active' : ''}`}

@@ -91,6 +91,7 @@ export interface Session {
   agent_id?: string       // the agent running it
   kind?: 'orchestrator' | '' // the project's main chat (right-hand panel)
   worktree?: string       // git worktree the agent works in (from its transcript)
+  worktree_removed?: boolean // merging its task deleted that worktree: the chat is closed
   branch?: string         // its branch
 }
 
@@ -436,4 +437,13 @@ export interface AIModeConversation {
   session_kind?: string
   message_count: number
   current: boolean
+}
+
+// Something lucode noticed that the user may want to clean up by hand (the bell in the header).
+export interface Alert {
+  id: string
+  kind: 'stale_worktree'
+  title: string
+  detail: string
+  command: string // what to run to clean it up
 }

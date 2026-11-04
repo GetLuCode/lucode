@@ -271,6 +271,9 @@ CREATE TABLE IF NOT EXISTS ai_profiles (
 	// sessions.current_at — when an older orchestrator chat was brought back as the current one
 	// (idempotent); empty = never, the creation time decides
 	db.Exec(`ALTER TABLE sessions ADD COLUMN current_at TEXT NOT NULL DEFAULT ''`)
+	// sessions.worktree_removed — 1 once merging its task deleted the worktree the agent
+	// worked in (idempotent): a new turn would start claude in a directory that is gone
+	db.Exec(`ALTER TABLE sessions ADD COLUMN worktree_removed INTEGER NOT NULL DEFAULT 0`)
 
 	// aimode_conversations — the Google AI Mode conversations of the local model, by the url
 	// that reopens them (idempotent). The url works with the browser profile that made it.

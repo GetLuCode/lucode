@@ -1,4 +1,4 @@
-import type { AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { Alert, AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -418,3 +418,6 @@ export const previewPermission = (workdir: string, tool: string, input?: string)
 
 export const getPermissionFiles = (workdir: string) =>
   req<{ user_file: string; project_file: string }>('GET', `/api/permissions/files?workdir=${encodeURIComponent(workdir)}`)
+
+// Things to clean up by hand in the project's repositories (merged worktrees left behind).
+export const listProjectAlerts = (projectId: string) => req<Alert[]>('GET', `/api/projects/${projectId}/alerts`)

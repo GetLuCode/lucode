@@ -291,6 +291,8 @@ function ChatViewFull() {
   // the 5-minute prompt cache only exists for Claude models (not Ollama or MiniMax)
   const isClaudeModel = /^(haiku|sonnet|opus|claude)/i.test(session?.model ?? model)
   const cache = useCacheCountdown(sessionStatus, session?.last_active, activeSessionId ?? '')
+  // the task was merged and its worktree deleted: claude would start in a directory that is gone
+  const chatClosed = !!session?.worktree_removed
   const isRunning =isSending || sessionStatus === 'running' || sessionStatus === 'waiting_hook'
   isRunningRef.current = isRunning
   const hasStreamingText = streamingText.length > 0
@@ -404,7 +406,7 @@ function ChatViewFull() {
   }
 
   const handleSend = () => {
-    if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning) return
+    if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning || chatClosed) return
     // For pending sessions, we pass a placeholder ID; sendMessage handles the actual creation
     const targetId = activeSessionId || 'pending'
     sendMessage(targetId, input.trim(), model, effort, thinking, attachedImage,
@@ -862,7 +864,9 @@ function ChatViewFull() {
             ref={textareaRef}
             className="chat__input"
             placeholder={
-              commandProcessing
+              chatClosed
+                ? 'Chat closed: the task was merged and its worktree deleted'
+                : commandProcessing
                 ? 'Processing voice command…'
                 : isRunning
                   ? 'Claude is thinking…'
@@ -874,7 +878,7 @@ function ChatViewFull() {
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            disabled={isRunning}
+            disabled={isRunning || chatClosed}
             rows={1}
           />
           <InputControls
@@ -887,7 +891,7 @@ function ChatViewFull() {
             onSend={handleSend}
             onCancel={handleCancel}
             isRunning={isRunning}
-            canSend={input.trim().length > 0}
+            canSend={input.trim().length > 0 && !chatClosed}
             onMicToggle={handleMicToggle}
             isListening={isListening}
             onSettingsClick={() => setVoiceSettingsOpen(true)}

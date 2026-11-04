@@ -145,6 +145,14 @@ type Session struct {
 	// (EnterWorktree / git worktree add); only listSessions fills them.
 	Worktree string `json:"worktree,omitempty"`
 	Branch   string `json:"branch,omitempty"`
+	// WorktreeRemoved: merging the task deleted the worktree, so the chat is closed.
+	WorktreeRemoved bool `json:"worktree_removed,omitempty"`
+}
+
+// MarkCardSessionsWorktreeRemoved closes the chats of a task whose worktree was deleted.
+func MarkCardSessionsWorktreeRemoved(db *sql.DB, cardID string) error {
+	_, err := db.Exec(`UPDATE sessions SET worktree_removed=1 WHERE card_id=?`, cardID)
+	return err
 }
 
 const SessionKindOrchestrator = "orchestrator"
@@ -240,8 +248,8 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 	var parentID sql.NullString
 	var createdAt, lastActive string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, kind FROM sessions WHERE id=?`, id,
-	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID, &s.Kind)
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, kind, worktree_removed FROM sessions WHERE id=?`, id,
+	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID, &s.Kind, &s.WorktreeRemoved)
 	if err != nil {
 		return s, err
 	}
@@ -255,7 +263,7 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 
 func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id FROM sessions WHERE project_id=? AND kind<>? ORDER BY last_active DESC`,
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, worktree_removed FROM sessions WHERE project_id=? AND kind<>? ORDER BY last_active DESC`,
 		projectID, SessionKindOrchestrator,
 	)
 	if err != nil {
@@ -267,7 +275,7 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		var s Session
 		var parentID sql.NullString
 		var createdAt, lastActive string
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID, &s.WorktreeRemoved); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -1647,6 +1655,23 @@ func GetCardReview(db *sql.DB, cardID string) (CardReview, error) {
 	err := db.QueryRow(`SELECT card_id, branch, worktree_path, repo_path FROM card_reviews WHERE card_id=?`, cardID).
 		Scan(&r.CardID, &r.Branch, &r.WorktreePath, &r.RepoPath)
 	return r, err
+}
+
+// CardReviewWorktreePaths are the worktrees of every task waiting in Review.
+func CardReviewWorktreePaths(db *sql.DB) []string {
+	rows, err := db.Query(`SELECT worktree_path FROM card_reviews`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func DeleteCardReview(db *sql.DB, cardID string) error {
