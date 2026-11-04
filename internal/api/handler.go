@@ -2647,12 +2647,9 @@ func (h *Handler) createKanbanCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if body.ListID == "" || (body.Title == "" && strings.TrimSpace(body.Description) == "") {
-		http.Error(w, "list_id and description (or title) required", http.StatusBadRequest)
+	if body.Title == "" || body.ListID == "" {
+		http.Error(w, "title and list_id required", http.StatusBadRequest)
 		return
-	}
-	if body.Title == "" {
-		body.Title = generateCardTitle(r.Context(), body.Description)
 	}
 	if body.CardType == "" {
 		body.CardType = "task"

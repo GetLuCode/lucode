@@ -699,7 +699,7 @@ function KanbanColumn({
             value={newCardTitle}
             onChange={e => setNewCardTitle(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleAddCard(); if (e.key === 'Escape') { setAddingCard(false); setNewCardTitle('') } }}
-            placeholder="Describe the task…"
+            placeholder="Card title…"
             autoFocus
           />
           <div className="kcolumn__add-actions">
@@ -817,7 +817,7 @@ export function KanbanView() {
     const pos = cards.filter(c => c.list_id === listId).length
     const c = await api.createKanbanCard(activeProjectId!, {
       list_id: listId,
-      description: title, // the server generates the title from the description
+      title,
       card_type: 'task',
       tags: [],
       depends_on: [],
