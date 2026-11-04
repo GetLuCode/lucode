@@ -133,6 +133,8 @@ func main() {
 	if err := bus.StartRunnerServer(manager.ServeRemoteTurn, manager.CancelRemoteTurn, manager.CloseRemoteLive); err != nil {
 		log.Printf("[runner] start error: %v", err)
 	}
+	// Turns that were running on runners when this instance stopped: pick up their events.
+	manager.RecoverRunnerTurns()
 
 	// Start RPC server after handler is created so it can serve remote requests
 	if err := bus.StartRPCServer(apipkg.Wrap(handler)); err != nil {
