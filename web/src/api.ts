@@ -100,8 +100,8 @@ export const newOrchestratorSession = (pid: string) => req<Session>('POST', `/ap
 // History of the local Google AI Mode model: its conversations by url, and bringing one back to work on.
 export const listAIModeConversations = (pid: string) => req<AIModeConversation[]>('GET', `/api/projects/${pid}/aimode/conversations`)
 export const continueAIModeConversation = (id: string) => req<Session>('POST', `/api/aimode/conversations/${id}/continue`)
-export const sendOrchestratorTurn = (id: string, message: string, env: { runnerId: string; aiProfileId: string; model?: string }) =>
-  req<void>('POST', `/api/sessions/${id}/turn`, { message, runner_id: env.runnerId, ai_profile_id: env.aiProfileId, model: env.model })
+export const sendOrchestratorTurn = (id: string, message: string, env: { runnerId: string; aiProfileId: string; model?: string }, image?: { base64: string; mediaType: string } | null) =>
+  req<void>('POST', `/api/sessions/${id}/turn`, { message, runner_id: env.runnerId, ai_profile_id: env.aiProfileId, model: env.model, ...(image ? { image } : {}) })
 // Voice output (Fish Audio through the voice worker). The key is write-only.
 export interface TTSSettings { configured: boolean; model: string; voice_id: string; speed: number }
 export const getTTSSettings = () => req<TTSSettings>('GET', '/api/tts/settings')

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus } from '@tabler/icons-react'
+import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
@@ -70,6 +70,9 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const navigate = useNavigate()
   const [session, setSession] = useState<{ id: string; last_active: string } | null>(null)
   const [error, setError] = useState('')
+  // an image waiting to go with the next message (claude takes it as a block; Google AI Mode gets it uploaded)
+  const [image, setImage] = useState<{ base64: string; mediaType: string } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const [input, setInput] = useState('')
   // Dictation: what was typed before is kept; the phrase being spoken follows it.
   const dictBase = useRef('')
@@ -238,12 +241,27 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
 
   const runningRef = useRef(false)
   runningRef.current = running
+  const imageRef = useRef(image)
+  imageRef.current = image
+  const attachFile = (file: File | null | undefined) => {
+    if (!file) return
+    if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type)) {
+      setError('Only JPEG, PNG, GIF and WebP images can be attached')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => setImage({ base64: String(reader.result).split(',')[1] ?? '', mediaType: file.type })
+    reader.readAsDataURL(file)
+  }
   const sendText = (text: string) => {
-    if (!text || !sid || running || (runnerOffline && !isLocalModel)) return
+    const img = imageRef.current
+    // an image alone is a message too
+    if ((!text && !img) || !sid || running || (runnerOffline && !isLocalModel)) return
     setInput('')
+    setImage(null)
     dictBase.current = ''
     useStore.setState(s => ({ pendingSend: { ...s.pendingSend, [sid]: true } }))
-    api.sendOrchestratorTurn(sid, text, { runnerId, aiProfileId: effectiveAi, model }).catch(e => {
+    api.sendOrchestratorTurn(sid, text || '(see the attached image)', { runnerId, aiProfileId: effectiveAi, model }, img).catch(e => {
       useStore.setState(s => {
         const next = { ...s.pendingSend }
         delete next[sid]
@@ -252,6 +270,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     })
   }
   const send = () => sendText(input.trim())
+  const canSend = !!(input.trim() || image)
 
   const cancel = () => { if (sid) api.cancelTurn(sid).catch(console.error) }
 
@@ -367,6 +386,12 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
       </div>
 
       <div className="orch__input">
+        {image && (
+          <div className="orch__image">
+            <img src={`data:${image.mediaType};base64,${image.base64}`} alt="attached" />
+            <button type="button" className="orch__image-remove" onClick={() => setImage(null)} title="Remove image" aria-label="Remove image"><IconX size={12} /></button>
+          </div>
+        )}
         <textarea
           className="orch__textarea"
           rows={3}
@@ -377,6 +402,10 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
             setInput(e.target.value)
             // typing while dictating: the dictation continues after what is now in the box
             if (mic.state !== 'off') dictBase.current = e.target.value
+          }}
+          onPaste={e => {
+            const f = [...(e.clipboardData?.items ?? [])].find(i => i.type.startsWith('image/'))?.getAsFile()
+            if (f) { e.preventDefault(); attachFile(f) }
           }}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
@@ -406,6 +435,10 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
           <span className="orch__env-summary" title="Runner · AI · Model">
             {runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'} · {MODELS.find(m => m.value === model)?.label ?? model}
           </span>
+          <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden onChange={e => { attachFile(e.target.files?.[0]); e.target.value = '' }} />
+          <button className={`orch__icon-btn${image ? ' orch__icon-btn--on' : ''}`} onClick={() => fileRef.current?.click()} disabled={!sid || running} title="Attach an image (or paste one)" aria-label="Attach an image">
+            <IconPaperclip size={16} />
+          </button>
           <button
             className={`orch__mic orch__mic--${mic.state}`}
             onClick={toggleMic}
@@ -417,7 +450,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
           {running ? (
             <button className="orch__send orch__send--stop" onClick={cancel} title="Stop (Esc)"><IconPlayerStop size={15} /></button>
           ) : (
-            <button className="orch__send" onClick={send} disabled={!input.trim() || !sid || (runnerOffline && !isLocalModel)} title={runnerOffline && !isLocalModel ? 'The selected runner is offline' : 'Send (Enter)'}><IconSend size={15} /></button>
+            <button className="orch__send" onClick={send} disabled={!canSend || !sid || (runnerOffline && !isLocalModel)} title={runnerOffline && !isLocalModel ? 'The selected runner is offline' : 'Send (Enter)'}><IconSend size={15} /></button>
           )}
         </div>
       </div>

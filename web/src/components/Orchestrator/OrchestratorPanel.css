@@ -222,3 +222,9 @@
 .app-content--agent .main__content { display: none; }
 .orch--full { grid-row: 2; grid-column: 2; width: auto; min-width: 0; border-left: none; }
 .orch--full .orch__messages, .orch--full .orch__input { width: 100%; max-width: 960px; margin-inline: auto; box-sizing: border-box; }
+
+/* image waiting to be sent */
+.orch__image { position: relative; align-self: flex-start; max-width: 140px; }
+.orch__image img { display: block; max-width: 100%; max-height: 110px; border-radius: 8px; border: 1px solid var(--border); }
+.orch__image-remove { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--border-bright); background: var(--bg-panel); color: var(--text); cursor: pointer; }
+.orch__image-remove:hover { background: var(--error); color: #fff; border-color: var(--error); }

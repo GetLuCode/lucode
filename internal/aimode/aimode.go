@@ -8,6 +8,7 @@ package aimode
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -109,8 +110,19 @@ func primer() string {
 	return DefaultPrimer
 }
 
+// Image is a picture that goes with a message.
+type Image struct {
+	Base64    string
+	MediaType string
+}
+
 // Ask sends text to the conversation of a session and returns Gemini's answer.
 func (c *Client) Ask(ctx context.Context, sessID, text string) (string, error) {
+	return c.AskImage(ctx, sessID, text, nil)
+}
+
+// AskImage is Ask with a picture attached to the message (nil = none).
+func (c *Client) AskImage(ctx context.Context, sessID, text string, img *Image) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if strings.TrimSpace(text) == "" {
@@ -127,11 +139,11 @@ func (c *Client) Ask(ctx context.Context, sessID, text string) (string, error) {
 	}
 	if fresh { // tell it how to answer; its reply to that is not for the user
 		report(ctx, "Giving Gemini its instructions…")
-		if _, err := c.send(ctx, primer()); err != nil {
+		if _, err := c.send(ctx, primer(), nil); err != nil {
 			return "", fmt.Errorf("priming the conversation: %w", err)
 		}
 	}
-	answer, err := c.send(ctx, text)
+	answer, err := c.send(ctx, text, img)
 	if err != nil {
 		return "", err
 	}
@@ -306,12 +318,23 @@ func (c *Client) enterAIMode(ctx context.Context) error {
 		return err
 	}
 	c.acceptConsent()
+	entered := false
 	if el := c.waitFind(ctx, 8*time.Second, func() []cdp.Element { return c.findByNames(aiModeNames, "link", "button") }); el != nil {
 		if _, err := c.br.Click(cdp.ClickOptions{Ref: el.Ref}); err != nil {
 			return fmt.Errorf("clicking %q: %w", el.Name, err)
 		}
-	} else if _, err := c.br.Navigate("https://www.google.com/search?udm=50"); err != nil {
-		return err
+		// The click does not always take the page there (Google's home has shown the button and
+		// done nothing): AI Mode is on when its address is. If it is not, use the address.
+		for i := 0; i < 8 && !entered && ctx.Err() == nil; i++ {
+			time.Sleep(poll)
+			p, err := c.br.Info()
+			entered = err == nil && strings.Contains(p.URL, "udm=50")
+		}
+	}
+	if !entered {
+		if _, err := c.br.Navigate("https://www.google.com/search?udm=50"); err != nil {
+			return err
+		}
 	}
 	if c.waitFind(ctx, pageWait, c.findInput) == nil {
 		return c.blocked("AI Mode did not show a message box (it may not be available for this account or region)")
@@ -384,11 +407,20 @@ const turnCountJS = `document.querySelectorAll('[data-scope-id="turn"]').length`
 var answerJS string
 
 // send types text into the conversation and waits for the answer to finish.
-func (c *Client) send(ctx context.Context, text string) (string, error) {
+func (c *Client) send(ctx context.Context, text string, img *Image) (string, error) {
 	before := c.turns()
 	box := c.waitFind(ctx, pageWait, c.findInput)
 	if box == nil {
 		return "", c.blocked("the message box is not on the page")
+	}
+	if img != nil {
+		if err := c.attach(ctx, box, img); err != nil {
+			return "", err
+		}
+		// the page draws the box again with the picture in it: the old reference is stale
+		if box = c.waitFind(ctx, pageWait, c.findInput); box == nil {
+			return "", c.blocked("the message box is not on the page")
+		}
 	}
 	if _, err := c.br.Type(cdp.TypeOptions{Ref: box.Ref, Text: text, Submit: true}); err != nil {
 		return "", fmt.Errorf("typing the message: %w", err)
@@ -429,6 +461,39 @@ func (c *Client) send(ctx context.Context, text string) (string, error) {
 		}
 		time.Sleep(poll)
 	}
+}
+
+//go:embed attach.js
+var attachJS string
+
+// attach puts a picture into the message box the way a paste of an image does, and waits for
+// the page to take it (it uploads it before the message can be sent).
+func (c *Client) attach(ctx context.Context, box *cdp.Element, img *Image) error {
+	report(ctx, "Attaching the image…")
+	if _, err := c.br.Click(cdp.ClickOptions{Ref: box.Ref}); err != nil {
+		return fmt.Errorf("focusing the message box: %w", err)
+	}
+	b64, _ := json.Marshal(img.Base64)
+	mime, _ := json.Marshal(img.MediaType)
+	out, err := c.br.Eval("(" + attachJS + ")(" + string(b64) + "," + string(mime) + ")")
+	if err != nil {
+		return fmt.Errorf("attaching the image: %w", err)
+	}
+	if out != "ok" {
+		return fmt.Errorf("attaching the image: %s", out)
+	}
+	// the page shows the picture as a chip named after the file once it has taken it; the
+	// message cannot be sent before that
+	name := "image." + strings.NewReplacer("jpeg", "jpg").Replace(strings.TrimPrefix(img.MediaType, "image/"))
+	chip := c.waitFind(ctx, 20*time.Second, func() []cdp.Element {
+		els, _ := c.br.Find(cdp.FindOptions{Role: "button", Name: name, Exact: true, Limit: 1})
+		return els
+	})
+	if chip == nil {
+		return errors.New("Google did not take the image")
+	}
+	time.Sleep(time.Second) // it uploads it in the background
+	return nil
 }
 
 func (c *Client) turns() int {
