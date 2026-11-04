@@ -142,7 +142,7 @@ interface AgentFormData {
   reports_to: string
   scope: 'project' | 'global'
   lucode_tools: string[]
-  runner_id: string     // '' = the project's; 'local' = this instance
+  runner_id: string     // chosen in the form; 'local' = this instance; '' only while the runners load
   ai_profile_id: string // '' = the project's
 }
 
@@ -186,6 +186,16 @@ function AgentForm({
   const [runners, setRunners] = useState<Runner[]>([])
   const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([])
   useEffect(() => { api.listRunners().then(setRunners).catch(() => setRunners([])) }, [])
+  // An agent always has a runner. One without a valid choice (a new agent, or an old one that
+  // followed the project, or one pinned to a machine that is no longer offered) starts on
+  // the project's runner, else on the first one.
+  const projectRunner = project?.runner_id || 'local'
+  useEffect(() => {
+    const offered = runners.map(r => (r.self ? 'local' : r.id))
+    if (offered.length === 0 || offered.includes(form.runner_id)) return
+    const pick = offered.includes(projectRunner) ? projectRunner : offered[0]
+    setForm(f => ({ ...f, runner_id: pick, ai_profile_id: f.runner_id === '' && pick === projectRunner ? f.ai_profile_id : '' }))
+  }, [runners]) // eslint-disable-line react-hooks/exhaustive-deps
   // The AIs offered are those of the runner the agent will use.
   const aiRunner = form.runner_id || project?.runner_id || 'local'
   useEffect(() => {
@@ -366,7 +376,6 @@ function AgentForm({
                 value={form.runner_id}
                 onChange={e => { setField('runner_id', e.target.value); setField('ai_profile_id', '') }}
               >
-                <option value="">Project&apos;s runner</option>
                 {runners.map(r => (
                   <option key={r.id} value={r.self ? 'local' : r.id}>
                     {r.hostname}{r.self ? ' (this)' : ''}
@@ -381,7 +390,7 @@ function AgentForm({
                 value={form.ai_profile_id}
                 onChange={e => setField('ai_profile_id', e.target.value)}
               >
-                <option value="">{form.runner_id ? 'Default account' : "Project's AI"}</option>
+                <option value="">{form.runner_id && form.runner_id !== projectRunner ? 'Default account' : "Project's AI"}</option>
                 {aiProfiles.map(p => (
                   <option key={p.id} value={p.id}>{p.name}{p.email ? ` — ${p.email}` : ''}</option>
                 ))}
@@ -389,8 +398,9 @@ function AgentForm({
             </div>
           </div>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
-            Where the agent runs and with which account. Empty uses the project&apos;s. Only claude -p agents run on
-            other runners, and the project needs a work dir on that runner.
+            Where the agent runs and with which account. The AI is optional: empty uses the project&apos;s on its
+            own runner, else the runner&apos;s default account. Only claude -p agents run on other runners, and the
+            project needs a work dir on that runner.
           </p>
 
           <div className="agent-form__field">
