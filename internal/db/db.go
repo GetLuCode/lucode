@@ -450,6 +450,20 @@ CREATE TABLE IF NOT EXISTS card_images (
 	// agents.auto_mode — run claude with --permission-mode auto instead of asking through the PreToolUse hook
 	db.Exec(`ALTER TABLE agents ADD COLUMN auto_mode INTEGER NOT NULL DEFAULT 0`)
 
+	// runner_turns — turns this hub has in flight on a runner, to pick them up again after a restart
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS runner_turns (
+    session_id TEXT PRIMARY KEY,
+    runner_id  TEXT NOT NULL,
+    turn_id    TEXT NOT NULL,
+    last_seq   INTEGER NOT NULL DEFAULT 0,
+    opts       TEXT NOT NULL DEFAULT '{}',
+    started_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`); err != nil {
+		return fmt.Errorf("create runner_turns: %w", err)
+	}
+
 	return nil
 }
 

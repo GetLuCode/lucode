@@ -92,10 +92,19 @@ func main() {
 		payload, _ := json.Marshal(rt)
 		var text strings.Builder
 		var usage bool
-		err := bus.RunnerExecute(runner.ID, payload, func(raw []byte) bool {
+		turnID := uuid.New().String()
+		done := make(chan struct{})
+		f, err := bus.FollowRunnerTurn(runner.ID, sess, false, nil, func(re natspkg.RunnerEvent) error {
+			if re.TurnID != turnID {
+				return nil
+			}
+			if re.Done {
+				close(done)
+				return nil
+			}
 			var ev map[string]any
-			if json.Unmarshal(raw, &ev) != nil {
-				return true
+			if json.Unmarshal(re.Event, &ev) != nil {
+				return nil
 			}
 			switch ev["type"] {
 			case "message_ready":
@@ -107,8 +116,18 @@ func main() {
 			case "error":
 				fmt.Printf("  error event: %v\n", ev)
 			}
-			return true
+			return nil
 		})
+		if err == nil {
+			defer f.Close()
+			if err = bus.RunnerStartTurn(runner.ID, sess, turnID, payload); err == nil {
+				select {
+				case <-done:
+				case <-time.After(3 * time.Minute):
+					err = fmt.Errorf("timeout waiting for turn_done")
+				}
+			}
+		}
 		fmt.Printf("turn %d: reply=%q context_usage=%v err=%v\n", n, strings.TrimSpace(text.String()), usage, err)
 	}
 	turn(1, "Remember the secret word PINEAPPLE. Reply with just: ok")
