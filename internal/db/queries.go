@@ -148,11 +148,17 @@ const SessionKindOrchestrator = "orchestrator"
 // (older ones stay stored but are no longer shown); sql.ErrNoRows if none yet.
 func GetOrchestratorSession(db *sql.DB, projectID string) (Session, error) {
 	var id string
-	err := db.QueryRow(`SELECT id FROM sessions WHERE project_id=? AND kind=? ORDER BY created_at DESC, rowid DESC LIMIT 1`, projectID, SessionKindOrchestrator).Scan(&id)
+	err := db.QueryRow(`SELECT id FROM sessions WHERE project_id=? AND kind=? ORDER BY CASE WHEN current_at='' THEN created_at ELSE current_at END DESC, (current_at<>'') DESC, rowid DESC LIMIT 1`, projectID, SessionKindOrchestrator).Scan(&id)
 	if err != nil {
 		return Session{}, err
 	}
 	return GetSession(db, id)
+}
+
+// MakeOrchestratorCurrent brings an older orchestrator chat back as the one the panel shows.
+func MakeOrchestratorCurrent(db *sql.DB, id string) error {
+	_, err := db.Exec(`UPDATE sessions SET current_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND kind=?`, id, SessionKindOrchestrator)
+	return err
 }
 
 func InsertSession(db *sql.DB, s Session) error {

@@ -15,7 +15,11 @@ func (m *Manager) runWithAIMode(ctx context.Context, ps *ProcessState, opts Turn
 	defer m.finishTurn(sessID, ps)
 	publish := m.cliPublisher(sessID, opts)
 
-	answer, err := aimode.Default.Ask(ctx, sessID, opts.Message)
+	// what the page is doing, for the timer in the chat; not stored, it is only live feedback
+	progress := func(text string) {
+		m.bus.Broadcast(sessID, map[string]any{"type": "progress", "session_id": sessID, "text": text})
+	}
+	answer, err := aimode.Default.Ask(aimode.WithProgress(ctx, progress), sessID, opts.Message)
 	if err != nil {
 		if ctx.Err() != nil { // the user stopped the turn
 			publish(map[string]any{"type": "session_status", "session_id": sessID, "status": "idle"})

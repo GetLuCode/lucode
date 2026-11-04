@@ -152,6 +152,7 @@ export type WSEvent =
   | { type: 'session_updated'; session: Session }
   | { type: 'error'; session_id: string; message: string }
   | { type: 'info'; session_id: string; message: string }
+  | { type: 'progress'; session_id: string; text: string }
   | { type: 'claude_process'; session_id: string; alive: boolean; pid?: number; runner?: string }
   | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
   | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
@@ -358,4 +359,20 @@ export interface ClaudeProcess {
   alive: boolean
   pid?: number     // local processes only
   runner?: string  // the runner holding it, when it is not this instance
+}
+
+// A Google AI Mode conversation of the local model: the chat it belongs to and the url that
+// reopens it (it works with the browser profile lucode keeps for it).
+export interface AIModeConversation {
+  id: string
+  session_id: string
+  project_id: string
+  url: string
+  title: string
+  created_at: string
+  updated_at: string
+  session_exists: boolean
+  session_kind?: string
+  message_count: number
+  current: boolean
 }

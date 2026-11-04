@@ -2,6 +2,8 @@ package cdp
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -219,5 +221,57 @@ func TestReconnectAfterARestart(t *testing.T) {
 	}
 	if _, ok := loadState(""); ok {
 		t.Error("the state file should be removed")
+	}
+}
+
+// The profile is the user data of the browser: cookies must survive Close and a new launch,
+// because things such as Google's conversations are tied to them.
+func TestProfileKeepsCookiesAcrossRestarts(t *testing.T) {
+	if _, err := FindEdge(); err != nil {
+		t.Skip("Edge is not installed")
+	}
+	t.Setenv("LUCODE_EDGE_STATE", filepath.Join(t.TempDir(), "state.json"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<title>cookies</title>ok"))
+	}))
+	defer srv.Close()
+	profile := t.TempDir()
+	port := freePort(t)
+
+	first := New("cookies", port)
+	if _, err := first.Launch(LaunchOptions{Headless: true, Port: port, ProfileDir: profile, URL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { first.Close() })
+	for i := 0; i < 50; i++ { // let the page load
+		if p, _ := first.Info(); p.Title == "cookies" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := first.Eval(`document.cookie = "lucode_test=kept; max-age=86400; path=/"`); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := first.Eval(`document.cookie`); !strings.Contains(got, "lucode_test=kept") {
+		t.Fatalf("the cookie was not set: %q", got)
+	}
+	first.Close() // lucode closes Edge itself: this must flush the profile
+
+	second := New("cookies", port)
+	if _, err := second.Launch(LaunchOptions{Headless: true, Port: port, ProfileDir: profile, URL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { second.Close() })
+	var got string
+	for i := 0; i < 50; i++ {
+		if p, _ := second.Info(); p.Title == "cookies" {
+			got, _ = second.Eval(`document.cookie`)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !strings.Contains(got, "lucode_test=kept") {
+		t.Errorf("the cookie did not survive a restart of the browser: %q", got)
 	}
 }

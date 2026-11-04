@@ -6997,3 +6997,22 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 
 /* idle session: a green check instead of the word "ready" */
 .chat__status-ready { display: block; color: #22c55e; }
+
+/* syntax highlighting of code blocks in messages (highlight.js classes) */
+.msg__markdown pre code.hljs { color: #d6deeb; }
+.hljs-comment, .hljs-quote { color: #6b7a90; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-type, .hljs-meta .hljs-keyword { color: #c792ea; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta .hljs-string { color: #a5e075; }
+.hljs-number, .hljs-symbol, .hljs-bullet { color: #f78c6c; }
+.hljs-title, .hljs-title.function_, .hljs-section, .hljs-selector-id, .hljs-selector-class { color: #82aaff; }
+.hljs-title.class_, .hljs-built_in, .hljs-class .hljs-title { color: #ffcb6b; }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable, .hljs-params { color: #7fdbca; }
+.hljs-name, .hljs-tag, .hljs-deletion { color: #f07178; }
+.hljs-meta, .hljs-link { color: #89ddff; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+
+/* what a long turn is doing, and for how long */
+.thinking { align-items: center; flex-wrap: wrap; }
+.thinking__text { margin-left: 6px; font-size: 12px; color: var(--text-muted); }
+.thinking__time { margin-left: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }

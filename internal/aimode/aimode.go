@@ -7,6 +7,7 @@ package aimode
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -36,11 +37,13 @@ Si entendiste, responde solo: Listo.`
 
 // How long to wait for things on the page.
 const (
-	pageWait   = 15 * time.Second // elements to show up
-	turnWait   = 25 * time.Second // the new turn to appear after sending
-	answerWait = 3 * time.Minute  // the answer to finish
-	poll       = 500 * time.Millisecond
-	stableFor  = 5 // polls with the same answer before it counts as finished (about 2.5 s)
+	pageWait    = 15 * time.Second // elements to show up
+	resumeWait  = 3 * time.Minute  // a long saved conversation to load
+	giveUpAfter = 20               // polls (10 s) without new turns before a saved conversation is given up
+	turnWait    = 25 * time.Second // the new turn to appear after sending
+	answerWait  = 3 * time.Minute  // the answer to finish
+	poll        = 500 * time.Millisecond
+	stableFor   = 5 // polls with the same answer before it counts as finished (about 2.5 s)
 )
 
 // Client drives one Edge shared by all sessions that use the model. One question at a time.
@@ -50,6 +53,42 @@ type Client struct {
 	port    int
 	profile string            // browser profile folder; "" = ~/.lucode/aimode-profile
 	tabs    map[string]string // lucode session id -> tab id
+	store   Store             // where conversations are remembered; nil = not at all
+
+	lostSaved bool // the saved conversation could not be reopened and a new one was started
+}
+
+type progressKey struct{}
+
+// WithProgress makes Ask tell what it is doing ("Reopening the conversation… 12 of 40 turns
+// loaded"), so the UI can show it next to the elapsed time.
+func WithProgress(ctx context.Context, f func(string)) context.Context {
+	return context.WithValue(ctx, progressKey{}, f)
+}
+
+func report(ctx context.Context, msg string) {
+	if f, ok := ctx.Value(progressKey{}).(func(string)); ok && f != nil {
+		f(msg)
+	}
+}
+
+// Store remembers which Google conversation belongs to a lucode session, so the session can
+// continue it after its tab, the browser or lucode itself went away.
+type Store interface {
+	// ConversationURL is the saved address of the session's conversation ("" if none) and
+	// how many turns the page had then: a long conversation loads slowly, and that number
+	// says when it has finished.
+	ConversationURL(sessID string) (url string, turns int)
+	// SaveConversation records the address and turn count after an answer. title is the
+	// first thing the user asked; the store keeps the first one it was given.
+	SaveConversation(sessID, url, title string, turns int)
+}
+
+// SetStore turns on the history of conversations.
+func (c *Client) SetStore(s Store) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.store = s
 }
 
 // newClient makes a client with its own Edge (port, profile folder and state name).
@@ -76,19 +115,51 @@ func (c *Client) Ask(ctx context.Context, sessID, text string) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return "", errors.New("empty message")
 	}
+	report(ctx, "Opening Edge…")
 	if err := c.ensureBrowser(); err != nil {
 		return "", err
 	}
+	c.lostSaved = false
 	fresh, err := c.openConversation(ctx, sessID)
 	if err != nil {
 		return "", err
 	}
 	if fresh { // tell it how to answer; its reply to that is not for the user
+		report(ctx, "Giving Gemini its instructions…")
 		if _, err := c.send(ctx, primer()); err != nil {
 			return "", fmt.Errorf("priming the conversation: %w", err)
 		}
 	}
-	return c.send(ctx, text)
+	answer, err := c.send(ctx, text)
+	if err != nil {
+		return "", err
+	}
+	c.remember(sessID, text)
+	if c.lostSaved {
+		answer = "_The saved Google conversation could not be reopened (Google no longer has it for this browser profile), so this is a new one._\n\n" + answer
+	}
+	return answer, nil
+}
+
+// remember saves where the conversation of a session is, so it can be continued later.
+func (c *Client) remember(sessID, firstText string) {
+	if c.store == nil {
+		return
+	}
+	p, err := c.br.Info()
+	if err != nil || p.URL == "" || strings.HasPrefix(p.URL, "about:") {
+		return
+	}
+	c.store.SaveConversation(sessID, p.URL, title(firstText), c.turns())
+}
+
+// title is how a conversation is named in the history: what the user asked, on one line.
+func title(text string) string {
+	t := strings.Join(strings.Fields(text), " ")
+	if r := []rune(t); len(r) > 100 {
+		t = string(r[:100]) + "…"
+	}
+	return t
 }
 
 // Forget closes the tab of a session (a new chat session starts a new conversation).
@@ -110,7 +181,12 @@ func (c *Client) Shutdown() {
 }
 
 func (c *Client) ensureBrowser() error {
+	// The profile (cookies, local storage) is what Google ties its conversations to, so it is
+	// kept between runs: a saved conversation url only works with the profile that made it.
 	profile := c.profile
+	if profile == "" {
+		profile = os.Getenv("LUCODE_AIMODE_PROFILE")
+	}
 	if profile == "" {
 		home, _ := os.UserHomeDir()
 		profile = filepath.Join(home, ".lucode", "aimode-profile")
@@ -128,39 +204,96 @@ func (c *Client) openConversation(ctx context.Context, sessID string) (fresh boo
 		}
 		delete(c.tabs, sessID) // the user closed it: start over
 	}
-	tabs, err := c.br.Tabs()
+	id, err := c.blankTab()
 	if err != nil {
 		return false, err
 	}
-	var id string
-	if len(tabs) == 1 && (tabs[0].URL == "about:blank" || tabs[0].URL == "") && len(c.tabs) == 0 {
-		id = tabs[0].ID // the blank tab Edge opened with
-		if _, err := c.br.SwitchTab(id); err != nil {
-			return false, err
-		}
-	} else {
-		if _, err := c.br.NewTab("about:blank"); err != nil {
-			return false, err
-		}
-		cur, err := c.br.Tabs()
-		if err != nil {
-			return false, err
-		}
-		for _, t := range cur {
-			if t.Current {
-				id = t.ID
+	// The browser lost the tab (it was closed, or lucode restarted) but the conversation is in
+	// the history: its url reopens it, with all its turns, in this browser profile.
+	if c.store != nil {
+		if u, turns := c.store.ConversationURL(sessID); u != "" {
+			if c.resume(ctx, u, turns) {
+				c.tabs[sessID] = id
+				return false, nil
 			}
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			// Google no longer has it (another profile, a dropped conversation): say so, then start over
+			c.lostSaved = true
 		}
 	}
-	if id == "" {
-		return false, errors.New("could not open a tab")
-	}
+	report(ctx, "Starting a new conversation in AI Mode…")
 	if err := c.enterAIMode(ctx); err != nil {
 		_ = c.br.CloseTab(id)
 		return false, err
 	}
 	c.tabs[sessID] = id
 	return true, nil
+}
+
+// blankTab makes a tab ready to be pointed somewhere and makes it the current one.
+func (c *Client) blankTab() (string, error) {
+	tabs, err := c.br.Tabs()
+	if err != nil {
+		return "", err
+	}
+	if len(tabs) == 1 && (tabs[0].URL == "about:blank" || tabs[0].URL == "") && len(c.tabs) == 0 {
+		if _, err := c.br.SwitchTab(tabs[0].ID); err != nil { // the blank tab Edge opened with
+			return "", err
+		}
+		return tabs[0].ID, nil
+	}
+	if _, err := c.br.NewTab("about:blank"); err != nil {
+		return "", err
+	}
+	cur, err := c.br.Tabs()
+	if err != nil {
+		return "", err
+	}
+	for _, t := range cur {
+		if t.Current {
+			return t.ID, nil
+		}
+	}
+	return "", errors.New("could not open a tab")
+}
+
+// resume opens a saved conversation in the current tab and waits for it to load. A long
+// conversation takes a while and shows its turns little by little, so it is loaded when it has
+// as many turns as it had when it was saved. A url that no longer works (another browser
+// profile, a conversation Google dropped) ends with fewer turns, or none, and the caller
+// starts a new conversation instead.
+func (c *Client) resume(ctx context.Context, url string, want int) bool {
+	if want < 1 {
+		want = 1
+	}
+	report(ctx, "Reopening the saved conversation…")
+	if _, err := c.br.Navigate(url); err != nil {
+		return false
+	}
+	deadline := time.Now().Add(resumeWait)
+	last, still := -1, 0
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		n := c.turns()
+		if n != last {
+			last, still = n, 0
+			if n > 0 {
+				report(ctx, fmt.Sprintf("Reopening the saved conversation… %d of %d turns loaded", n, want))
+			}
+		} else {
+			still++
+		}
+		if n >= want && still >= 3 && c.findInput() != nil {
+			return true
+		}
+		// it stopped loading with fewer turns than it had (or with none): it will not get any better
+		if still >= giveUpAfter {
+			return false
+		}
+		time.Sleep(poll)
+	}
+	return false
 }
 
 var aiModeNames = []string{"Modo IA", "AI Mode", "Modo de IA"}
@@ -233,21 +366,21 @@ func (c *Client) waitFind(ctx context.Context, d time.Duration, find func() []cd
 // blocked explains a page that is not what we expect: a human check, usually.
 func (c *Client) blocked(fallback string) error {
 	if p, err := c.br.Info(); err == nil && (strings.Contains(p.URL, "/sorry/") || strings.Contains(strings.ToLower(p.Title), "unusual traffic")) {
-		return errors.New("Google is asking to verify that you are human. Set LUCODE_AIMODE_HEADLESS=0 (the default) so the window is visible, solve it there, and send the message again")
+		if headless() {
+			return errors.New("Google is asking to verify that you are human, and Edge is hidden (LUCODE_AIMODE_HEADLESS=1). Remove that variable so the window shows, solve the check there, and send the message again")
+		}
+		return errors.New("Google is asking to verify that you are human. Solve the check in the Edge window lucode opened, then send the message again (the browser profile keeps the result)")
 	}
 	return errors.New(fallback)
 }
 
 const turnCountJS = `document.querySelectorAll('[data-scope-id="turn"]').length`
 
-// answerJS is the text of the last turn's answer, without the question.
-const answerJS = `(() => {
-  const turns = [...document.querySelectorAll('[data-scope-id="turn"]')];
-  const t = turns[turns.length - 1];
-  if (!t) return '';
-  const main = t.querySelector('[data-container-id="main-col"]');
-  return main ? main.innerText : '';
-})()`
+// answerJS turns the last turn's answer into Markdown (see markdown.js): headings, bold,
+// italics, lists, code blocks, tables and links keep the form Gemini gave them.
+//
+//go:embed markdown.js
+var answerJS string
 
 // send types text into the conversation and waits for the answer to finish.
 func (c *Client) send(ctx context.Context, text string) (string, error) {
@@ -259,6 +392,7 @@ func (c *Client) send(ctx context.Context, text string) (string, error) {
 	if _, err := c.br.Type(cdp.TypeOptions{Ref: box.Ref, Text: text, Submit: true}); err != nil {
 		return "", fmt.Errorf("typing the message: %w", err)
 	}
+	report(ctx, "Waiting for Google's answer…")
 	// a new turn appears when Google takes the message
 	deadline := time.Now().Add(turnWait)
 	for c.turns() <= before {
@@ -311,8 +445,8 @@ var (
 	disclaimer = regexp.MustCompile(`(?i)(puede cometer errores|can make mistakes|may include mistakes|verifica las respuestas|double-check)`)
 )
 
-// Clean removes what the page adds around the answer: the "+3" counters of its source
-// chips and the "AI can make mistakes" notice.
+// Clean tidies the Markdown of an answer: it drops the "+3" counters of source pills and
+// the "AI can make mistakes" notice if they got through, and collapses blank lines.
 func Clean(raw string) string {
 	var lines []string
 	for _, l := range strings.Split(strings.ReplaceAll(raw, "\r", ""), "\n") {

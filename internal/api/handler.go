@@ -59,6 +59,7 @@ type Handler struct {
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
+	aimode.Default.SetStore(aimodeStore{db: db}) // the local model remembers its conversations
 	return &Handler{
 		db:           db,
 		bus:          bus,
@@ -97,6 +98,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/projects/{pid}/orchestrator", h.getOrchestrator)
 	mux.HandleFunc("POST /api/projects/{pid}/orchestrator/new", h.newOrchestrator)
+	mux.HandleFunc("GET /api/projects/{pid}/aimode/conversations", h.listAIModeConversations)
+	mux.HandleFunc("POST /api/aimode/conversations/{id}/continue", h.continueAIModeConversation)
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)
 	mux.HandleFunc("DELETE /api/sessions/{id}/turn", h.cancelTurn)
 	mux.HandleFunc("GET /api/sessions/{id}/process", h.getSessionProcess)

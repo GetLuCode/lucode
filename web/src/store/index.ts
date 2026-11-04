@@ -68,6 +68,11 @@ interface AppState {
   // Context window usage per session (updated after each turn via WS)
   contextUsage: Record<string, ContextUsage>
   claudeProcess: Record<string, ClaudeProcess>
+  // what a running turn is doing right now, when it says (e.g. reopening a long saved conversation)
+  turnProgress: Record<string, string>
+  // the model the orchestrator is set to, so every button that opens it can show its mark
+  orchModel: string
+  setOrchModel: (model: string) => void
 
   // Raw event modal state — which session/turn to inspect
   rawEventsModal: { sessionId: string; turnIndex?: number } | null
@@ -303,6 +308,9 @@ export const useStore = create<AppState>((set, get) => ({
   userTools: [],
   contextUsage: {},
   claudeProcess: {},
+  turnProgress: {},
+  orchModel: 'sonnet',
+  setOrchModel: (model) => set(s => (s.orchModel === model ? s : { orchModel: model })),
   rawEventsModal: null,
   rawEventsRevision: {},
 
@@ -714,6 +722,7 @@ export const useStore = create<AppState>((set, get) => ({
         set(s => ({
           sessionStatus: { ...s.sessionStatus, [event.session_id]: event.status },
           sessionError: { ...s.sessionError, [event.session_id]: errMsg },
+          turnProgress: event.status === 'running' ? s.turnProgress : { ...s.turnProgress, [event.session_id]: '' },
           sessions: s.sessions.map(sess =>
             sess.id === event.session_id ? { ...sess, status: event.status as Session['status'] } : sess
           ),
@@ -1122,6 +1131,11 @@ export const useStore = create<AppState>((set, get) => ({
           },
         }))
         break
+
+      case 'progress': {
+        set(s => ({ turnProgress: { ...s.turnProgress, [event.session_id]: event.text } }))
+        break
+      }
 
       case 'claude_process': {
         set(s => ({ claudeProcess: { ...s.claudeProcess, [event.session_id]: { alive: event.alive, pid: event.pid, runner: event.runner } } }))

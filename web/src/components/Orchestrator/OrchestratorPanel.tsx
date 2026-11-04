@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
@@ -9,6 +9,8 @@ import { ThinkingIndicator } from '../Chat/ThinkingIndicator'
 import { ContextBar } from '../Chat/ContextBar'
 import { CacheBadge, useCacheCountdown } from '../Chat/CacheBadge'
 import { ClaudeProcess } from '../Chat/ClaudeProcess'
+import { AIModeHistory } from './AIModeHistory'
+import { ModelIcon } from './ModelIcon'
 import { EnvPicker } from './EnvPicker'
 import { useWorkerMic } from '@/hooks/useWorkerMic'
 import { useWorkerTTS } from '@/hooks/useWorkerTTS'
@@ -63,6 +65,7 @@ export function OrchestratorPanel() {
   const setOpen = useStore(s => s.setOrchOpen)
   const setOrchCache = useStore(s => s.setOrchCache)
   const onKanban = useLocation().pathname.includes('/kanban')
+  const navigate = useNavigate()
   const [session, setSession] = useState<{ id: string; last_active: string } | null>(null)
   const [error, setError] = useState('')
   const [input, setInput] = useState('')
@@ -180,6 +183,8 @@ export function OrchestratorPanel() {
     const saved = lsGet(LS.model(projectId), 'sonnet')
     setModel(MODELS.some(m => m.value === saved) ? saved : 'sonnet')
   }, [projectId])
+  const setOrchModel = useStore(s => s.setOrchModel)
+  useEffect(() => { setOrchModel(model) }, [model, setOrchModel]) // the buttons that reopen the panel show its mark
   const isLocalModel = model.startsWith('local:') // answered by a browser: no cache, context or process to show
   const pickModel = (v: string) => {
     setModel(v)
@@ -242,6 +247,23 @@ export function OrchestratorPanel() {
 
   const cancel = () => { if (sid) api.cancelTurn(sid).catch(console.error) }
 
+  // A Google AI Mode conversation picked from the history: its chat comes back with its
+  // messages (or, if it was an ordinary chat, it is opened); the next message goes to the same page.
+  const continueConversation = async (s: Session) => {
+    if (s.kind !== 'orchestrator') { navigate(`/projects/${s.project_id}/sessions/${s.id}`); return }
+    tts.stop()
+    setError('')
+    try {
+      await loadMessages(s.id)
+      seedContextUsage(s)
+      setInput('')
+      dictBase.current = ''
+      setSession({ id: s.id, last_active: s.message_count > 0 ? s.last_active : '' })
+    } catch (e) {
+      setError(String((e as Error)?.message ?? e))
+    }
+  }
+
   // A fresh conversation with an empty context window; the old one is closed.
   const startNewSession = async () => {
     if (!projectId || running) return
@@ -265,6 +287,7 @@ export function OrchestratorPanel() {
     if (onKanban) return null // the board has its own button, after "Add list"
     return (
       <button className="orch-tab" onClick={() => toggle(true)} title="Open the orchestrator chat">
+        <ModelIcon model={model} size={16} />
         <IconLayoutSidebarRightExpand size={16} />
         <span>Orchestrator</span>
         {!isLocalModel && <CacheBadge cache={cache} compact />}
@@ -275,9 +298,11 @@ export function OrchestratorPanel() {
   return (
     <aside className="orch">
       <header className="orch__header">
+        <ModelIcon model={model} size={17} className="orch__model-icon" />
         <span className="orch__title">Orchestrator</span>
         {!isLocalModel && <CacheBadge cache={cache} />}
         {sid && !isLocalModel && <ClaudeProcess sessionId={sid} />}
+        {isLocalModel && projectId && <AIModeHistory projectId={projectId} onContinue={continueConversation} />}
         <button
           className="orch__icon-btn"
           onClick={startNewSession}
@@ -326,7 +351,7 @@ export function OrchestratorPanel() {
             <div className="msg__bubble"><p className="msg__text msg__text--streaming">{streamingText}</p></div>
           </div>
         )}
-        {running && !streamingText && <ThinkingIndicator />}
+        {running && !streamingText && <ThinkingIndicator sessionId={sid} model={model} />}
         {tts.error && <div className="orch__error">{tts.error}</div>}
         {status === 'error' && sessionError && <div className="orch__error">{sessionError}</div>}
       </div>

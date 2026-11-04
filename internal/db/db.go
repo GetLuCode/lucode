@@ -268,6 +268,24 @@ CREATE TABLE IF NOT EXISTS ai_profiles (
 	db.Exec(`ALTER TABLE sessions ADD COLUMN card_id  TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
+	// sessions.current_at — when an older orchestrator chat was brought back as the current one
+	// (idempotent); empty = never, the creation time decides
+	db.Exec(`ALTER TABLE sessions ADD COLUMN current_at TEXT NOT NULL DEFAULT ''`)
+
+	// aimode_conversations — the Google AI Mode conversations of the local model, by the url
+	// that reopens them (idempotent). The url works with the browser profile that made it.
+	db.Exec(`CREATE TABLE IF NOT EXISTS aimode_conversations (
+    id         TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL DEFAULT '',
+    url        TEXT NOT NULL,
+    title      TEXT NOT NULL DEFAULT '',
+    turns      INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`)
+	db.Exec(`ALTER TABLE aimode_conversations ADD COLUMN turns INTEGER NOT NULL DEFAULT 0`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_aimode_conv_project ON aimode_conversations(project_id, updated_at)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_card  ON sessions(card_id)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`)
 

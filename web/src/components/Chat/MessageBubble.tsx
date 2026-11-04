@@ -6,9 +6,20 @@ import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
 import { ToolExecutionMessage } from './ToolExecutionMessage'
+import { highlightCode } from '../../lib/highlight'
 import type { Message, ToolInputField } from '../../types'
 
-marked.use({ gfm: true, breaks: false })
+marked.use({
+  gfm: true,
+  breaks: false,
+  renderer: {
+    // fenced code gets syntax highlighting (the language comes after the opening fence)
+    code({ text, lang }) {
+      const { html, language } = highlightCode(text, lang)
+      return `<pre><code class="hljs${language ? ` language-${language}` : ''}">${html}</code></pre>`
+    },
+  },
+})
 
 interface Props {
   message: Message

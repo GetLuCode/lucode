@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -61,4 +62,68 @@ func TestLiveConversation(t *testing.T) {
 	}
 	t.Logf("answer 3: %q", a3)
 	c.Forget("s1")
+}
+
+// memStore is an in-memory Store for the tests.
+type memStore struct {
+	mu          sync.Mutex
+	url, titled string
+	turns       int
+}
+
+func (m *memStore) ConversationURL(string) (string, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.url, m.turns
+}
+func (m *memStore) SaveConversation(_ string, url, title string, turns int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.url, m.turns = url, turns
+	if m.titled == "" {
+		m.titled = title
+	}
+}
+
+// The history: after the whole browser is closed, a new client with the same profile reopens
+// the saved url and goes on in that same conversation (its earlier turns are still on the
+// page), instead of starting a new one. What Gemini remembers is not what is checked.
+// LUCODE_LIVE_AIMODE=1 go test ./internal/aimode -run Resume -v
+func TestLiveResumeAfterRestart(t *testing.T) {
+	if os.Getenv("LUCODE_LIVE_AIMODE") == "" {
+		t.Skip("set LUCODE_LIVE_AIMODE=1 to talk to Google")
+	}
+	t.Setenv("LUCODE_EDGE_STATE", filepath.Join(t.TempDir(), "state.json"))
+	t.Setenv("LUCODE_AIMODE_HEADLESS", "1")
+	profile := t.TempDir() // kept for both clients, like ~/.lucode/aimode-profile
+	store := &memStore{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	first := newClient("aimode-r1", 9456, profile)
+	first.SetStore(store)
+	if _, err := first.Ask(ctx, "s1", "Vamos a hablar de la ciudad de Tokio. Responde solo: listo."); err != nil {
+		t.Fatal(err)
+	}
+	if store.url == "" || store.titled == "" {
+		t.Fatalf("the conversation was not saved: %+v", store)
+	}
+	t.Logf("saved %q (%d chars of url)", store.titled, len(store.url))
+	first.Shutdown() // browser closed: cookies are flushed
+
+	second := newClient("aimode-r2", 9457, profile) // another lucode run: no tabs, no memory
+	second.SetStore(store)
+	t.Cleanup(second.Shutdown)
+	a, err := second.Ask(ctx, "s1", "¿En qué país está esa ciudad? Responde solo el país.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("answer: %q", a)
+	// the page holds the primer, the first question and now this one: three turns in one thread
+	if n := second.turns(); n != 3 {
+		t.Errorf("expected to continue the saved conversation (3 turns), the page has %d", n)
+	}
+	if store.titled != "Vamos a hablar de la ciudad de Tokio. Responde solo: listo." {
+		t.Errorf("the title must stay the first question, got %q", store.titled)
+	}
 }

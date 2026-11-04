@@ -787,7 +787,7 @@ function ChatViewFull() {
           </div>
         )}
 
-        {isRunning && !hasStreamingText && !hasStreamingThinking && <ThinkingIndicator />}
+        {isRunning && !hasStreamingText && !hasStreamingThinking && <ThinkingIndicator sessionId={activeSessionId} model={model} />}
 
         {sessionStatus === 'error' && sessionError && (
           <SessionErrorBanner error={sessionError} />
