@@ -642,7 +642,7 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	if agent != nil {
 		opts.Executor = agent.Executor
 		opts.AgentName = agent.Name
-		opts.Tools = agent.Tools
+		opts.Tools = agentTools(*agent)
 		opts.Persistent = agent.Persistent && agent.Executor == "claude"
 		opts.AutoMode = agent.AutoMode && agent.Executor == "claude"
 		opts.Worktree = agent.Worktree && agent.Executor == "claude"

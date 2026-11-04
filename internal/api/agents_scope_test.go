@@ -232,19 +232,38 @@ func TestSystemPromptOnlyDescribesTheToolsTheAgentHas(t *testing.T) {
 	}
 }
 
-func TestSystemPromptAsksForAWorktree(t *testing.T) {
+func TestSystemPromptDescribesTheWorktreeOnlyForWorktreeAgents(t *testing.T) {
 	card := dbpkg.KanbanCard{ID: "T", Title: "t"}
-	p := agentSystemPrompt(dbpkg.Agent{Name: "A"}, card, "")
-	if !strings.Contains(p, "Call EnterWorktree") || !strings.Contains(p, "ExitWorktree") {
-		t.Errorf("an unrestricted agent should be told to use EnterWorktree:\n%s", p)
+
+	p := agentSystemPrompt(dbpkg.Agent{Name: "A", Executor: "claude", Worktree: true}, card, "")
+	if !strings.Contains(p, "your own git worktree") || !strings.Contains(p, "do not use EnterWorktree") {
+		t.Errorf("a worktree agent is told it already works in one:\n%s", p)
 	}
-	p = agentSystemPrompt(dbpkg.Agent{Name: "A", Tools: []string{"Bash", "Edit"}}, card, "")
-	if !strings.Contains(p, "git worktree add") || strings.Contains(p, "EnterWorktree") {
-		t.Errorf("without EnterWorktree it should use git worktree add:\n%s", p)
+	if strings.Contains(p, "Call EnterWorktree") || strings.Contains(p, "git worktree add") {
+		t.Errorf("a worktree agent is never asked to create one:\n%s", p)
 	}
-	p = agentSystemPrompt(dbpkg.Agent{Name: "A", Tools: []string{"Read"}}, card, "")
-	if strings.Contains(p, "worktree") {
-		t.Errorf("an agent that can neither enter nor create a worktree is not told about it:\n%s", p)
+	if !strings.Contains(p, "Review") {
+		t.Errorf("a worktree agent is told its work goes to Review:\n%s", p)
+	}
+
+	for _, a := range []dbpkg.Agent{{Name: "A"}, {Name: "A", Executor: "claude"}, {Name: "A", Executor: "aiapi", Worktree: true}} {
+		if p := agentSystemPrompt(a, card, ""); strings.Contains(p, "worktree") || strings.Contains(p, "Review") {
+			t.Errorf("agent %+v is not told about worktrees:\n%s", a, p)
+		}
+	}
+}
+
+func TestWorktreeAgentLosesEnterAndExitWorktree(t *testing.T) {
+	tools := []string{"Bash", "EnterWorktree", "Edit", "ExitWorktree"}
+	got := agentTools(dbpkg.Agent{Executor: "claude", Worktree: true, Tools: tools})
+	if strings.Join(got, ",") != "Bash,Edit" {
+		t.Errorf("worktree agent tools = %v", got)
+	}
+	if got := agentTools(dbpkg.Agent{Executor: "claude", Tools: tools}); len(got) != 4 {
+		t.Errorf("without the option the tools stay: %v", got)
+	}
+	if got := agentTools(dbpkg.Agent{Executor: "claude", Worktree: true}); len(got) != 0 {
+		t.Errorf("an unrestricted agent stays unrestricted: %v", got)
 	}
 }
 

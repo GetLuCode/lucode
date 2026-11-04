@@ -260,28 +260,35 @@ func hasBuiltinTool(agent dbpkg.Agent, name string) bool {
 	return len(agent.Tools) == 0 || contains(agent.Tools, name)
 }
 
-// worktreePrompt tells the agent to do its edits in a private git worktree, so
-// several agents on the same repo never step on each other or on the user's
-// checkout. It names only what the agent can actually use; with neither
-// EnterWorktree nor Bash it says nothing.
+// worktreeAgent reports whether lucode runs this agent in its own git worktree
+// (claude --worktree, the agent's "worktree" option). That is the only way agents
+// get one: lucode creates it, the agent never does.
+func worktreeAgent(agent dbpkg.Agent) bool {
+	return agent.Worktree && agent.Executor == "claude"
+}
+
+// agentTools are the built-in tools the agent may use. An agent that runs in a
+// worktree loses EnterWorktree / ExitWorktree: it is already in its own one.
+func agentTools(agent dbpkg.Agent) []string {
+	if !worktreeAgent(agent) || len(agent.Tools) == 0 {
+		return agent.Tools
+	}
+	out := make([]string, 0, len(agent.Tools))
+	for _, t := range agent.Tools {
+		if t != "EnterWorktree" && t != "ExitWorktree" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// worktreePrompt tells an agent that runs in a worktree where it is working. It is
+// empty for the others: they work in the checkout they were started in.
 func worktreePrompt(agent dbpkg.Agent) string {
-	enter := hasBuiltinTool(agent, "EnterWorktree")
-	bash := hasBuiltinTool(agent, "Bash")
-	if !enter && !bash {
+	if !worktreeAgent(agent) {
 		return ""
 	}
-	var how string
-	switch {
-	case enter && hasBuiltinTool(agent, "ExitWorktree"):
-		how = "Call EnterWorktree before your first edit and work only inside it; ExitWorktree when you finish."
-	case enter:
-		how = "Call EnterWorktree before your first edit and work only inside it."
-	default:
-		how = "Create one before your first edit with `git worktree add ../<repo>-<short-task-id> -b task/<short-task-id>` and work only inside that folder."
-	}
-	return "\n\nWork in a git worktree: never edit files in the main checkout, the user and other agents are using it. " + how +
-		" Commit your work on that branch as you go. Do not merge into the main branch, push, or delete the worktree: when you finish, the task goes to the Review list and the user merges your branch (or sends it back to you if it conflicts, in which case you merge the main branch INTO your branch and resolve it there). Say in your final report the branch and the worktree path." +
-		" If the folder is not a git repository, work in place."
+	return "\n\nYou work in your own git worktree, which lucode already created for this task: the folder you start in is that worktree and its current branch is yours. Never edit files outside it (the main checkout belongs to the user and other agents). Do not create other worktrees and do not use EnterWorktree or ExitWorktree. Commit your work on the current branch as you go. Do not merge into the main branch, push, or delete the worktree: when you finish, the task goes to the Review list and the user merges your branch (or sends it back to you if it conflicts, in which case you merge the main branch INTO your branch and resolve it there). Say in your final report the branch and the worktree path."
 }
 
 // agentSystemPrompt is what gets appended to the agent's system prompt: its own

@@ -71,7 +71,7 @@ func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpk
 		Executor:        agent.Executor,
 		SystemPrompt:    agentSystemPrompt(agent, card, h.supervisorName(agent)),
 		AgentName:       agent.Name,
-		Tools:           agent.Tools,
+		Tools:           agentTools(agent),
 		Persistent:      agent.Persistent && agent.Executor == "claude",
 		AutoMode:        agent.AutoMode && agent.Executor == "claude",
 		Worktree:        agent.Worktree && agent.Executor == "claude",
