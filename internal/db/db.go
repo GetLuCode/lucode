@@ -422,6 +422,10 @@ CREATE TABLE IF NOT EXISTS card_images (
 	// kanban_lists.kind — the workflow role of a list ("backlog", "todo", "inprogress",
 	// "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
 	db.Exec(`ALTER TABLE kanban_lists ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
+	// kanban_cards.started_at / finished_at — real timestamps, set when the card enters
+	// an "inprogress" / "done" list (start_date / end_date are the planned dates).
+	db.Exec(`ALTER TABLE kanban_cards ADD COLUMN started_at TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE kanban_cards ADD COLUMN finished_at TEXT NOT NULL DEFAULT ''`)
 	backfillKanbanListKinds(db)
 	// agents.executor — "aiapi" (HTTP provider service) or "claude" (claude -p CLI)
 	db.Exec(`ALTER TABLE agents ADD COLUMN executor TEXT NOT NULL DEFAULT 'aiapi'`)

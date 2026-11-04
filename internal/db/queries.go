@@ -1537,6 +1537,8 @@ type KanbanCard struct {
 	DependsOn   []string  `json:"depends_on"`
 	StartDate   string    `json:"start_date"`
 	EndDate     string    `json:"end_date"`
+	StartedAt   string    `json:"started_at"`  // real start: first time the card entered In Progress
+	FinishedAt  string    `json:"finished_at"` // real end: when the card entered Done
 	Position    int       `json:"position"`
 	Archived    bool      `json:"archived"`
 	ParentID    string    `json:"parent_id"`
@@ -1551,7 +1553,7 @@ func scanKanbanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
 	err := row.Scan(
 		&c.ID, &c.ListID, &c.ProjectID, &c.Title, &c.Description,
 		&c.CardType, &tagsJSON, &c.AgentID, &dependsJSON,
-		&c.StartDate, &c.EndDate, &c.Position, &archived,
+		&c.StartDate, &c.EndDate, &c.StartedAt, &c.FinishedAt, &c.Position, &archived,
 		&c.ParentID, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -1565,7 +1567,7 @@ func scanKanbanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
 	return c, nil
 }
 
-const kanbanCardCols = `id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, position, archived, parent_id, created_at, updated_at`
+const kanbanCardCols = `id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, started_at, finished_at, position, archived, parent_id, created_at, updated_at`
 
 func InsertKanbanCard(db *sql.DB, c KanbanCard) error {
 	tags, _ := json.Marshal(c.Tags)
@@ -1609,16 +1611,45 @@ func GetKanbanCard(db *sql.DB, id string) (KanbanCard, error) {
 func UpdateKanbanCard(db *sql.DB, c KanbanCard) error {
 	tags, _ := json.Marshal(c.Tags)
 	depends, _ := json.Marshal(c.DependsOn)
+	stampKanbanCardDates(db, &c)
 	_, err := db.Exec(`UPDATE kanban_cards SET
 		list_id=?, title=?, description=?, card_type=?, tags=?, agent_id=?,
-		depends_on=?, start_date=?, end_date=?, position=?, archived=?, parent_id=?,
+		depends_on=?, start_date=?, end_date=?, started_at=?, finished_at=?, position=?, archived=?, parent_id=?,
 		updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		WHERE id=?`,
 		c.ListID, c.Title, c.Description, c.CardType, string(tags), c.AgentID,
-		string(depends), c.StartDate, c.EndDate, c.Position, boolToInt(c.Archived),
+		string(depends), c.StartDate, c.EndDate, c.StartedAt, c.FinishedAt, c.Position, boolToInt(c.Archived),
 		c.ParentID, c.ID,
 	)
 	return err
+}
+
+// stampKanbanCardDates keeps the real dates: entering an In Progress list starts the
+// card (first time only, and reopens it), entering Done finishes it, and leaving Done
+// clears the finish.
+func stampKanbanCardDates(db *sql.DB, c *KanbanCard) {
+	var oldList string
+	db.QueryRow(`SELECT list_id FROM kanban_cards WHERE id=?`, c.ID).Scan(&oldList)
+	if oldList == c.ListID {
+		return
+	}
+	var kind string
+	db.QueryRow(`SELECT kind FROM kanban_lists WHERE id=?`, c.ListID).Scan(&kind)
+	now := time.Now().UTC().Format(time.RFC3339)
+	switch kind {
+	case KanbanInProgress:
+		if c.StartedAt == "" {
+			c.StartedAt = now
+		}
+		c.FinishedAt = ""
+	case KanbanDone:
+		if c.StartedAt == "" {
+			c.StartedAt = now
+		}
+		c.FinishedAt = now
+	default:
+		c.FinishedAt = ""
+	}
 }
 
 func DeleteKanbanCard(db *sql.DB, id string) error {
