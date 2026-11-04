@@ -7,11 +7,12 @@ import { loader } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 
 // Workers via Vite's ?worker syntax — bundled as separate Worker chunks.
-import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
-import JsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
-import CssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
-import HtmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker'
-import TsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
+// monaco-editor >= 0.57 maps "./*" to "./esm/vs/*.js", so no esm/vs/ prefix here.
+import EditorWorker from 'monaco-editor/editor/editor.worker?worker'
+import JsonWorker from 'monaco-editor/language/json/json.worker?worker'
+import CssWorker from 'monaco-editor/language/css/css.worker?worker'
+import HtmlWorker from 'monaco-editor/language/html/html.worker?worker'
+import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker'
 
 // MonacoEnvironment must be set before loader initialises Monaco.
 ;(self as typeof self & { MonacoEnvironment?: { getWorker: (id: string, label: string) => Worker } }).MonacoEnvironment = {
