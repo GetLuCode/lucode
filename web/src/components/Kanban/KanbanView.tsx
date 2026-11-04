@@ -845,6 +845,7 @@ export function KanbanView() {
       depends_on: [],
       position: pos,
     })
+    // the server puts new cards on top of the list (most recent first)
     setCards(prev => [...prev, c])
   }
 

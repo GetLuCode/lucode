@@ -1760,6 +1760,14 @@ const kanbanCardCols = `id, list_id, project_id, title, description, card_type, 
 func InsertKanbanCard(db *sql.DB, c KanbanCard) error {
 	tags, _ := json.Marshal(c.Tags)
 	depends, _ := json.Marshal(c.DependsOn)
+	// New cards go on top of their list (most recent first): one before the
+	// current first card.
+	var minPos sql.NullInt64
+	if err := db.QueryRow(`SELECT MIN(position) FROM kanban_cards WHERE list_id=?`, c.ListID).Scan(&minPos); err == nil && minPos.Valid {
+		c.Position = int(minPos.Int64) - 1
+	} else {
+		c.Position = 0
+	}
 	_, err := db.Exec(
 		`INSERT INTO kanban_cards (id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, position, archived, parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.ListID, c.ProjectID, c.Title, c.Description, c.CardType,
