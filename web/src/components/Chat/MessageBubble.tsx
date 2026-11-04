@@ -16,13 +16,10 @@ marked.use({
   renderer: {
     // fenced code gets syntax highlighting (the language comes after the opening fence)
     code({ text, lang }) {
-      // a diagram: shown as code until MarkdownContent draws it (and if it cannot)
-      if (/^mermaid/i.test((lang ?? '').trim())) {
-        const { html } = highlightCode(text, '')
-        return `<pre class="mermaid-src"><code>${html}</code></pre>`
-      }
       const { html, language } = highlightCode(text, lang)
-      return `<pre><code class="hljs${language ? ` language-${language}` : ''}">${html}</code></pre>`
+      // a mermaid block is drawn as a diagram by MarkdownContent (and stays as code if it cannot)
+      const diagram = /^mermaid/i.test((lang ?? '').trim()) ? ' data-diagram="mermaid"' : ''
+      return `<pre${diagram}><code class="hljs${language ? ` language-${language}` : ''}">${html}</code></pre>`
     },
   },
 })
@@ -239,7 +236,7 @@ function MarkdownContent({ content }: { content: string }) {
     const root = ref.current
     if (!root) return
     let cancelled = false
-    root.querySelectorAll<HTMLElement>('pre.mermaid-src').forEach(async pre => {
+    root.querySelectorAll<HTMLElement>('pre[data-diagram="mermaid"]').forEach(async pre => {
       const svg = await renderMermaid(pre.textContent ?? '')
       if (cancelled || !svg || !pre.isConnected) return
       const box = document.createElement('div')

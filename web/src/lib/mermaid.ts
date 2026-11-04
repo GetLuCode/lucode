@@ -1,12 +1,13 @@
-// Mermaid diagrams of the chats. The library is big, so it is only loaded when an answer has one.
+// Mermaid diagrams of the chats. Always the light theme on a white card: diagrams set their own
+// light fills (rect rgb(...), notes), which a dark theme leaves unreadable.
+// The library is big, so it is only loaded when an answer has one.
 let loading: Promise<typeof import('mermaid').default> | null = null
 const cache = new Map<string, string | null>()
 let seq = 0
 
 function load() {
   loading ??= import('mermaid').then(m => {
-    const dark = document.documentElement.dataset.theme !== 'light'
-    m.default.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' })
+    m.default.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' })
     return m.default
   })
   return loading
