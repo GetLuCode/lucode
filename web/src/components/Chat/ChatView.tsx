@@ -226,6 +226,7 @@ function ChatViewFull() {
               providerMode === 'api' ? 'anthropic' : undefined)
             setInput('')
             setAttachedImage(null)
+            forceScrollToBottom()
           }
         }, 0)
       }
@@ -308,7 +309,7 @@ function ChatViewFull() {
     if (isAtBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [messages.length, streamingText])
+  }, [messages.length, streamingText, isRunning, hasStreamingThinking])
 
   // Preserve scroll position after prepend (runs synchronously before paint)
   useLayoutEffect(() => {
@@ -389,6 +390,16 @@ function ChatViewFull() {
     }
   }, [hasMore, triggerLoadMore])
 
+  // Sending a message always pins the chat to the bottom, without waiting for the agent's first event
+  function forceScrollToBottom() {
+    isAtBottomRef.current = true
+    requestAnimationFrame(() => {
+      const el = scrollRef.current
+      if (el) el.scrollTop = el.scrollHeight
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    })
+  }
+
   const handleSend = () => {
     if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning) return
     // For pending sessions, we pass a placeholder ID; sendMessage handles the actual creation
@@ -397,6 +408,7 @@ function ChatViewFull() {
       providerMode === 'api' ? 'anthropic' : undefined)
     setInput('')
     setAttachedImage(null)
+    forceScrollToBottom()
   }
 
   const handleCancel = async () => {
