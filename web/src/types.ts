@@ -234,6 +234,8 @@ export interface KanbanCard {
   depends_on: string[]
   start_date: string
   end_date: string
+  started_at: string   // real start (entered In Progress), RFC3339; empty = never
+  finished_at: string  // real end (entered Done), RFC3339; empty = not finished
   position: number
   archived: boolean
   parent_id: string

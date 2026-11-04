@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { AgentAvatar } from './AgentAvatar'
 import { IconPlus, IconTrash, IconEdit, IconRobot, IconX, IconMessages } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import type { Agent, AIProfile, Runner, Session } from '../../types'
@@ -453,8 +454,8 @@ function AgentCard({
 
   return (
     <div className="agent-card">
-      <div className="agent-card__icon">
-        <IconRobot size={20} />
+      <div className="agent-card__icon agent-card__icon--avatar">
+        <AgentAvatar agent={agent} size={36} />
       </div>
       <div className="agent-card__body">
         <div className="agent-card__header">

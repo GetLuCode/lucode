@@ -1,0 +1,2 @@
+.agent-avatar { display: block; flex-shrink: 0; border-radius: 50%; background: var(--bg-active); object-fit: cover; }
+.agent-avatar--initial { display: grid; place-items: center; color: #fff; font-weight: 600; line-height: 1; }

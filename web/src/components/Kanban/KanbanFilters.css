@@ -1,0 +1,170 @@
+/* Kanban filter bar. Plain CSS (like the rest of the app) on lucode's tokens; shadcn Select/Popover
+   and react-day-picker supply the behaviour. */
+
+.kf {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.kf-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.kf-row--2 { align-items: center; gap: 6px; }
+.kf-end { margin-left: auto; display: flex; align-items: center; gap: 14px; padding-left: 12px; }
+
+.kf-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.kf-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* search: an icon that expands into the field on click */
+.kf-search {
+  display: flex; align-items: center; gap: 2px; height: 32px; width: 32px; overflow: hidden;
+  border-radius: 999px; color: var(--text-muted); background: transparent;
+  transition: width .2s ease, background .14s, box-shadow .14s, color .14s;
+}
+.kf-search:hover { background: var(--bg-hover); color: var(--text); }
+.kf-search--open, .kf-search--open:hover { width: 280px; background: var(--bg-input); }
+.kf-search:focus-within { box-shadow: 0 0 0 2px var(--accent-glow); color: var(--accent); }
+.kf-search__icon {
+  display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px;
+  background: none; border: none; color: inherit; cursor: pointer;
+}
+.kf-search input {
+  flex: 1; min-width: 0; background: none; border: none; outline: none;
+  color: var(--text); font: inherit; font-size: 13px;
+}
+.kf-search input::placeholder { color: var(--text-muted); }
+.kf-search__clear {
+  display: grid; place-items: center; flex-shrink: 0; width: 18px; height: 18px; margin-right: 8px; border-radius: 50%;
+  background: var(--bg-active); border: none; color: var(--text-muted); cursor: pointer;
+}
+.kf-search__clear:hover { color: var(--text); }
+
+/* right side */
+.kf-count { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.kf-count b { color: var(--text); font-weight: 600; }
+.kf-switch {
+  display: inline-flex; align-items: center; gap: 7px; background: none; border: none; padding: 0;
+  font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer;
+}
+.kf-switch:hover { color: var(--text); }
+.kf-switch__track {
+  position: relative; width: 28px; height: 16px; border-radius: 8px;
+  background: var(--border-bright); transition: background .16s;
+}
+.kf-switch__thumb {
+  position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text); transition: transform .16s;
+}
+.kf-switch--on { color: var(--accent); }
+.kf-switch--on .kf-switch__track { background: var(--accent); }
+.kf-switch--on .kf-switch__thumb { transform: translateX(12px); background: #06231d; }
+.kf-clear {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px 0 11px;
+  background: transparent; border: 1px solid var(--border-bright); border-radius: 999px;
+  font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer;
+}
+.kf-clear:hover { border-color: var(--accent); color: var(--accent); }
+.kf-clear__n {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; border-radius: 9px;
+  background: var(--accent-dim); color: var(--accent); font-size: 10px; font-weight: 600;
+}
+
+/* agent select (shadcn Select trigger + content) */
+.kf-select.kf-select, button.kf-select {
+  height: 40px; min-width: 220px; padding: 0 12px 0 8px; border-radius: 999px;
+  background: transparent; border: 1px solid var(--border-bright); font-size: 13px; color: var(--text);
+}
+.kf-select:hover { border-color: var(--text-dim); }
+button.kf-select.kf-select--icon {
+  min-width: 0; width: auto; height: 32px; padding: 0 5px; border: none; border-radius: 999px; gap: 0;
+  justify-content: center; background: transparent;
+}
+button.kf-select.kf-select--icon:hover { background: var(--bg-hover); }
+.kf-select--icon > svg { display: none; }
+.kf-option__icon--lg { width: 26px; height: 26px; }
+
+/* avatar group: first agents overlapped, +N for the rest */
+.kf-avatar-group { display: inline-flex; align-items: center; }
+.kf-avatar-group > * { box-shadow: 0 0 0 2px var(--bg-panel); }
+.kf-avatar-group > * + * { margin-left: -8px; }
+.kf-avatar-group__more {
+  display: grid; place-items: center; height: 26px; min-width: 26px; padding: 0 6px; border-radius: 13px; font-size: 10px;
+  background: var(--bg-active); color: var(--text-muted); font-size: 11px; font-weight: 600;
+}
+.kf-select--on { background: var(--accent-dim) !important; }
+.kf-select [data-slot="select-value"] { display: block; min-width: 0; }
+.kf-select .kf-option__text small { display: none; }
+
+.kf-select-content.kf-select-content { min-width: 280px; max-height: min(420px, var(--radix-select-content-available-height)); border-radius: 12px; background: var(--bg-panel); border-color: var(--border-bright); box-shadow: var(--shadow); }
+.kf-select-content [data-radix-select-viewport] { padding: 6px; }
+.kf-option.kf-option { padding: 8px 32px 8px 10px; border-radius: 8px; font-size: 13px; }
+.kf-option__row { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.kf-option__icon {
+  display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 50%;
+  background: var(--bg-active); color: var(--text-muted);
+}
+.kf-option__icon--type { --c: var(--text-muted); background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--c); }
+.kf-cap { text-transform: capitalize; }
+.kf-option__text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.kf-option__text b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kf-option__text small { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kf-select .kf-option__icon { width: 26px; height: 26px; }
+
+/* date range pill */
+.kf-pill {
+  display: inline-flex; align-items: center; height: 32px; border-radius: 999px; color: var(--text-muted);
+  transition: background .14s, color .14s;
+}
+.kf-pill:hover { color: var(--text); background: var(--bg-hover); }
+.kf-pill--on, .kf-pill--on:hover { color: var(--accent); background: var(--accent-dim); }
+.kf-pill__main {
+  display: inline-flex; align-items: center; gap: 7px; height: 100%; padding: 0 12px; min-width: 0;
+  background: none; border: none; border-radius: 999px; font: inherit; font-size: 13px; color: inherit; cursor: pointer;
+}
+.kf-pill--on .kf-pill__main { padding-right: 6px; min-width: 0; }
+.kf-pill__clear {
+  display: grid; place-items: center; width: 20px; height: 20px; margin-right: 6px; border-radius: 50%;
+  background: var(--accent-glow); border: none; color: var(--text); cursor: pointer;
+}
+
+/* range popover */
+.kf-popover.kf-popover { max-width: none; padding: 0; background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: 12px; box-shadow: var(--shadow); }
+.kf-range { display: flex; }
+.kf-range__presets {
+  display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; min-width: 132px;
+  border-right: 1px solid var(--border);
+}
+.kf-range__preset {
+  text-align: left; padding: 7px 12px; background: none; border: none; border-radius: 6px;
+  font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer;
+}
+.kf-range__preset:hover { background: var(--bg-hover); color: var(--text); }
+.kf-range__preset--clear { margin-top: auto; color: var(--text-dim); }
+
+/* react-day-picker on lucode's tokens */
+.kf-daypicker {
+  --rdp-accent-color: var(--accent);
+  --rdp-accent-background-color: var(--accent-dim);
+  --rdp-day-height: 34px; --rdp-day-width: 34px;
+  --rdp-day_button-height: 32px; --rdp-day_button-width: 32px;
+  --rdp-selected-border: 1px solid var(--accent);
+  --rdp-range_middle-background-color: var(--accent-dim);
+  --rdp-range_middle-color: var(--text);
+  padding: 12px 14px; margin: 0; font-size: 12px; color: var(--text);
+}
+.kf-daypicker .rdp-month_caption { font-size: 13px; font-weight: 600; }
+.kf-daypicker .rdp-weekday { font-size: 10px; text-transform: uppercase; color: var(--text-muted); }
+.kf-daypicker .rdp-chevron { fill: var(--text-muted); }
+.kf-daypicker .rdp-button_previous:hover .rdp-chevron,
+.kf-daypicker .rdp-button_next:hover .rdp-chevron { fill: var(--accent); }
+.kf-daypicker .rdp-today:not(.rdp-selected) { color: var(--accent); font-weight: 700; }
+.kf-daypicker .rdp-selected .rdp-day_button { color: var(--text); }
+.kf-daypicker .rdp-range_start .rdp-day_button,
+.kf-daypicker .rdp-range_end .rdp-day_button { background: var(--accent); color: #06231d; border-color: var(--accent); }
+.kf-daypicker .rdp-day_button:hover:not(:disabled) { background: var(--bg-hover); }
+.kf-daypicker .rdp-outside { opacity: 0.35; }

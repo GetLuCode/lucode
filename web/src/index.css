@@ -5717,6 +5717,7 @@ html, body, #root {
   flex-shrink: 0;
   margin-top: 1px;
 }
+.agent-card__icon.agent-card__icon--avatar { background: none; border-radius: 50%; }
 
 .agent-card__body {
   flex: 1;
@@ -6153,6 +6154,22 @@ html, body, #root {
   overflow: hidden;
 }
 
+.kcolumn--add {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  align-self: flex-start;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--accent-dim);
+  border-color: transparent;
+  transition: background 0.14s, color 0.14s;
+}
+.kcolumn--add:hover { color: var(--accent); background: var(--bg-hover); }
+
 .kcolumn--new {
   padding: 10px;
   gap: 8px;
@@ -6398,13 +6415,22 @@ html, body, #root {
 
 .kcard__agent {
   display: flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  color: var(--accent);
-  background: var(--accent-dim);
-  padding: 1px 5px;
-  border-radius: 3px;
+  margin-left: auto;
+  border-radius: 50%;
+  outline: none;
+}
+.kcard__agent:focus-visible { box-shadow: 0 0 0 2px var(--accent-glow); }
+.kcard-agent-pop.kcard-agent-pop {
+  min-width: 0;
+  max-width: 220px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-bright);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
 }
 
 .kcard__deps {

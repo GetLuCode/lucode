@@ -9,6 +9,9 @@ import { useStore } from '../../store'
 import type { Agent, CardComment, KanbanCard, KanbanList } from '../../types'
 import * as api from '../../api'
 import { backdropClose } from '../../lib/backdropClose'
+import { KanbanFilters, NO_FILTERS, matchesFilters, type KanbanFilterState } from './KanbanFilters'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { AgentAvatar } from '../Agents/AgentAvatar'
 import { OrchestratorOpenButton } from '../Orchestrator/OrchestratorOpenButton'
 
 // ---- pasted images -----------------------------------------------------------
@@ -555,12 +558,6 @@ function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop
         {card.tags.slice(0, 3).map(t => (
           <span key={t} className="kcard__tag">{t}</span>
         ))}
-        {agent && (
-          <span className="kcard__agent" title={agent.name}>
-            <IconRobot size={11} />
-            {agent.name}
-          </span>
-        )}
         {badge && (
           <span className="kcard__status" style={{ color: badge.color }}>{badge.label}</span>
         )}
@@ -569,8 +566,34 @@ function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop
             <IconLink size={11} />{card.depends_on.length}
           </span>
         )}
+        {agent && <CardAgent agent={agent} />}
       </div>
     </div>
+  )
+}
+
+// The agent of a card: just its avatar, on the right; hovering shows its name.
+function CardAgent({ agent }: { agent: Agent }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open}>
+      <PopoverTrigger asChild>
+        <span
+          className="kcard__agent"
+          tabIndex={0}
+          aria-label={`Agent: ${agent.name}`}
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+        >
+          <AgentAvatar agent={agent} size={22} />
+        </span>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="end" sideOffset={6} className="kcard-agent-pop" onOpenAutoFocus={e => e.preventDefault()}>
+        {agent.name}
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -706,6 +729,7 @@ export function KanbanView() {
   const [cards, setCards] = useState<KanbanCard[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [showArchived, setShowArchived] = useState(false)
+  const [filters, setFilters] = useState<KanbanFilterState>(NO_FILTERS)
   const [selectedCard, setSelectedCard] = useState<KanbanCard | null>(null)
   const [addingList, setAddingList] = useState(false)
   const [newListName, setNewListName] = useState('')
@@ -736,6 +760,27 @@ export function KanbanView() {
   useEffect(() => {
     if (boardVersion > 0) reloadBoard().catch(console.error)
   }, [boardVersion])
+
+  // Mouse wheel: vertical scroll inside a card list, horizontal everywhere else on the board.
+  const boardRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const board = boardRef.current
+    if (!board) return
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.deltaX !== 0 || e.deltaY === 0) return
+      const list = (e.target as HTMLElement).closest<HTMLElement>('.kcolumn__cards')
+      if (list) {
+        const canUp = e.deltaY < 0 && list.scrollTop > 0
+        const canDown = e.deltaY > 0 && list.scrollTop + list.clientHeight < list.scrollHeight - 1
+        if (canUp || canDown) return // let the list scroll natively
+      }
+      if (board.scrollWidth <= board.clientWidth) return
+      e.preventDefault()
+      board.scrollLeft += e.deltaY
+    }
+    board.addEventListener('wheel', onWheel, { passive: false })
+    return () => board.removeEventListener('wheel', onWheel)
+  }, [loading, activeProjectId])
 
   if (!activeProjectId) {
     return <div className="kanban-view kanban-view--empty">Select a project to view the board.</div>
@@ -865,12 +910,25 @@ export function KanbanView() {
 
   // ---- render ----
 
-  const visibleCards = showArchived ? cards : cards.filter(c => !c.archived)
+  const visibleCards = (showArchived ? cards : cards.filter(c => !c.archived))
+    .filter(c => matchesFilters(c, filters))
+  const cardTypes = [...new Set([...CARD_TYPES, ...cards.map(c => c.card_type)])]
 
   return (
     <div className="kanban-view">
+      <KanbanFilters
+        filters={filters}
+        onChange={setFilters}
+        types={cardTypes}
+        typeColor={typeColor}
+        agents={agents}
+        showArchived={showArchived}
+        onToggleArchived={() => setShowArchived(v => !v)}
+        shown={visibleCards.length}
+        total={cards.filter(c => showArchived || !c.archived).length}
+      />
       {/* board */}
-      <div className="kanban-board">
+      <div className="kanban-board" ref={boardRef}>
         {loading && <div className="kanban-board__loading">Loading…</div>}
 
         {lists.map(list => (
@@ -907,34 +965,17 @@ export function KanbanView() {
             </div>
           </div>
         ) : (
-          !loading && lists.length === 0 && (
-            <div className="kanban-board__empty">
-              <p>No lists yet.</p>
-              <button className="kanban-view__add-list-btn" onClick={() => setAddingList(true)}>
-                <IconPlus size={14} /> Add first list
-              </button>
-            </div>
+          !loading && (
+            <button className="kcolumn kcolumn--add" onClick={() => setAddingList(true)}>
+              <IconPlus size={14} />
+              {lists.length === 0 ? 'Add first list' : 'Add another list'}
+            </button>
           )
         )}
       </div>
 
       {/* board actions live under the board */}
       <div className="kanban-view__footer">
-        <button
-          className={`kanban-view__filter-btn${showArchived ? ' kanban-view__filter-btn--active' : ''}`}
-          onClick={() => setShowArchived(v => !v)}
-          title="Toggle archived cards"
-        >
-          <IconArchive size={14} />
-          {showArchived ? 'Hide archived' : 'Show archived'}
-        </button>
-        <button
-          className="kanban-view__add-list-btn"
-          onClick={() => setAddingList(true)}
-        >
-          <IconPlus size={14} />
-          Add list
-        </button>
         <OrchestratorOpenButton />
       </div>
 

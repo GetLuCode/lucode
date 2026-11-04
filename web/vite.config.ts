@@ -15,6 +15,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {
+    // Vite 8 forwards browser console output to the server when it detects a coding agent; if the
+    // HMR socket drops, its sendError loops forever ("send was called before connect").
+    forwardConsole: false,
     proxy: {
       // authapi (8092) — strip /api prefix
       '/api/auth': {
