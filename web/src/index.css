@@ -7044,7 +7044,7 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 .thinking__time { margin-left: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 
 /* mermaid diagrams in the chat */
-.mermaid-diagram { position: relative; margin: 12px 0; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
+.mermaid-diagram { user-select: none; position: relative; margin: 12px 0; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
 .mermaid-diagram__scroll { overflow: auto; max-height: 80vh; padding: 12px; cursor: grab; }
 .mermaid-diagram__scroll:active { cursor: grabbing; }
 .mermaid-diagram__svg svg { display: block; width: 100%; max-width: none !important; height: auto; }
