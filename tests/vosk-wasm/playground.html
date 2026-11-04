@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vosk comandos</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --txt:#e6e8ee; --dim:#8a92a3; --acc:#4ade80; --hear:#fbbf24; --bad:#f87171; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.4 system-ui,sans-serif; padding:16px; max-width:1100px; margin-inline:auto }
+  h1 { font-size:18px; margin:0 0 12px }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px }
+  button, input, select { background:var(--card); color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:7px 11px; font:inherit }
+  button { cursor:pointer } button:hover { border-color:var(--dim) }
+  button.on { border-color:var(--acc); color:var(--acc) }
+  #status { color:var(--dim); font-size:13px }
+  #heard { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-bottom:14px; min-height:64px }
+  #heard .partial { color:var(--hear) } #heard .final { font-size:20px }
+  #freebox { background:var(--card); border:1px dashed var(--line); border-radius:8px; padding:8px 14px; margin-bottom:14px }
+  #freepartial { color:var(--hear) } #freefinal { color:var(--txt); font-style:italic; min-height:20px }
+  .chip.reject { border-color:var(--bad); color:var(--bad); box-shadow:0 0 12px #f8717166 }
+  .groups { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px }
+  .group { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px }
+  .group header { display:flex; gap:6px; align-items:center; margin-bottom:10px }
+  .group header input { flex:1; font-weight:600; background:transparent; border-color:transparent; padding:3px 6px }
+  .group header input:focus { border-color:var(--line) }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; min-height:30px }
+  .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:4px 6px 4px 12px; color:var(--dim); transition:all .15s }
+  .chip.hearing { border-color:var(--hear); color:var(--hear); box-shadow:0 0 8px #fbbf2455 }
+  .chip.hit { border-color:var(--acc); color:#06210f; background:var(--acc); box-shadow:0 0 14px var(--acc); font-weight:600 }
+  .chip .count { font-size:11px; opacity:.7 }
+  .chip .x { border:0; background:transparent; padding:0 4px; color:inherit; opacity:.6 } .chip .x:hover { opacity:1 }
+  .add { display:flex; gap:6px } .add input { flex:1; min-width:0 }
+  .small { font-size:12px; color:var(--dim) }
+  .clip { background:var(--card); border:1px solid var(--acc); border-radius:8px; padding:8px 12px; margin-bottom:8px; display:grid; gap:4px }
+  .clip.drop { border-color:var(--bad) } .clip audio { width:100%; max-width:520px }
+  .clip .meta { font-size:12px; color:var(--dim) } .clip .txt { font-size:16px } .clip .txt b { color:var(--acc) }
+  #log { margin-top:14px; font:12px/1.5 ui-monospace,monospace; color:var(--dim); max-height:140px; overflow:auto; white-space:pre-wrap }
+</style>
+<h1>Vosk wasm — comandos por voz</h1>
+<div class="bar">
+  <button id="mic">Escuchar</button>
+  <label class="small">Archivo wav <input id="wav" type="file" accept="audio/*"></label>
+  <button id="export">Copiar gramática</button>
+  <span id="status">cargando modelo…</span>
+</div>
+<div class="bar">
+  <label class="small">Frase inicial (opcional) <input id="prefix" placeholder="ej. oye lucode" size="16"></label>
+  <label class="small"><input type="checkbox" id="verify"> Verificar con dictado libre</label>
+</div>
+<div class="bar">
+  <label class="small">Modo
+    <select id="mode"><option value="cmd">Comandos</option><option value="wake">Habla continua: wake + corte de audio</option></select></label>
+</div>
+<div id="wakebox" class="bar" hidden>
+  <label class="small">Wake <input id="wake" value="oye verónica" size="16"></label>
+  <label class="small">margen antes <input id="padBefore" type="number" value="0.25" step="0.05" min="0" style="width:64px"> s</label>
+  <label class="small">después <input id="padAfter" type="number" value="0.35" step="0.05" min="0" style="width:64px"> s</label>
+  <label class="small"><input type="checkbox" id="wakeVerify"> descartar si el dictado libre no oye el wake</label>
+</div>
+<div id="heard"><div class="partial" id="partial"></div><div class="final" id="final"></div></div>
+<div id="freebox" hidden>
+  <div class="small">Dictado libre (sin gramática) — el comando solo se acepta si todo lo dicho es el comando</div>
+  <div id="freeview"><span class="partial" id="freepartial"></span><div id="freefinal"></div></div>
+</div>
+<div id="clipbox" hidden>
+  <h2 style="font-size:15px;margin:0 0 8px">Audio que se enviaría a la API STT <span class="small">(corte desde el wake hasta el fin del dictado libre)</span></h2>
+  <div id="clips"></div>
+</div>
+<div class="groups" id="groups"></div>
+<p class="small">La gramática se limita a las frases listadas (+ <code>[unk]</code>). Cambiar frases recrea el reconocedor; el modelo no se recarga.</p>
+<div id="log"></div>
+<script src="vosk.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const DEFAULT = [
+  { name: 'Navegación', words: ['abrir proyecto', 'cerrar sesión', 'siguiente', 'anterior'] },
+  { name: 'Sistema', words: ['hola cómo estás', 'detener', 'continuar'] },
+];
+let groups;
+try { groups = JSON.parse(localStorage.getItem('voskGroups')) || DEFAULT; } catch { groups = DEFAULT; }
+const counts = {};              // frase -> veces detectada
+const norm = s => s.toLowerCase().normalize('NFC').replace(/\s+/g, ' ').trim();
+const save = () => { try { localStorage.setItem('voskGroups', JSON.stringify(groups)); } catch {} };
+const allPhrases = () => [...new Set(groups.flatMap(g => g.words.map(norm)).filter(Boolean))];
+const log = m => { const l = $('log'); l.textContent += m + '\n'; l.scrollTop = l.scrollHeight; };
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+
+// ---------- UI de grupos ----------
+function render() {
+  const root = $('groups'); root.replaceChildren();
+  groups.forEach((g, gi) => {
+    const chips = el('div', { className: 'chips' });
+    g.words.forEach((w, wi) => {
+      const chip = el('span', { className: 'chip' }, w);
+      chip.dataset.phrase = norm(w);
+      const c = el('span', { className: 'count' }, counts[norm(w)] ? '×' + counts[norm(w)] : '');
+      const x = el('button', { className: 'x', title: 'quitar', textContent: '✕' });
+      x.onclick = () => { g.words.splice(wi, 1); changed(); };
+      chip.append(c, x); chips.append(chip);
+    });
+    const input = el('input', { placeholder: 'nueva frase + Enter' });
+    const add = () => { const v = norm(input.value); if (v && !g.words.map(norm).includes(v)) { g.words.push(v); changed(); } input.value = ''; };
+    input.onkeydown = e => { if (e.key === 'Enter') add(); };
+    const name = el('input', { value: g.name }); name.onchange = () => { g.name = name.value; save(); };
+    const del = el('button', { textContent: '🗑', title: 'borrar grupo' }); del.onclick = () => { groups.splice(gi, 1); changed(); };
+    root.append(el('div', { className: 'group' },
+      el('header', {}, name, del), chips, el('div', { className: 'add' }, input, el('button', { textContent: '+', onclick: add }))));
+  });
+  const addG = el('button', { textContent: '+ grupo' });
+  addG.onclick = () => { groups.push({ name: 'Grupo ' + (groups.length + 1), words: [] }); changed(); };
+  root.append(addG);
+}
+const prefix = () => norm($('prefix').value || '');
+const full = p => prefix() ? prefix() + ' ' + p : p;          // frase de gramatica = frase inicial + comando
+const strip = s => s.replace(/\s+/g, '');
+function light(text, cls) {   // ilumina chips cuya frase (con frase inicial) coincide
+  const t = norm(text);
+  document.querySelectorAll('.chip').forEach(c => {
+    const f = full(c.dataset.phrase);
+    if (cls === 'hit' || cls === 'reject') { if (t && f === t) { c.classList.add(cls); setTimeout(() => c.classList.remove(cls), 1500); } }
+    if (cls === 'hearing') c.classList.toggle('hearing', !!t && f.startsWith(t));
+  });
+}
+function accept(t) {
+  const bare = t.startsWith(prefix() + ' ') && prefix() ? t.slice(prefix().length + 1) : t;
+  counts[bare] = (counts[bare] || 0) + 1; light(t, 'hit');
+  document.querySelectorAll('.chip').forEach(c => { if (c.dataset.phrase === bare) c.querySelector('.count').textContent = '×' + counts[bare]; });
+  log(new Date().toLocaleTimeString() + '  ✔ ' + t);
+}
+// Verificacion: el comando de la gramatica solo vale si el dictado libre dice lo mismo (sin mas palabras)
+// El dictado libre puede partir la frase en varios resultados: se juntan los de la ventana y se acepta si el
+// comando aparece completo, con o sin la frase inicial (el dictado libre suele comerse o cambiar una palabra corta).
+let pending = null, freeFinals = [], pendTimer = 0;
+const FRESH = 3500, GRACE = 1500;
+const freeWindow = g => freeFinals.filter(f => f.at >= g.at - FRESH).map(f => f.text).join(' ');
+function lev(a, b) {                              // distancia de edicion
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// Tolerancia: ~15% del largo (min 1 letra): "abrir"/"abril" pasa; palabras de mas (una oracion alrededor) no.
+let lastDist = 0;
+function matches(g, free) {
+  const f = strip(free), full_ = strip(g), p = strip(prefix());
+  const cands = [full_]; if (p && full_.startsWith(p)) cands.push(full_.slice(p.length));   // con o sin frase inicial
+  const best = Math.min(...cands.map(c => lev(f, c)));
+  lastDist = best;
+  return best <= Math.max(1, Math.floor(Math.min(...cands.map(c => c.length)) * 0.15));
+}
+function finish(g, free, reason) {
+  freeFinals = []; pending = null; clearTimeout(pendTimer);
+  if (reason === 'ok') { accept(g.t); if (lastDist) log(`   (dictado libre: "${free}", distancia ${lastDist})`); return; }
+  light(g.t, 'reject'); log(new Date().toLocaleTimeString() + `  ✘ "${g.t}" rechazado: dictado libre = "${free}"`);
+}
+function tryPending(last) {
+  if (!pending) return;
+  const free = freeWindow(pending) || (last ? $('freepartial').textContent.replace(/^… /, '') : '');  // al vencer, usa el parcial
+  if (free && matches(pending.t, free)) finish(pending, free, 'ok');
+  else if (last) finish(pending, free || '(nada)', 'no');
+  else { clearTimeout(pendTimer); const g = pending; pendTimer = setTimeout(() => pending === g && tryPending(true), GRACE); }
+}
+function onGrammarFinal(t) {
+  if (!allPhrases().map(full).includes(t)) { log(new Date().toLocaleTimeString() + `  ✘ "${t}" ignorado: no es una frase completa${prefix() ? ' (falta la frase inicial)' : ''}`); return; }
+  if (!$('verify').checked) { accept(t); return; }
+  pending = { t, at: Date.now() };
+  const free = freeWindow(pending);              // el resultado libre pudo llegar antes que el de la gramatica
+  if (free && matches(t, free)) finish(pending, free, 'ok'); else tryPending(false);
+}
+function onFreeFinal(t) {
+  $('freefinal').textContent = t; $('freepartial').textContent = '';
+  freeFinals.push({ text: t, at: Date.now() });
+  if (pending) tryPending(false);
+}
+
+// ---------- Vosk ----------
+let model, rec, freeRec, ctx, node, stream, listening = false;
+const wakeMode = () => $('mode').value === 'wake';
+const recs = () => [rec, (wakeMode() || $('verify').checked) && freeRec].filter(Boolean);
+
+// ---------- Modo wake: audio guardado + corte ----------
+// Los dos reconocedores reciben las mismas muestras, asi que el tiempo de sus palabras (s desde que se crearon)
+// es el indice de muestra / 16000 del audio guardado aqui.
+const SR = 16000;
+let store = { dropped: 0, total: 0, chunks: [] };
+function storePush(f32, playbackTime) {
+  if (!store.t0) store.t0 = performance.now();
+  // salto = el bloque llego mas tarde de lo que le toca por reloj de audio (bloques perdidos -> audio mas corto/rapido)
+  if (playbackTime !== undefined) {
+    if (store.lastPt !== undefined && playbackTime - store.lastPt > (f32.length / SR) * 1.5) { store.gaps = (store.gaps || 0) + 1; store.lost = (store.lost || 0) + playbackTime - store.lastPt - f32.length / SR; }
+    store.lastPt = playbackTime;
+  }
+  store.chunks.push(f32.slice()); store.total += f32.length;
+  while (store.total - store.dropped > SR * 120 && store.chunks.length > 1) store.dropped += store.chunks.shift().length;   // guarda ~2 min
+}
+function storeSlice(t0, t1) {
+  const a = Math.max(store.dropped, Math.floor(t0 * SR)), b = Math.min(store.total, Math.ceil(t1 * SR));
+  const out = new Float32Array(Math.max(0, b - a)); let pos = store.dropped;
+  for (const c of store.chunks) {
+    const s = Math.max(a, pos), e = Math.min(b, pos + c.length);
+    if (e > s) out.set(c.subarray(s - pos, e - pos), s - a);
+    pos += c.length;
+  }
+  return out;
+}
+function wavBlob(f32) {
+  const d = new DataView(new ArrayBuffer(44 + f32.length * 2)), w = (o, s) => [...s].forEach((ch, i) => d.setUint8(o + i, ch.charCodeAt(0)));
+  w(0, 'RIFF'); d.setUint32(4, 36 + f32.length * 2, true); w(8, 'WAVEfmt '); d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 1, true);
+  d.setUint32(24, SR, true); d.setUint32(28, SR * 2, true); d.setUint16(32, 2, true); d.setUint16(34, 16, true); w(36, 'data'); d.setUint32(40, f32.length * 2, true);
+  f32.forEach((v, i) => d.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 32767, true));
+  return new Blob([d], { type: 'audio/wav' });
+}
+let wakeEvs = [], freeEvs = [], clipN = 0;
+const WAKE_FRESH = 6000, HOLD = 1300, JOIN_GAP = 1.0;
+function addClip(t0, t1, words, ok, note) {
+  const pb = +$('padBefore').value || 0, pa = +$('padAfter').value || 0;
+  const a = Math.max(0, t0 - pb), b = t1 + pa, blob = wavBlob(storeSlice(a, b)), url = URL.createObjectURL(blob);
+  const wakeN = norm($('wake').value).split(' ').length;
+  const txt = el('div', { className: 'txt' }), ws = words.filter(x => x.start >= t0 - 0.15);
+  ws.forEach((x, i) => txt.append(i < wakeN ? el('b', {}, x.word + ' ') : x.word + ' '));
+  const c = el('div', { className: 'clip' + (ok ? '' : ' drop') },
+    el('div', { className: 'meta' }, `#${++clipN}  ${(b - a).toFixed(2)} s  [${a.toFixed(2)}–${b.toFixed(2)} s]  ${(blob.size / 1024).toFixed(0)} KB wav ${SR / 1000} kHz mono${note ? '  · ' + note : ''}`),
+    el('div', { className: 'meta' }, `diagnóstico: contexto ${ctx ? ctx.sampleRate : '(archivo)'} Hz · muestras/s medidas ${store.t0 && store.total > SR * 4 ? Math.round(store.total / ((performance.now() - store.t0) / 1000)) : 'n/d'} (esperado ${SR}) · saltos de bloque ${store.gaps || 0}${store.lost ? ` (${store.lost.toFixed(2)} s perdidos)` : ''}`),
+    txt, el('audio', { controls: true, src: url }), el('a', { href: url, download: `clip-${clipN}.wav`, className: 'small', textContent: 'descargar wav' }));
+  $('clips').prepend(c); log(new Date().toLocaleTimeString() + `  ✂ clip #${clipN} ${(b - a).toFixed(2)} s: ${ws.map(x => x.word).join(' ')}`);
+}
+function overlapText(ws, t0, t1) { return ws.filter(x => x.end > t0 && x.start < t1).map(x => x.word).join(''); }
+function tryCut(final) {
+  const now = Date.now(); wakeEvs = wakeEvs.filter(w => now - w.at < WAKE_FRESH + HOLD + 500 || w.done);
+  for (const w of wakeEvs) {
+    if (w.done || w.timer) continue;
+    const f = freeEvs.find(f => f.words[0].start - 0.6 <= w.t0 && w.t1 <= f.words.at(-1).end + 0.6);
+    if (!f) continue;
+    w.timer = setTimeout(() => {         // espera a otro resultado libre pegado (el dictado libre puede partir la frase)
+      let end = f.words.at(-1).end, all = [...f.words];
+      for (const n of freeEvs.filter(n => n !== f && n.words[0].start >= end - 0.1).sort((a, b) => a.words[0].start - b.words[0].start)) {
+        if (n.words[0].start - end <= JOIN_GAP) { end = n.words.at(-1).end; all.push(...n.words); } else break;
+      }
+      let ok = true, note = '';
+      if ($('wakeVerify').checked) {
+        const wake = strip(norm($('wake').value)), heard = strip(f.words.filter(x => x.start >= w.t0 - 0.3).slice(0, norm($('wake').value).split(' ').length).map(x => x.word).join(''));
+        const d = lev(heard, wake); ok = d <= Math.max(2, Math.floor(wake.length * 0.25)); note = `wake libre: "${heard}" dist ${d}`;
+      }
+      w.done = true; freeEvs = freeEvs.filter(n => !all.some(x => n.words.includes(x)));
+      addClip(w.t0, end, all, ok, ok ? note : 'DESCARTADO · ' + note);
+    }, HOLD);
+  }
+}
+function makeWakeRecognizers() {
+  const wake = norm($('wake').value) || 'oye verónica';
+  wakeEvs = []; freeEvs = []; store = { dropped: 0, total: 0, chunks: [] };
+  rec = new model.KaldiRecognizer(SR, JSON.stringify([wake, '[unk]'])); rec.setWords(true);
+  freeRec = new model.KaldiRecognizer(SR); freeRec.setWords(true);
+  rec.on('partialresult', m => { light(m.result.partial, 'hearing'); });
+  rec.on('result', m => {
+    const ws = (m.result.result || []).filter(x => x.word !== '[unk]');
+    if (!ws.length || strip(ws.map(x => x.word).join('')) !== strip(wake)) return;
+    $('final').textContent = '✔ wake: ' + wake; setTimeout(() => $('final').textContent = '', 1500);
+    wakeEvs.push({ t0: ws[0].start, t1: ws.at(-1).end, at: Date.now() }); tryCut();
+  });
+  freeRec.on('partialresult', m => { $('freepartial').textContent = m.result.partial ? '… ' + m.result.partial : ''; $('partial').textContent = $('freepartial').textContent; });
+  freeRec.on('result', m => {
+    const ws = m.result.result || []; if (!ws.length) return;
+    $('freefinal').textContent = m.result.text; $('freepartial').textContent = ''; $('partial').textContent = '';
+    freeEvs.push({ words: ws }); tryCut();
+  });
+  $('status').textContent = `listo · wake "${wake}"${listening ? ' · escuchando' : ''}`;
+}
+function applyMode() { $('wakebox').hidden = $('clipbox').hidden = !wakeMode(); $('groups').hidden = wakeMode(); $('freebox').hidden = !(wakeMode() || $('verify').checked); }
+
+function makeRecognizer() {
+  if (!model) return;
+  rec && rec.remove && rec.remove(); freeRec && freeRec.remove && freeRec.remove(); freeRec = null;
+  pending = null; freeFinals = [];
+  applyMode();
+  if (wakeMode()) return makeWakeRecognizers();
+  const phrases = allPhrases().map(full);
+  rec = new model.KaldiRecognizer(16000, JSON.stringify([...phrases, '[unk]']));
+  if ($('verify').checked) {
+    freeRec = new model.KaldiRecognizer(16000);
+    freeRec.on('partialresult', m => { $('freepartial').textContent = m.result.partial ? '… ' + m.result.partial : ''; });
+    freeRec.on('result', m => { if (m.result.text) onFreeFinal(m.result.text); });
+  }
+  $('freebox').hidden = !$('verify').checked;
+  rec.on('partialresult', m => {
+    const p = m.result.partial; $('partial').textContent = p ? '… ' + p : ''; light(p, 'hearing');
+  });
+  rec.on('result', m => {
+    const t = m.result.text; light('', 'hearing'); $('partial').textContent = '';
+    if (!t) return;
+    $('final').textContent = t === '[unk]' ? '(no es un comando)' : t;
+    if (t !== '[unk]') onGrammarFinal(norm(t));
+  });
+  rec.on('error', m => log('error: ' + m.error));
+  $('status').textContent = `listo · ${phrases.length} frases${listening ? ' · escuchando' : ''}`;
+}
+function changed() { save(); render(); makeRecognizer(); }
+
+async function toggleMic() {
+  if (listening) { stop(); return; }
+  stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  ctx = new AudioContext({ sampleRate: 16000 });
+  const src = ctx.createMediaStreamSource(stream);
+  node = ctx.createScriptProcessor(4096, 1, 1);
+  node.onaudioprocess = e => { if (wakeMode()) storePush(e.inputBuffer.getChannelData(0), e.playbackTime); try { recs().forEach(r => r.acceptWaveform(e.inputBuffer)); } catch (err) { log('acceptWaveform: ' + err.message); } };
+  src.connect(node); node.connect(ctx.destination);
+  listening = true; $('mic').textContent = 'Detener'; $('mic').classList.add('on'); makeRecognizer();
+}
+function stop() {
+  listening = false; $('mic').textContent = 'Escuchar'; $('mic').classList.remove('on');
+  node && node.disconnect(); stream && stream.getTracks().forEach(t => t.stop()); ctx && ctx.close();
+  recs().forEach(r => r.retrieveFinalResult()); $('status').textContent = 'listo';
+}
+async function feedFile(file) {
+  const c = new AudioContext({ sampleRate: 16000 });
+  const buf = await c.decodeAudioData(await file.arrayBuffer()); c.close();
+  makeRecognizer(); if (wakeMode()) storePush(buf.getChannelData(0));
+  recs().forEach(r => { r.acceptWaveform(buf); r.retrieveFinalResult(); });
+}
+
+$('mic').onclick = () => toggleMic().catch(e => log('mic: ' + e.message));
+$('wav').onchange = e => e.target.files[0] && feedFile(e.target.files[0]).catch(e => log('wav: ' + e.message));
+try { $('prefix').value = localStorage.getItem('voskPrefix') || ''; $('verify').checked = localStorage.getItem('voskVerify') === '1'; } catch {}
+$('prefix').onchange = () => { try { localStorage.setItem('voskPrefix', $('prefix').value); } catch {} makeRecognizer(); };
+$('verify').onchange = () => { try { localStorage.setItem('voskVerify', $('verify').checked ? '1' : '0'); } catch {} makeRecognizer(); };
+try { $('mode').value = localStorage.getItem('voskMode') || 'cmd'; $('wake').value = localStorage.getItem('voskWake') || $('wake').value; } catch {}
+$('mode').onchange = () => { try { localStorage.setItem('voskMode', $('mode').value); } catch {} makeRecognizer(); };
+$('wake').onchange = () => { try { localStorage.setItem('voskWake', $('wake').value); } catch {} makeRecognizer(); };
+applyMode();
+$('export').onclick = () => { const s = JSON.stringify([...allPhrases().map(full), '[unk]']); navigator.clipboard.writeText(s).catch(() => {}); log('gramática: ' + s); };
+window.__test = { feed: async url => feedFile(new File([await (await fetch(url)).arrayBuffer()], 'x.wav')), phrases: allPhrases };
+
+render();
+Vosk.createModel('model-small-es.tar.gz').then(m => { model = m; makeRecognizer(); }).catch(e => { $('status').textContent = 'error: ' + e.message; });
+</script>
