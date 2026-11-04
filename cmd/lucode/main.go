@@ -52,7 +52,11 @@ func main() {
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
 	minimaxSubKey := flag.String("minimax-subscription-key", os.Getenv("MINIMAX_SUBSCRIPTION_KEY"), "MiniMax subscription API key for token plan monitoring")
+	role := flag.String("role", natspkg.RoleBoth, "hub: orchestrates, runs no claude (every project needs a runner); runner: runs claude for hubs; both: one instance does everything")
 	flag.Parse()
+	if *role != natspkg.RoleHub && *role != natspkg.RoleRunner && *role != natspkg.RoleBoth {
+		log.Fatalf("--role must be hub, runner or both, not %q", *role)
+	}
 
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
 		log.Fatalf("mkdir data: %v", err)
@@ -112,13 +116,15 @@ func main() {
 
 	instanceID, _ := natspkg.LoadOrCreateInstanceID(*dataDir)
 	if err := bus.StartDiscovery(natspkg.InstanceInfo{
-		ID:   instanceID,
-		Type: "lucode",
+		ID:    instanceID,
+		Type:  "lucode",
+		Extra: map[string]any{"role": *role},
 	}); err != nil {
 		log.Printf("[discovery] start error: %v", err)
 	}
 
 	handler := apipkg.New(db, bus, manager, *workingDir)
+	handler.SetHubOnly(*role == natspkg.RoleHub)
 	bus.OnTaskTool = handler.HandleTaskTool
 	bus.OwnsSession = func(id string) bool { _, err := dbpkg.GetSession(db, id); return err == nil }
 	manager.OnTurnEnd = handler.DrainInbox         // deliver messages other agents queued
@@ -129,24 +135,28 @@ func main() {
 		handler.SetMinimaxSubscriptionKey(*minimaxSubKey)
 	}
 
-	// Accept turns hubs send to this instance as a runner.
-	if err := bus.StartRunnerServer(manager.ServeRemoteTurn, manager.CancelRemoteTurn, manager.CloseRemoteLive); err != nil {
-		log.Printf("[runner] start error: %v", err)
+	// Accept turns hubs send to this instance as a runner (a pure hub does not).
+	if *role != natspkg.RoleHub {
+		if err := bus.StartRunnerServer(manager.ServeRemoteTurn, manager.CancelRemoteTurn, manager.CloseRemoteLive); err != nil {
+			log.Printf("[runner] start error: %v", err)
+		}
 	}
 	// Turns that were running on runners when this instance stopped: pick up their events.
 	manager.RecoverRunnerTurns()
 
 	// Persistent claude processes on runners: as a runner, answer which ones are alive;
 	// as a hub, follow the start/exit notices and ask each runner that shows up.
-	if err := bus.ServeRunnerProcesses(manager.RunnerProcesses); err != nil {
-		log.Printf("[runner] processes server: %v", err)
+	if *role != natspkg.RoleHub {
+		if err := bus.ServeRunnerProcesses(manager.RunnerProcesses); err != nil {
+			log.Printf("[runner] processes server: %v", err)
+		}
 	}
 	if err := manager.WatchRunnerProcesses(); err != nil {
 		log.Printf("[runner] processes watch: %v", err)
 	}
 	syncRunners := func(peers []natspkg.InstanceInfo) {
 		for _, p := range peers {
-			if p.Type == "lucode" {
+			if p.Type == "lucode" && p.IsRunner() {
 				go manager.SyncRunnerProcesses(p.ID)
 			}
 		}

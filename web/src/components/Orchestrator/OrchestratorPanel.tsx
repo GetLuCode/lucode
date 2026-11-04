@@ -215,6 +215,12 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   }, [peersVersion])
   // this machine is shown by its own name
   const selfName = runners.find(r => r.self)?.hostname || 'this'
+  // A hub (--role=hub) is not in the list: it runs no claude, so "local" is not an option
+  // and the chat starts on the first runner.
+  const canRunLocally = !runnersLoaded || runners.some(r => r.self)
+  useEffect(() => {
+    if (runnersLoaded && runnerId === 'local' && !runners.some(r => r.self) && runners.length > 0) setRunnerId(runners[0].id)
+  }, [runnersLoaded, runners, runnerId])
   const runnerPath = runnerId
   // A saved remote runner that is not (yet) on the network: say so and do not send.
   const runnerOffline = runnerId !== 'local' && runnersLoaded && !runners.some(r => r.id === runnerId)
@@ -431,7 +437,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
           <EnvPicker
             runner={runnerId}
             runners={[
-              { value: 'local', label: selfName },
+              ...(canRunLocally ? [{ value: 'local', label: selfName }] : []),
               ...runners.filter(r => !r.self).map(r => ({ value: r.id, label: r.hostname || r.id })),
               ...(runnerOffline ? [{ value: runnerId, label: `${runnerName} (offline)` }] : []),
             ]}

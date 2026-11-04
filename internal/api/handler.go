@@ -38,6 +38,9 @@ type cachedEntry struct {
 }
 
 type Handler struct {
+	// hubOnly: this instance orchestrates and runs no claude of its own (--role=hub);
+	// every turn goes to a runner.
+	hubOnly    bool
 	db         *sql.DB
 	bus        *natspkg.Bus
 	manager    *sessionpkg.Manager
@@ -75,6 +78,10 @@ func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir s
 func (h *Handler) SetAuthURL(url string) {
 	h.auth = authclient.New(url)
 }
+
+// SetHubOnly makes this instance refuse to run claude itself: it is not offered as a
+// runner and a turn without a runner fails with a clear message.
+func (h *Handler) SetHubOnly(v bool) { h.hubOnly = v }
 
 func (h *Handler) SetAIAPIURL(url string) {
 	h.aiAPIURL = url
@@ -631,6 +638,11 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 
 	if aimode.IsModel(model) { // local model: Google AI Mode in Edge, no claude and no tools
 		opts.Executor, opts.Persistent, opts.Resume = "aimode", false, false
+	}
+
+	if h.hubOnly && opts.Executor == "claude" { // this path would start claude on this machine
+		http.Error(w, "this instance only orchestrates (--role=hub) and runs no claude: run this session through its card or the orchestrator, on a runner", http.StatusBadRequest)
+		return
 	}
 
 	// If the session has an account, pass it to aiapi (which will resolve it to the claude_config_dir)
