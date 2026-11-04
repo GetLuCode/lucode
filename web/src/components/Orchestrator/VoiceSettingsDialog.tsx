@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { IconX } from '@tabler/icons-react'
 import * as api from '../../api'
+import { SttTester } from './SttTester'
 import { canChooseOutput, getDeviceId, getHotword, listAudioDevices, setDeviceId, setHotword, type AudioDevices } from '../../lib/audioDevices'
 
 // Voice output settings. The Fish Audio key is write-only: the server only says
@@ -18,6 +19,7 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
   const [micId, setMicId] = useState(() => getDeviceId('input'))
   const [spkId, setSpkId] = useState(() => getDeviceId('output'))
   const [hw, setHw] = useState(getHotword)
+  const [testing, setTesting] = useState(false)
   const changeHw = (patch: Partial<typeof hw>) => { const n = { ...hw, ...patch }; setHw(n); setHotword(n) }
 
   // Devices apply on their own (they are per browser); they follow plugging and unplugging.
@@ -93,6 +95,9 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
           </select>
         </label>
         <div className="orch-dialog__rule" />
+        <button className="orch-dialog__btn" onClick={() => setTesting(true)}>Test speech recognition…</button>
+        <p className="orch-dialog__note">Speak and see what the voice worker hears. Nothing is sent to the model.</p>
+        <div className="orch-dialog__rule" />
         <label className="orch-dialog__check">
           <input type="checkbox" checked={hw.enabled} onChange={e => changeHw({ enabled: e.target.checked })} />
           <span>Hotword: keep the microphone open and send what I say after it</span>
@@ -145,6 +150,7 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
           <button className="orch-dialog__btn orch-dialog__btn--primary" disabled={busy || (!configured && !key.trim())} onClick={() => save()}>Save</button>
         </div>
       </div>
+      {testing && <SttTester onClose={() => setTesting(false)} />}
     </div>
   )
 }

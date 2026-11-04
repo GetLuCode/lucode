@@ -57,6 +57,7 @@ registerProcessor('pcm', Pcm)
 interface Handlers {
   onRealtime: (text: string) => void // partial text of the phrase being spoken
   onFinal: (text: string, viaHotword: boolean) => void // a finished phrase
+  onLevel?: (level: number) => void // microphone level 0..1, about 15 times a second (for a meter)
 }
 
 // Streams the microphone to lucode (/ws/stt), which relays it to the Parakeet worker.
@@ -111,7 +112,21 @@ export function useWorkerMic(handlers: Handlers) {
       let gate = true
       try { gate = localStorage.getItem('orch_mic_gate') !== '0' } catch { /* default on */ }
       const node = new AudioWorkletNode(ctx, 'pcm', { processorOptions: { gate } })
-      ctx.createMediaStreamSource(stream).connect(node)
+      const source = ctx.createMediaStreamSource(stream)
+      source.connect(node)
+      let meter: ReturnType<typeof setInterval> | undefined
+      if (h.current.onLevel) {
+        const an = ctx.createAnalyser()
+        an.fftSize = 1024
+        source.connect(an)
+        const data = new Float32Array(an.fftSize)
+        meter = setInterval(() => {
+          an.getFloatTimeDomainData(data)
+          let sq = 0
+          for (const v of data) sq += v * v
+          h.current.onLevel?.(Math.min(1, Math.sqrt(sq / data.length) * 4))
+        }, 66)
+      }
 
       const ws = new WebSocket(await getSttWSUrl())
       ws.binaryType = 'arraybuffer'
@@ -145,6 +160,7 @@ export function useWorkerMic(handlers: Handlers) {
         }
         else if (m.type === 'error') { setError(m.text ?? 'voice error'); stop() }
       }
+      ws.addEventListener('close', () => { if (meter) clearInterval(meter); h.current.onLevel?.(0) })
       ws.onclose = () => { if (res.current.ws === ws) stop() }
       ws.onerror = () => { setError('could not reach lucode'); stop() }
     } catch (e) {
