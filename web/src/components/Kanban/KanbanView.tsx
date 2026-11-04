@@ -795,6 +795,11 @@ export function KanbanView() {
         const canUp = e.deltaY < 0 && list.scrollTop > 0
         const canDown = e.deltaY > 0 && list.scrollTop + list.clientHeight < list.scrollHeight - 1
         if (canUp || canDown) return // let the list scroll natively
+        if (list.scrollHeight > list.clientHeight) {
+          // scrollable list at its edge: swallow the wheel so the board doesn't scroll sideways
+          e.preventDefault()
+          return
+        }
       }
       if (board.scrollWidth <= board.clientWidth) return
       e.preventDefault()
