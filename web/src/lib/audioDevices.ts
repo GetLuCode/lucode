@@ -27,6 +27,16 @@ export function setHotword(h: Hotword) {
   try { localStorage.setItem('orch_hotword', JSON.stringify(h)) } catch { /* private mode */ }
 }
 
+// Auto-send: with plain dictation (no hotword), the first finished phrase turns the microphone
+// off and is sent. Off by default.
+export function getAutoSend(): boolean {
+  try { return localStorage.getItem('orch_dictation_autosend') === '1' } catch { return false }
+}
+
+export function setAutoSend(on: boolean) {
+  try { localStorage.setItem('orch_dictation_autosend', on ? '1' : '0') } catch { /* private mode */ }
+}
+
 // How the voice worker decides a phrase is over. Three rules, the first one that holds closes it:
 // audio silence, the partial text staying unchanged for some seconds, and the partial repeating
 // identically N times in a row (the worker emits one about every 0.2 s). Read when the mic starts.

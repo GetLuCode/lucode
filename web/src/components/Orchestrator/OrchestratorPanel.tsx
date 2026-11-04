@@ -16,7 +16,7 @@ import { useWorkerMic } from '@/hooks/useWorkerMic'
 import { useWorkerTTS } from '@/hooks/useWorkerTTS'
 import { markSpoken, wasSpoken } from '@/lib/spokenLog'
 import { VoiceSettingsDialog } from './VoiceSettingsDialog'
-import { getHotword } from '@/lib/audioDevices'
+import { getAutoSend, getHotword } from '@/lib/audioDevices'
 import type { AIProfile, Message, Runner, Session } from '../../types'
 import './OrchestratorPanel.css'
 
@@ -80,6 +80,12 @@ export function OrchestratorPanel() {
       if (viaHotword && !runningRef.current) { sendText(text.trim()); return }
       dictBase.current = joinText(dictBase.current, text)
       setInput(dictBase.current)
+      // plain dictation with "auto-send" on: the finished phrase turns the mic off and goes out
+      // (if the agent is busy it stays in the box, mic off, to be sent by hand)
+      if (!viaHotword && getAutoSend()) {
+        mic.stop()
+        if (!runningRef.current) sendText(dictBase.current.trim())
+      }
     },
   })
   // Voice output: a button per answer, plus an auto-read switch (off by default: Fish bills by text).

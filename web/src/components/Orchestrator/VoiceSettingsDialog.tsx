@@ -3,7 +3,7 @@ import { IconX } from '@tabler/icons-react'
 import * as api from '../../api'
 import { SttTester } from './SttTester'
 import { VoiceModelPicker } from './VoiceModelPicker'
-import { canChooseOutput, DEFAULT_TUNING, getDeviceId, getHotword, getSttTuning, listAudioDevices, setDeviceId, setHotword, setSttTuning, type AudioDevices, type SttTuning } from '../../lib/audioDevices'
+import { canChooseOutput, DEFAULT_TUNING, getAutoSend, getDeviceId, getHotword, getSttTuning, listAudioDevices, setAutoSend, setDeviceId, setHotword, setSttTuning, type AudioDevices, type SttTuning } from '../../lib/audioDevices'
 
 // Voice settings, in tabs. Everything applies on its own (it is kept in this browser) except the
 // Fish Audio settings, which are saved on the server with the Save button of their tab. The Fish
@@ -63,6 +63,7 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
   const [micId, setMicId] = useState(() => getDeviceId('input'))
   const [spkId, setSpkId] = useState(() => getDeviceId('output'))
   const [hw, setHw] = useState(getHotword)
+  const [autoSend, setAutoSendState] = useState(getAutoSend)
   const [testing, setTesting] = useState(false)
   const [tune, setTune] = useState(getSttTuning)
   const changeTune = (patch: Partial<SttTuning>) => { const n = { ...tune, ...patch }; setTune(n); setSttTuning(n) }
@@ -205,6 +206,11 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
                   on={tune.stableRepeatsOn} onToggle={on => changeTune({ stableRepeatsOn: on })}
                   value={tune.stableRepeats} onChange={v => changeTune({ stableRepeats: v })}
                 />
+                <label className="orch-dialog__check">
+                  <input type="checkbox" checked={autoSend} onChange={e => { setAutoSendState(e.target.checked); setAutoSend(e.target.checked) }} />
+                  <span>Auto: when a phrase ends, turn the microphone off and send it</span>
+                </label>
+                <p className="orch-dialog__note">Only for plain dictation; it does nothing while the hotword is on.</p>
                 <button className="orch-dialog__link" onClick={() => { setTune(DEFAULT_TUNING); setSttTuning(DEFAULT_TUNING) }}>Reset to defaults</button>
               </>
             )}
