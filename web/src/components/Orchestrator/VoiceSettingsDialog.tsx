@@ -219,7 +219,7 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
                     <label className="orch-dialog__field">
                       <span>Detector</span>
                       <select value={hw.backend} onChange={e => changeHw({ backend: e.target.value === 'oww' ? 'oww' : 'vosk' })}>
-                        <option value="vosk">My own phrase (Vosk, Spanish)</option>
+                        <option value="vosk">My own phrase (Vosk in the browser, Spanish)</option>
                         <option value="oww">“hey jarvis” (openWakeWord)</option>
                       </select>
                     </label>
@@ -230,6 +230,12 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
                       </label>
                     )}
                     <p className="orch-dialog__note">Takes effect the next time you turn the microphone on. Everything is detected on this computer.</p>
+                    {hw.backend === 'vosk' && (
+                      <p className="orch-dialog__note">
+                        The phrase is detected inside this page: no audio is sent to lucode until you say it (say it, pause a moment, then
+                        the command). The first time it downloads a 40 MB model, which the browser keeps.
+                      </p>
+                    )}
                   </>
                 ) : (
                   <p className="orch-dialog__note">Off: the microphone sends everything it hears. Turn it on to only react after a wake phrase.</p>

@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getSttWSUrl } from './useWSConnection'
 import { getDeviceId, getHotword, getSttTuning, setDeviceId, tuningMessage } from '../lib/audioDevices'
+import type { WakeDetector } from '../lib/voskWake'
 
 export type MicState = 'off' | 'loading' | 'listening' | 'armed' | 'awake'
 // armed = waiting for the hotword; awake = hotword heard, the next phrase is the command
+
+// Hotword with the "vosk" detector runs in this browser (lib/voskWake.ts): while armed the audio
+// never leaves the page. Vosk closes its result after about a second of silence, so when the phrase
+// is heard the detector hands over what was said after its last word, and then the live audio goes
+// to lucode as a plain session; the final phrase puts the mic back to armed.
+const WAKE_TIMEOUT_MS = 8000  // awake but nobody speaks: back to armed
 
 // Posts 40 ms of mono PCM16 at a time (the voice worker wants small chunks at real time pace).
 //
@@ -72,11 +79,13 @@ export function useWorkerMic(handlers: Handlers) {
   // phrase. A late partial of a phrase that was just closed must not reopen it.
   const ignoreRealtimeUntil = useRef(0)
   const lastFinal = useRef({ text: '', at: 0 })
-  const res = useRef<{ ws?: WebSocket; ctx?: AudioContext; stream?: MediaStream; node?: AudioWorkletNode }>({})
+  const res = useRef<{ ws?: WebSocket; ctx?: AudioContext; stream?: MediaStream; node?: AudioWorkletNode; wake?: WakeDetector; wakeTimer?: ReturnType<typeof setTimeout> }>({})
 
   const stop = useCallback(() => {
     const r = res.current
     res.current = {}
+    clearTimeout(r.wakeTimer)
+    r.wake?.dispose()
     try { if (r.ws?.readyState === WebSocket.OPEN) r.ws.send(JSON.stringify({ type: 'flush' })) } catch { /* closing */ }
     try { r.node?.disconnect() } catch { /* already gone */ }
     r.stream?.getTracks().forEach(t => t.stop())
@@ -105,12 +114,28 @@ export function useWorkerMic(handlers: Handlers) {
           throw e
         }
       }
+      // Hotword "vosk": detected here, in the browser. If the wasm or its model cannot load, the
+      // worker detects it as before (the old path below) instead of leaving the mic dead.
+      const hw = getHotword()
+      let local = hw.enabled && hw.backend === 'vosk'
+      let wake: WakeDetector | undefined
+      let onWake: (after: ArrayBuffer[]) => void = () => {} // set once the socket exists
+      if (local) {
+        try {
+          const { createWakeDetector } = await import('../lib/voskWake')
+          wake = await createWakeDetector(hw.phrase, after => onWake(after))
+        } catch (e) {
+          console.warn('[stt] browser hotword unavailable, using the worker:', e)
+          local = false
+        }
+      }
       const ctx = new AudioContext({ sampleRate: 16000 })
       const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }))
       await ctx.audioWorklet.addModule(url)
       URL.revokeObjectURL(url)
       let gate = true
       try { gate = localStorage.getItem('orch_mic_gate') !== '0' } catch { /* default on */ }
+      if (local) gate = false // the detector hears everything; the network only gets audio after the hotword
       const node = new AudioWorkletNode(ctx, 'pcm', { processorOptions: { gate } })
       const source = ctx.createMediaStreamSource(stream)
       source.connect(node)
@@ -130,23 +155,46 @@ export function useWorkerMic(handlers: Handlers) {
 
       const ws = new WebSocket(await getSttWSUrl())
       ws.binaryType = 'arraybuffer'
-      res.current = { ws, ctx, stream, node }
+      res.current = { ws, ctx, stream, node, wake }
       let ready = false
-      node.port.onmessage = e => { if (ready && !muted.current && ws.readyState === WebSocket.OPEN) ws.send(e.data as ArrayBuffer) }
-      const hw = getHotword()
+      // local hotword: awake = the phrase was heard and audio is going to lucode
+      let awake = false, speechSeen = false
+      const backToArmed = (flush: boolean) => {
+        awake = false
+        clearTimeout(res.current.wakeTimer)
+        if (flush && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'flush' }))
+        wake?.rearm()
+        setState('armed')
+      }
+      onWake = after => {
+        if (awake || !ready) return
+        awake = true; speechSeen = false
+        setState('awake')
+        if (ws.readyState === WebSocket.OPEN) for (const b of after) ws.send(b) // said while Vosk waited for the silence
+        // nobody spoke after the hotword: go back to waiting (and close what the worker may hold)
+        res.current.wakeTimer = setTimeout(() => { if (!speechSeen) backToArmed(true) }, WAKE_TIMEOUT_MS)
+      }
+      node.port.onmessage = e => {
+        const pcm = e.data as ArrayBuffer
+        if (wake && !awake) { // armed: the audio stays in the browser
+          if (ready && !muted.current) wake.feed(pcm)
+          return
+        }
+        if (ready && !muted.current && ws.readyState === WebSocket.OPEN) ws.send(pcm)
+      }
       wakeMode.current = hw.enabled
       ws.onopen = () => ws.send(JSON.stringify({
         type: 'start', sample_rate: ctx.sampleRate, ...tuningMessage(getSttTuning()),
-        ...(hw.enabled ? { wake: true, wake_backend: hw.backend, wake_phrase: hw.backend === 'vosk' ? hw.phrase : undefined } : {}),
+        ...(hw.enabled && !wake ? { wake: true, wake_backend: hw.backend, wake_phrase: hw.backend === 'vosk' ? hw.phrase : undefined } : {}),
       }))
       ws.onmessage = e => {
         const m = JSON.parse(e.data as string) as { type: string; text?: string }
         if (m.type === 'ready') { ready = true; setState(wakeMode.current ? 'armed' : 'listening') }
         else if (m.type === 'wake') setState('awake')
         else if (m.type === 'wake_timeout') setState('armed')
-        else if (m.type === 'noise') { h.current.onRealtime(''); if (wakeMode.current) setState('armed') }
+        else if (m.type === 'noise') { h.current.onRealtime(''); if (wake) backToArmed(false); else if (wakeMode.current) setState('armed') }
         else if (m.type === 'wake_phrase') { if (!(m as { ok?: boolean }).ok) { setError(m.text ?? 'wake phrase rejected'); stop() } }
-        else if (m.type === 'speech') ignoreRealtimeUntil.current = 0
+        else if (m.type === 'speech') { ignoreRealtimeUntil.current = 0; speechSeen = true; clearTimeout(res.current.wakeTimer) }
         else if (m.type === 'realtime') { if (Date.now() >= ignoreRealtimeUntil.current) h.current.onRealtime(m.text ?? '') }
         else if (m.type === 'final') {
           const text = (m.text ?? '').trim()
@@ -156,7 +204,7 @@ export function useWorkerMic(handlers: Handlers) {
           if (text) lastFinal.current = { text, at: Date.now() }
           if (!dup) h.current.onFinal(text, wakeMode.current)
           else h.current.onRealtime('') // drop any partial still showing
-          if (wakeMode.current) setState('armed')
+          if (wake) backToArmed(false); else if (wakeMode.current) setState('armed')
         }
         else if (m.type === 'error') { setError(m.text ?? 'voice error'); stop() }
       }

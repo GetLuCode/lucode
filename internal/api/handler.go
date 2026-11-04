@@ -201,6 +201,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/stt/start", h.sttStart)
 	mux.HandleFunc("GET /api/stt/models", h.sttModels)
 	mux.HandleFunc("POST /api/stt/model", h.sttSetModel)
+	mux.HandleFunc("GET /api/stt/vosk-model.tar.gz", h.sttVoskModel)
 	mux.HandleFunc("GET /api/tts/settings", h.getTTSSettings)
 	mux.HandleFunc("PUT /api/tts/settings", h.putTTSSettings)
 	mux.HandleFunc("POST /api/tts", h.ttsSpeak)
