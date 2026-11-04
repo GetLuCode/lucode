@@ -357,3 +357,34 @@ func TestTaskCreateDefaultsToTodoOrInProgressWhenTheAgentIsFree(t *testing.T) {
 	}
 	_ = carol
 }
+
+func TestMoveBlocker(t *testing.T) {
+	h, pid, lists := newTaskTestHandler(t)
+	dep := newCard(t, h, pid, lists["todo"], "dep")
+	task := newCard(t, h, pid, lists["todo"], "task")
+
+	toProgress := task
+	toProgress.ListID = lists["inprogress"].ID
+	if h.moveBlocker(toProgress, lists["todo"].ID) == "" {
+		t.Error("moving a task without agent to In Progress should be refused")
+	}
+	toProgress.AgentID = "a1"
+	if r := h.moveBlocker(toProgress, lists["todo"].ID); r != "" {
+		t.Errorf("task with an agent should move from Todo, got %q", r)
+	}
+
+	toProgress.DependsOn = []string{dep.ID}
+	if h.moveBlocker(toProgress, lists["blocked"].ID) == "" {
+		t.Error("leaving Blocked with an unfinished dependency should be refused")
+	}
+	toProgress.DependsOn = nil
+
+	dbpkg.InsertCardComment(h.db, dbpkg.CardComment{ID: uuid.New().String(), CardID: task.ID, Author: "Dev", Kind: "error", Body: "boom"})
+	if h.moveBlocker(toProgress, lists["blocked"].ID) == "" {
+		t.Error("unreviewed blocker should refuse the move")
+	}
+	dbpkg.InsertCardComment(h.db, dbpkg.CardComment{ID: uuid.New().String(), CardID: task.ID, Author: "me", Kind: "comment", Body: "fixed"})
+	if r := h.moveBlocker(toProgress, lists["blocked"].ID); r != "" {
+		t.Errorf("reviewed blocker should allow the move, got %q", r)
+	}
+}

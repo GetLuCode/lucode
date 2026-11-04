@@ -2801,6 +2801,10 @@ func (h *Handler) updateKanbanCard(w http.ResponseWriter, r *http.Request) {
 	if body.Position != nil    { c.Position = *body.Position }
 	if body.Archived != nil    { c.Archived = *body.Archived }
 	if body.ParentID != nil    { c.ParentID = *body.ParentID }
+	if reason := h.moveBlocker(c, oldListID); reason != "" {
+		http.Error(w, reason, http.StatusConflict)
+		return
+	}
 	if err := dbpkg.UpdateKanbanCard(h.db, c); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -868,7 +868,13 @@ export function KanbanView() {
 
   async function handleSaveCard(id: string, patch: Partial<KanbanCard>) {
     const before = cards.find(c => c.id === id)
-    const updated = await api.updateKanbanCard(id, patch)
+    let updated: KanbanCard
+    try {
+      updated = await api.updateKanbanCard(id, patch)
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e))
+      return
+    }
     setCards(prev => prev.map(c => c.id === id ? updated : c))
     // keep modal in sync
     setSelectedCard(updated)
@@ -932,7 +938,14 @@ export function KanbanView() {
     const newPos = afterCardId
       ? (cards.filter(c => c.list_id === toListId).findIndex(c => c.id === afterCardId) + 1)
       : cards.filter(c => c.list_id === toListId).length
-    await api.updateKanbanCard(cid, { list_id: toListId, position: newPos })
+    try {
+      await api.updateKanbanCard(cid, { list_id: toListId, position: newPos })
+    } catch (e) {
+      // the move was refused (for example no agent assigned): put the card back
+      await reloadBoard()
+      window.alert(e instanceof Error ? e.message : String(e))
+      return
+    }
     if (card.list_id !== toListId) await reloadBoard()
   }
 
