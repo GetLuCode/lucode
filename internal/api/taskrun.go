@@ -149,11 +149,12 @@ func (h *Handler) moveCardToKind(card dbpkg.KanbanCard, kind string) (dbpkg.Kanb
 	if err != nil {
 		return card, fmt.Errorf("no %q list: %w", kind, err)
 	}
-	pos := 0
-	if all, err := dbpkg.ListKanbanCards(h.db, card.ProjectID, false); err == nil {
+	// the card goes on top of the list (most recent first): one before the first card
+	pos, first := 0, true
+	if all, err := dbpkg.ListKanbanCards(h.db, card.ProjectID, true); err == nil {
 		for _, c := range all {
-			if c.ListID == target.ID && c.Position >= pos {
-				pos = c.Position + 1
+			if c.ID != card.ID && c.ListID == target.ID && (first || c.Position-1 < pos) {
+				pos, first = c.Position-1, false
 			}
 		}
 	}
