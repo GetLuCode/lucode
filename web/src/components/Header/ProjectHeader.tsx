@@ -118,7 +118,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
         <button
           className={`project-tab${onAgentTab ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/agent`)}
-        >Agent</button>
+        >Chat</button>
       </nav>
 
       <div className="project-header__actions">
