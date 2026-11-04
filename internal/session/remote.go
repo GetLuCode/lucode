@@ -89,6 +89,31 @@ type remoteTurnOpts struct {
 // runWithRemoteCLI runs an agent turn on opts.RunnerID and relays its events.
 // The turn belongs to the runner from the ack on: if this process dies, the runner
 // goes on and RecoverRunnerTurns picks the events up again at the next start.
+// remoteTurnRequest is the part of a turn the hub decides and a runner executes:
+// everything the agent's configuration asks of claude has to be here, because the
+// runner builds the command line from it and knows nothing else about the agent.
+func remoteTurnRequest(sessID string, opts TurnOptions) execpkg.TurnRequest {
+	return execpkg.TurnRequest{
+		SessionID:          sessID,
+		ProjectID:          opts.ProjectID,
+		Message:            opts.Message,
+		Model:              opts.Model,
+		Provider:           execpkg.ProviderClaude,
+		WorkDirs:           opts.WorkDirs,
+		Resume:             opts.Resume,
+		Name:               opts.AgentName,
+		Effort:             opts.Effort,
+		Thinking:           opts.Thinking,
+		AppendSystemPrompt: opts.SystemPrompt,
+		Tools:              opts.Tools,
+		PermissionMode:     permissionModeOf(opts),
+		Worktree:           opts.Worktree,
+		WorktreeBaseRef:    opts.WorktreeBaseRef,
+		ImageBase64:        opts.ImageBase64,
+		ImageMediaType:     opts.ImageMediaType,
+	}
+}
+
 func (m *Manager) runWithRemoteCLI(ctx context.Context, ps *ProcessState, opts TurnOptions) {
 	sessID := ps.SessionID
 	defer m.finishTurn(sessID, ps)
@@ -98,23 +123,7 @@ func (m *Manager) runWithRemoteCLI(ctx context.Context, ps *ProcessState, opts T
 	publish := m.cliPublisher(sessID, opts)
 
 	rt := RemoteTurn{
-		Req: execpkg.TurnRequest{
-			SessionID:          sessID,
-			ProjectID:          opts.ProjectID,
-			Message:            opts.Message,
-			Model:              opts.Model,
-			Provider:           execpkg.ProviderClaude,
-			WorkDirs:           opts.WorkDirs,
-			Resume:             opts.Resume,
-			Name:               opts.AgentName,
-			Effort:             opts.Effort,
-			Thinking:           opts.Thinking,
-			AppendSystemPrompt: opts.SystemPrompt,
-			Tools:              opts.Tools,
-			PermissionMode:     permissionModeOf(opts),
-			ImageBase64:        opts.ImageBase64,
-			ImageMediaType:     opts.ImageMediaType,
-		},
+		Req:         remoteTurnRequest(sessID, opts),
 		LucodeTools: opts.LucodeTools,
 		AIProfileID: opts.AIProfileID,
 		Persistent:  opts.Persistent,
