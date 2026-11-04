@@ -6,7 +6,7 @@ import { RunnersButton } from '../Sidebar/RunnersList'
 import { ProjectEnvironmentModal } from '../Sidebar/ProjectEnvironmentModal'
 import { ProjectEnvInfo } from './ProjectEnvInfo'
 
-// Top bar of a project: its name and menu, the Kanban | Running tabs, and the
+// Top bar of a project: its name and menu, the Kanban | Running | Agent tabs, and the
 // Runners / Agents actions at the right.
 export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const navigate = useNavigate()
@@ -28,6 +28,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
 
   const base = `/projects/${project.id}`
   const onAgents = pathname.includes('/agents')
+  const onAgentTab = /\/agent\/?$/.test(pathname)
   const onKanban = pathname.includes('/kanban')
   // The running list and the chats opened from it share the Running tab.
   const onRunning = pathname.includes('/running') || pathname.includes('/sessions/')
@@ -114,6 +115,10 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
           className={`project-tab${onRunning ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/running`)}
         >Running</button>
+        <button
+          className={`project-tab${onAgentTab ? ' project-tab--active' : ''}`}
+          onClick={() => navigate(`${base}/agent`)}
+        >Agent</button>
       </nav>
 
       <div className="project-header__actions">

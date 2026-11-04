@@ -104,7 +104,7 @@ export default function App() {
   useEffect(() => {
     const path = location.pathname
     if (path === '/') return // the start page
-    if (['/agents', '/kanban', '/running', '/checkpoints'].some(p => path.includes(p))) return
+    if (['/agents', '/agent', '/kanban', '/running', '/checkpoints'].some(p => path.includes(p))) return
     if (!activeProjectId) return
     if (path.includes('/sessions/')) {
       if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
@@ -117,6 +117,7 @@ export default function App() {
   const isAgentsRoute = location.pathname.includes('/agents')
   const isKanbanRoute = location.pathname.includes('/kanban')
   const isRunningRoute = location.pathname.includes('/running')
+  const isAgentTab = /\/agent\/?$/.test(location.pathname)
   const isCheckpointsOpen = location.pathname.includes('/checkpoints')
 
   return (
@@ -125,7 +126,7 @@ export default function App() {
       <HookToastContainer />
       <SpotlightSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
       <RawEventsModal />
-      <div className="app-content">
+      <div className={`app-content${isAgentTab ? ' app-content--agent' : ''}`}>
         <NavPanel />
         <main className={`main${isCheckpointsOpen ? ' main--with-drawer' : ''}`}>
           {!isHome && <ProjectHeader onOpenSearch={() => setSearchOpen(true)} />}
@@ -133,11 +134,11 @@ export default function App() {
           <div className="main__content">
             {/* a render error stays inside the page and clears when the route changes */}
             <ErrorBoundary key={location.pathname}>
-              {isHome ? <HomeView /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : <ChatView />}
+              {isHome ? <HomeView /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isAgentTab ? null : <ChatView />}
             </ErrorBoundary>
           </div>
         </main>
-        {!isHome && <OrchestratorPanel />}
+        {!isHome && <OrchestratorPanel full={isAgentTab} />}
         <aside
           className={`checkpoints-drawer${isCheckpointsOpen ? ' checkpoints-drawer--open' : ''}`}
           aria-hidden={!isCheckpointsOpen}

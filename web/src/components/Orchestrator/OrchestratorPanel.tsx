@@ -57,11 +57,13 @@ function seedContextUsage(s: Session) {
   } catch { /* malformed: the next turn measures it again */ }
 }
 
-export function OrchestratorPanel() {
+// `full`: the Agent tab, where the panel fills the page whether or not it is collapsed as a side panel.
+export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const projectId = useStore(s => s.activeProjectId)
   const peersVersion = useStore(s => s.peersVersion)
   const loadMessages = useStore(s => s.loadMessages)
-  const open = useStore(s => s.orchOpen)
+  const storedOpen = useStore(s => s.orchOpen)
+  const open = full || storedOpen
   const setOpen = useStore(s => s.setOrchOpen)
   const setOrchCache = useStore(s => s.setOrchCache)
   const onKanban = useLocation().pathname.includes('/kanban')
@@ -302,7 +304,7 @@ export function OrchestratorPanel() {
   }
 
   return (
-    <aside className="orch">
+    <aside className={`orch${full ? ' orch--full' : ''}`}>
       <header className="orch__header">
         <ModelIcon model={model} size={17} className="orch__model-icon" />
         <span className="orch__title">Orchestrator</span>
@@ -329,9 +331,11 @@ export function OrchestratorPanel() {
         <button className="orch__icon-btn" onClick={() => setVoiceOpen(true)} title="Voice settings">
           <IconSettings size={16} />
         </button>
-        <button className="orch__icon-btn" onClick={() => toggle(false)} title="Hide">
-          <IconLayoutSidebarRightCollapse size={16} />
-        </button>
+        {!full && (
+          <button className="orch__icon-btn" onClick={() => toggle(false)} title="Hide">
+            <IconLayoutSidebarRightCollapse size={16} />
+          </button>
+        )}
       </header>
 
       {sid && !isLocalModel && <ContextBar sessionId={sid} placement="panel" />}
