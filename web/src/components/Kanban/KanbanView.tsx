@@ -12,7 +12,6 @@ import { backdropClose } from '../../lib/backdropClose'
 import { KanbanFilters, NO_FILTERS, matchesFilters, type KanbanFilterState } from './KanbanFilters'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { AgentAvatar } from '../Agents/AgentAvatar'
-import { OrchestratorOpenButton } from '../Orchestrator/OrchestratorOpenButton'
 
 // ---- pasted images -----------------------------------------------------------
 
@@ -972,11 +971,6 @@ export function KanbanView() {
             </button>
           )
         )}
-      </div>
-
-      {/* board actions live under the board */}
-      <div className="kanban-view__footer">
-        <OrchestratorOpenButton />
       </div>
 
       {/* card modal */}

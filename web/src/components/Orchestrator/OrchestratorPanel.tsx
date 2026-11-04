@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX } from '@tabler/icons-react'
+import { useNavigate } from 'react-router-dom'
+import { IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
@@ -67,7 +67,6 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const open = full || storedOpen
   const setOpen = useStore(s => s.setOrchOpen)
   const setOrchCache = useStore(s => s.setOrchCache)
-  const onKanban = useLocation().pathname.includes('/kanban')
   const navigate = useNavigate()
   const [session, setSession] = useState<{ id: string; last_active: string } | null>(null)
   const [error, setError] = useState('')
@@ -311,17 +310,8 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
 
   if (!projectId) return null
 
-  if (!open) {
-    if (onKanban) return null // the board has its own button, after "Add list"
-    return (
-      <button className="orch-tab" onClick={() => toggle(true)} title="Open the orchestrator chat">
-        <ModelIcon model={model} size={16} />
-        <IconLayoutSidebarRightExpand size={16} />
-        <span>Orchestrator</span>
-        {!isLocalModel && <CacheBadge cache={cache} compact />}
-      </button>
-    )
-  }
+  // collapsed: the opener button is drawn by App (OrchestratorOpenButton), inside <main>
+  if (!open) return null
 
   return (
     <aside className={`orch${full ? ' orch--full' : ''}`}>
