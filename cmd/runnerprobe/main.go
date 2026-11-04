@@ -81,6 +81,7 @@ func main() {
 	call("/api/version")
 	call("/api/ai-profiles")
 	call("/api/fs/dirs?path=" + url.QueryEscape(*dir))
+	call("/api/worktrees/stale?dir=" + url.QueryEscape(*dir))
 	if *noTurns {
 		return
 	}

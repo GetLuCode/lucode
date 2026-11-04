@@ -19,7 +19,7 @@ func TestRunnerHandlerServesOnlyWhatAHubNeeds(t *testing.T) {
 		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 		return rec.Code
 	}
-	for _, path := range []string{"/api/health", "/api/ai-profiles", "/api/fs/dirs"} {
+	for _, path := range []string{"/api/health", "/api/ai-profiles", "/api/fs/dirs", "/api/worktrees/stale"} {
 		if code := get("GET", path); code != http.StatusOK {
 			t.Errorf("GET %s = %d, want 200", path, code)
 		}

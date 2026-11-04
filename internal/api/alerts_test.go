@@ -1,7 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +72,35 @@ func TestStaleWorktreeLocks(t *testing.T) {
 	rgit(t, repo, "worktree", "lock", "--reason", "keep", wt)
 	if got := staleWorktrees(repo, nil); len(got) != 0 {
 		t.Errorf("a manual lock was reported: %+v", got)
+	}
+}
+
+// The runner answers for its own disk: given a dir inside the repo it finds the
+// repository and reports the stale worktree, skipping the ones the hub has in Review.
+func TestRunnerReportsStaleWorktrees(t *testing.T) {
+	repo, wt := mergedWorktree(t)
+	h, _, _ := newTaskTestHandler(t)
+
+	ask := func(query string) []Alert {
+		rec := httptest.NewRecorder()
+		h.staleWorktreesRPC(rec, httptest.NewRequest("GET", "/api/worktrees/stale?"+query, nil))
+		var out []Alert
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		return out
+	}
+	// two dirs of the same repo count once
+	q := url.Values{"dir": {repo, wt, filepath.Join(repo, "nope")}}
+	if got := ask(q.Encode()); len(got) != 1 {
+		t.Fatalf("alerts = %+v", got)
+	}
+	q.Set("review", wt)
+	if got := ask(q.Encode()); len(got) != 0 {
+		t.Errorf("a worktree in Review was reported: %+v", got)
+	}
+	if got := ask(""); len(got) != 0 {
+		t.Errorf("no dirs = %+v", got)
 	}
 }
 

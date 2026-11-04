@@ -20,6 +20,7 @@ func NewRunnerHandler(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager,
 	mux.HandleFunc("GET /api/version", h.version("runner"))
 	mux.HandleFunc("GET /api/commands", h.listCommands)
 	mux.HandleFunc("GET /api/fs/dirs", h.listDirs)
+	mux.HandleFunc("GET /api/worktrees/stale", h.staleWorktreesRPC)
 	mux.HandleFunc("GET /api/ai-profiles", h.listAIProfiles)
 	mux.HandleFunc("POST /api/ai-profiles", h.createAIProfile)
 	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)

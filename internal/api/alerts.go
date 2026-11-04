@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -165,18 +167,13 @@ next:
 	return alerts
 }
 
-// listProjectAlerts reports what needs cleaning in the repositories of the project's
-// work dirs that this machine can reach.
-func (h *Handler) listProjectAlerts(w http.ResponseWriter, r *http.Request) {
-	proj, err := dbpkg.GetProject(h.db, r.PathValue("pid"))
-	if err != nil {
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-	reviewPaths := dbpkg.CardReviewWorktreePaths(h.db)
+// scanWorktreeAlerts looks, on THIS machine, at the repositories of dirs. Git and the
+// pid check only mean something where the worktrees and the claude sessions are, so
+// this runs on the runner; the hub asks the runner instead of looking at its own disk.
+func scanWorktreeAlerts(dirs, reviewPaths []string) []Alert {
 	alerts := []Alert{}
 	seen := map[string]bool{}
-	for _, dir := range proj.WorkDirs {
+	for _, dir := range dirs {
 		if _, err := os.Stat(dir); err != nil {
 			continue
 		}
@@ -190,6 +187,57 @@ func (h *Handler) listProjectAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[strings.ToLower(repo)] = true
 		alerts = append(alerts, staleWorktrees(repo, reviewPaths)...)
+	}
+	return alerts
+}
+
+// staleWorktreesRPC is what a runner serves at GET /api/worktrees/stale?dir=..&review=..:
+// the merged worktrees left behind in the repositories of the given dirs. review lists
+// the worktrees the hub has waiting in Review, which must not be reported.
+func (h *Handler) staleWorktreesRPC(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	jsonResp(w, http.StatusOK, scanWorktreeAlerts(q["dir"], q["review"]))
+}
+
+// listProjectAlerts reports what needs cleaning up for the project. The runner the
+// project works on does the looking (its repositories are on its disk); the hub only
+// relays and shows. Only a project with no remote runner is scanned in this process.
+func (h *Handler) listProjectAlerts(w http.ResponseWriter, r *http.Request) {
+	proj, err := dbpkg.GetProject(h.db, r.PathValue("pid"))
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	dirs := h.projectWorkDirs(proj)
+	review := dbpkg.CardReviewWorktreePaths(h.db)
+	if !h.isRemoteRunner(proj.RunnerID) {
+		jsonResp(w, http.StatusOK, scanWorktreeAlerts(dirs, review))
+		return
+	}
+	q := url.Values{"dir": dirs, "review": review}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "/api/worktrees/stale?"+q.Encode(), http.NoBody)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resp, err := h.bus.RPCRequest(proj.RunnerID, req)
+	if err != nil {
+		http.Error(w, "runner unavailable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// a runner built before this endpoint answers 404: nothing to show, not a failure
+		jsonResp(w, http.StatusOK, []Alert{})
+		return
+	}
+	var alerts []Alert
+	if err := json.NewDecoder(resp.Body).Decode(&alerts); err != nil {
+		http.Error(w, "bad answer from the runner: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if alerts == nil {
+		alerts = []Alert{}
 	}
 	jsonResp(w, http.StatusOK, alerts)
 }
