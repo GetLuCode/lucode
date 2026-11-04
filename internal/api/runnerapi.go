@@ -28,5 +28,6 @@ func NewRunnerHandler(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager,
 	mux.HandleFunc("POST /api/ai-profiles", h.createAIProfile)
 	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)
 	mux.HandleFunc("DELETE /api/ai-profiles/{id}", h.deleteAIProfile)
+	mux.HandleFunc("GET /api/ai-profiles/{id}/usage", h.aiProfileUsage)
 	return recoverMiddleware(mux)
 }

@@ -6949,6 +6949,18 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 
 .project-header__actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 
+.usage-meters { display: flex; align-items: center; gap: 10px; margin-right: 8px; }
+.usage-meter { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
+.usage-meter__name { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-meter__err { opacity: 0.6; }
+.usage-bar { display: flex; align-items: center; gap: 3px; }
+.usage-bar__track { width: 36px; height: 5px; border-radius: 3px; background: rgba(128,128,128,0.25); overflow: hidden; }
+.usage-bar__fill { display: block; height: 100%; border-radius: 3px; }
+.usage-bar__fill--low { background: #4caf7d; }
+.usage-bar__fill--mid { background: #e0a83a; }
+.usage-bar__fill--high { background: #e0524a; }
+.usage-bar__pct { min-width: 26px; text-align: right; font-variant-numeric: tabular-nums; }
+
 .header-icon-btn {
   position: relative;
   display: flex;

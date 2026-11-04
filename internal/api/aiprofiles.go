@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	dbpkg "claude-orchestrator/internal/db"
@@ -189,6 +190,67 @@ func parseAnthropicProfile(body []byte) (email, display, org, plan string) {
 		plan = v.Organization.RateLimitTier
 	}
 	return v.Account.Email, display, v.Organization.Name, plan
+}
+
+const anthropicUsageURL = "https://api.anthropic.com/api/oauth/usage"
+
+var (
+	usageMu    sync.Mutex
+	usageStore = map[string]usageCacheEntry{}
+)
+
+type usageCacheEntry struct {
+	body    []byte
+	expires time.Time
+}
+
+// aiProfileUsage returns the plan usage windows (5h, 7d...) of the account behind
+// the profile, as Anthropic's /api/oauth/usage reports them. Cached for a minute
+// so many open tabs do not hammer Anthropic.
+func (h *Handler) aiProfileUsage(w http.ResponseWriter, r *http.Request) {
+	p, err := dbpkg.GetAIProfile(h.db, r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ai profile not found", http.StatusNotFound)
+		return
+	}
+	usageMu.Lock()
+	if e, ok := usageStore[p.ID]; ok && time.Now().Before(e.expires) {
+		usageMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(e.body)
+		return
+	}
+	usageMu.Unlock()
+	_, token, _, expiresAt, err := dbpkg.ReadCredentials(p.ClaudeConfigDir)
+	if err != nil || token == "" {
+		http.Error(w, "no credentials in this dir", http.StatusUnprocessableEntity)
+		return
+	}
+	if expiresAt > 0 && expiresAt < time.Now().UnixMilli() {
+		http.Error(w, "the access token expired: use claude with this dir once to renew it", http.StatusUnprocessableEntity)
+		return
+	}
+	req, _ := http.NewRequest(http.MethodGet, anthropicUsageURL, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	req.Header.Set("User-Agent", "claude-code/2.x")
+	client := http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "could not reach Anthropic: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("Anthropic answered %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+	usageMu.Lock()
+	usageStore[p.ID] = usageCacheEntry{body: body, expires: time.Now().Add(time.Minute)}
+	usageMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
 }
 
 // ---- hub side: the same actions on any runner ----

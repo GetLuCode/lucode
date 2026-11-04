@@ -231,6 +231,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/ai-profiles", h.createAIProfile)
 	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)
 	mux.HandleFunc("DELETE /api/ai-profiles/{id}", h.deleteAIProfile)
+	mux.HandleFunc("GET /api/ai-profiles/{id}/usage", h.aiProfileUsage)
 	mux.HandleFunc("GET /api/runners", h.listRunners)
 	mux.HandleFunc("GET /api/sessions/{id}/command", h.getSessionCommand)
 	// the hub is not an executor: what a runner launched and which build it is come from the runner
@@ -245,6 +246,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runners/{rid}/ai-profiles", h.runnerAI(h.createAIProfile, root))
 	mux.HandleFunc("POST /api/runners/{rid}/ai-profiles/{id}/refresh", h.runnerAI(h.refreshAIProfile, byID("/refresh")))
 	mux.HandleFunc("DELETE /api/runners/{rid}/ai-profiles/{id}", h.runnerAI(h.deleteAIProfile, byID("")))
+	mux.HandleFunc("GET /api/runners/{rid}/ai-profiles/{id}/usage", h.runnerAI(h.aiProfileUsage, byID("/usage")))
 	mux.HandleFunc("PATCH /api/projects/{id}/aiapi", h.setProjectAIAPI)
 
 	// Process task manager (proxied to aiapi)

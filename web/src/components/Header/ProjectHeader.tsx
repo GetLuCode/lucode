@@ -6,6 +6,7 @@ import { RunnersButton } from '../Sidebar/RunnersList'
 import { ProjectEnvironmentModal } from '../Sidebar/ProjectEnvironmentModal'
 import { ProjectEnvInfo } from './ProjectEnvInfo'
 import { AlertsBell } from './AlertsBell'
+import { UsageMeters } from './UsageMeters'
 
 // Top bar of a project: its name and menu, the Kanban | Running | Agent tabs, and the
 // Runners / Agents actions at the right.
@@ -127,6 +128,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
       </nav>
 
       <div className="project-header__actions">
+        <UsageMeters />
         <button className="header-icon-btn" onClick={onOpenSearch} title="Search (Ctrl+K)" aria-label="Search">
           <IconSearch size={16} />
         </button>
