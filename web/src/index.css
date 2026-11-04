@@ -7044,5 +7044,11 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 .thinking__time { margin-left: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 
 /* mermaid diagrams in the chat */
-.mermaid-diagram { margin: 12px 0; padding: 12px; overflow-x: auto; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
-.mermaid-diagram svg { display: block; min-width: 560px; max-width: 100%; height: auto; margin: 0 auto; }
+.mermaid-diagram { position: relative; margin: 12px 0; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
+.mermaid-diagram__scroll { overflow: auto; max-height: 80vh; padding: 12px; cursor: grab; }
+.mermaid-diagram__scroll:active { cursor: grabbing; }
+.mermaid-diagram__svg svg { display: block; width: 100%; max-width: none !important; height: auto; }
+.mermaid-diagram__tools { position: absolute; top: 6px; right: 6px; z-index: 1; display: flex; gap: 2px; padding: 2px; background: rgba(255, 255, 255, 0.92); border: 1px solid #d0d7de; border-radius: 6px; }
+.mermaid-diagram__tools button { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; background: none; border: none; border-radius: 4px; color: #424a53; cursor: pointer; }
+.mermaid-diagram__tools button:hover:not(:disabled) { background: #eaeef2; }
+.mermaid-diagram__tools button:disabled { opacity: 0.35; cursor: default; }

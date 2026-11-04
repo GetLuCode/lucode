@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { marked, type Token, type TokensList } from 'marked'
-import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces } from '@tabler/icons-react'
+import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces, IconZoomIn, IconZoomOut, IconZoomReset } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
@@ -271,9 +271,69 @@ function MermaidDiagram({ source }: { source: string }) {
     renderMermaid(source).then(r => { if (!cancelled) setSvg(r) })
     return () => { cancelled = true }
   }, [source])
-  if (svg) return <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} />
+  if (svg) return <DiagramView svg={svg} />
   const { html } = highlightCode(source, '')
   return <pre><code className="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>
+}
+
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 6
+
+// A drawn diagram with zoom: the buttons, Ctrl + wheel, and dragging to move around when it
+// is bigger than its box. Zoom 1 is the diagram fitted to the width of the chat.
+function DiagramView({ svg }: { svg: string }) {
+  const [zoom, setZoom] = useState(1)
+  const box = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
+  const clamp = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100))
+  const step = (f: number) => setZoom(z => clamp(z * f))
+
+  // the wheel must not scroll the page while zooming, which React's passive listeners cannot stop
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      setZoom(z => clamp(z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = box.current
+    if (!el || e.button !== 0 || (el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)) return
+    drag.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop }
+    el.setPointerCapture(e.pointerId)
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current, el = box.current
+    if (!d || !el) return
+    el.scrollLeft = d.left - (e.clientX - d.x)
+    el.scrollTop = d.top - (e.clientY - d.y)
+  }
+  const endDrag = () => { drag.current = null }
+
+  return (
+    <div className="mermaid-diagram">
+      <div className="mermaid-diagram__tools">
+        <button type="button" onClick={() => step(1 / 1.25)} disabled={zoom <= ZOOM_MIN} title="Zoom out" aria-label="Zoom out"><IconZoomOut size={15} /></button>
+        <button type="button" onClick={() => setZoom(1)} disabled={zoom === 1} title="Fit to width" aria-label="Reset zoom"><IconZoomReset size={15} /></button>
+        <button type="button" onClick={() => step(1.25)} disabled={zoom >= ZOOM_MAX} title="Zoom in (Ctrl + wheel)" aria-label="Zoom in"><IconZoomIn size={15} /></button>
+      </div>
+      <div
+        ref={box}
+        className="mermaid-diagram__scroll"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        <div className="mermaid-diagram__svg" style={{ width: `${zoom * 100}%`, minWidth: `${zoom * 560}px` }} dangerouslySetInnerHTML={{ __html: svg }} />
+      </div>
+    </div>
+  )
 }
 
 function TokenBadge({ usage }: { usage: NonNullable<Message['usage']> }) {
