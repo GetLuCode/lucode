@@ -303,8 +303,14 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 	if has("task_comment") {
 		report = append(report, "- task_comment(text): post a short progress note when you reach something worth telling the user. It does not change the status.")
 	}
+	// agents that work in a worktree never land in Done with unmerged work: it goes to Review
+	reviewNote, reviewRule := "", ""
+	if worktreePrompt(agent) != "" {
+		reviewNote = " If you worked in a git worktree and your branch is not merged yet, lucode moves the task to Review instead of Done (you are not allowed to merge: the user does it from Review) and the tasks that depend on it stay blocked until it is merged."
+		reviewRule = "\n- Never move your task to Done yourself and never merge your branch into the main branch: when your work is committed on a branch that is not merged, task_done sends it to Review and the user decides. Do not try to reach Done by another route (task_update on your own task, or merging)."
+	}
 	if has("task_done") {
-		report = append(report, "- task_done(summary): call it ONLY when the work is finished and you verified it. The summary says what you did and where the result is. It moves the task to Done and unblocks the tasks that depend on it.")
+		report = append(report, "- task_done(summary): call it ONLY when the work is finished and you verified it. The summary says what you did and where the result is. It moves the task to Done and unblocks the tasks that depend on it."+reviewNote)
 	}
 	if has("task_blocked") {
 		report = append(report, "- task_blocked(reason): call it when you cannot continue without the user (missing information, a decision, access, or a tool they denied). It moves the task to Blocked.")
@@ -319,6 +325,7 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 	sb.WriteString("\n\nRules:")
 	if has("task_done") {
 		sb.WriteString("\n- Never say the task is finished without calling task_done; do not call it for unfinished work.")
+		sb.WriteString(reviewRule)
 	}
 	if has("task_done") || has("task_blocked") {
 		sb.WriteString("\n- After task_done or task_blocked, stop: end your turn with one short closing message.")

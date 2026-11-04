@@ -250,7 +250,7 @@ var tools = []tool{
 	},
 	{
 		Name:        ToolDone,
-		Description: "Mark your task as completed. Call it once the work is finished and verified, with a short summary of what you did. It moves the task to Done and unblocks tasks that depend on it.",
+		Description: "Mark your task as completed. Call it once the work is finished and verified, with a short summary of what you did. It moves the task to Done and unblocks tasks that depend on it, unless you left unmerged work in a git worktree: then it moves the task to Review, for the user to merge.",
 		InputSchema: textArg("summary", "What you did and where the result is."),
 	},
 	{
