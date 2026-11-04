@@ -2,10 +2,32 @@ import { useEffect, useRef, useState } from 'react'
 import { IconX } from '@tabler/icons-react'
 import * as api from '../../api'
 import { SttTester } from './SttTester'
-import { canChooseOutput, getDeviceId, getHotword, listAudioDevices, setDeviceId, setHotword, type AudioDevices } from '../../lib/audioDevices'
+import { canChooseOutput, DEFAULT_TUNING, getDeviceId, getHotword, getSttTuning, listAudioDevices, setDeviceId, setHotword, setSttTuning, type AudioDevices, type SttTuning } from '../../lib/audioDevices'
 
 // Voice output settings. The Fish Audio key is write-only: the server only says
 // whether one is saved.
+// One phrase-end rule: an optional on/off switch, a slider and its value.
+function TuneRule({ label, hint, unit, min, max, step, value, onChange, on, onToggle }: {
+  label: string; hint: string; unit: string; min: number; max: number; step: number
+  value: number; onChange: (v: number) => void
+  on?: boolean; onToggle?: (on: boolean) => void
+}) {
+  const off = onToggle !== undefined && !on
+  return (
+    <div className={`orch-tune${off ? ' orch-tune--off' : ''}`}>
+      <div className="orch-tune__head">
+        {onToggle
+          ? <label className="orch-dialog__check"><input type="checkbox" checked={!!on} onChange={e => onToggle(e.target.checked)} /><span>{label}</span></label>
+          : <span className="orch-tune__label">{label}</span>}
+        <span className="orch-tune__value">{off ? 'off' : `${step < 1 ? value.toFixed(1) : value}${unit}`}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={Math.min(max, value)} disabled={off}
+        onChange={e => onChange(Number(e.target.value))} aria-label={label} />
+      <span className="orch-tune__hint">{hint}</span>
+    </div>
+  )
+}
+
 export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (configured: boolean) => void }) {
   const [configured, setConfigured] = useState(false)
   const [key, setKey] = useState('')
@@ -20,6 +42,8 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
   const [spkId, setSpkId] = useState(() => getDeviceId('output'))
   const [hw, setHw] = useState(getHotword)
   const [testing, setTesting] = useState(false)
+  const [tune, setTune] = useState(getSttTuning)
+  const changeTune = (patch: Partial<SttTuning>) => { const n = { ...tune, ...patch }; setTune(n); setSttTuning(n) }
   const changeHw = (patch: Partial<typeof hw>) => { const n = { ...hw, ...patch }; setHw(n); setHotword(n) }
 
   // Devices apply on their own (they are per browser); they follow plugging and unplugging.
@@ -97,6 +121,29 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
         <div className="orch-dialog__rule" />
         <button className="orch-dialog__btn" onClick={() => setTesting(true)}>Test speech recognition…</button>
         <p className="orch-dialog__note">Speak and see what the voice worker hears. Nothing is sent to the model.</p>
+        <div className="orch-dialog__rule" />
+        <p className="orch-dialog__note">
+          End of a phrase. The first rule that holds closes it; a rule that is off never does.
+          Takes effect the next time you turn the microphone on.
+        </p>
+        <TuneRule
+          label="Silence" unit="s" min={0.2} max={5} step={0.1}
+          hint="Seconds of audio silence."
+          value={tune.silence} onChange={v => changeTune({ silence: v })}
+        />
+        <TuneRule
+          label="Text unchanged" unit="s" min={0.3} max={5} step={0.1}
+          hint="Seconds the partial text stays the same."
+          on={tune.stableSecondsOn} onToggle={on => changeTune({ stableSecondsOn: on })}
+          value={tune.stableSeconds} onChange={v => changeTune({ stableSeconds: v })}
+        />
+        <TuneRule
+          label="Repeated text" unit="×" min={1} max={100} step={1}
+          hint="Identical partials in a row (about 0.2 s each; 10 ≈ 2 s)."
+          on={tune.stableRepeatsOn} onToggle={on => changeTune({ stableRepeatsOn: on })}
+          value={tune.stableRepeats} onChange={v => changeTune({ stableRepeats: v })}
+        />
+        <button className="orch-dialog__link" onClick={() => { setTune(DEFAULT_TUNING); setSttTuning(DEFAULT_TUNING) }}>Reset to defaults</button>
         <div className="orch-dialog__rule" />
         <label className="orch-dialog__check">
           <input type="checkbox" checked={hw.enabled} onChange={e => changeHw({ enabled: e.target.checked })} />

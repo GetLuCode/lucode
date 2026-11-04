@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getSttWSUrl } from './useWSConnection'
-import { getDeviceId, getHotword, setDeviceId } from '../lib/audioDevices'
+import { getDeviceId, getHotword, getSttTuning, setDeviceId, tuningMessage } from '../lib/audioDevices'
 
 export type MicState = 'off' | 'loading' | 'listening' | 'armed' | 'awake'
 // armed = waiting for the hotword; awake = hotword heard, the next phrase is the command
@@ -136,7 +136,7 @@ export function useWorkerMic(handlers: Handlers) {
       const hw = getHotword()
       wakeMode.current = hw.enabled
       ws.onopen = () => ws.send(JSON.stringify({
-        type: 'start', sample_rate: ctx.sampleRate,
+        type: 'start', sample_rate: ctx.sampleRate, ...tuningMessage(getSttTuning()),
         ...(hw.enabled ? { wake: true, wake_backend: hw.backend, wake_phrase: hw.backend === 'vosk' ? hw.phrase : undefined } : {}),
       }))
       ws.onmessage = e => {

@@ -160,3 +160,15 @@
 .stt-test__line--live { color: var(--text-muted); font-style: italic; }
 .stt-test__time { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 .stt-test__tag { font-size: 10px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--text-muted); flex-shrink: 0; }
+
+/* phrase-end rules in the voice settings */
+.orch-tune { display: flex; flex-direction: column; gap: 4px; }
+.orch-tune__head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.orch-tune__label { font-size: 13px; }
+.orch-tune__value { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.orch-tune--off .orch-tune__value { color: var(--text-muted); }
+.orch-tune input[type="range"] { width: 100%; accent-color: var(--accent); }
+.orch-tune input[type="range"]:disabled { opacity: 0.4; }
+.orch-tune__hint { font-size: 11px; color: var(--text-muted); }
+.orch-dialog__link { align-self: flex-start; background: none; border: none; padding: 0; font-size: 12px; color: var(--text-muted); cursor: pointer; text-decoration: underline; }
+.orch-dialog__link:hover { color: var(--accent); }

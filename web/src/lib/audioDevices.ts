@@ -27,6 +27,51 @@ export function setHotword(h: Hotword) {
   try { localStorage.setItem('orch_hotword', JSON.stringify(h)) } catch { /* private mode */ }
 }
 
+// How the voice worker decides a phrase is over. Three rules, the first one that holds closes it:
+// audio silence, the partial text staying unchanged for some seconds, and the partial repeating
+// identically N times in a row (the worker emits one about every 0.2 s). Read when the mic starts.
+export interface SttTuning {
+  silence: number                 // seconds of audio silence (0.2-5)
+  stableSecondsOn: boolean
+  stableSeconds: number           // seconds without a change in the partial text (0.3-5)
+  stableRepeatsOn: boolean
+  stableRepeats: number           // identical partials in a row (1-1000)
+}
+
+export const DEFAULT_TUNING: SttTuning = { silence: 0.6, stableSecondsOn: false, stableSeconds: 2, stableRepeatsOn: true, stableRepeats: 10 }
+
+const num = (v: unknown, def: number, min: number, max: number) =>
+  typeof v === 'number' && isFinite(v) ? Math.min(max, Math.max(min, v)) : def
+
+export function getSttTuning(): SttTuning {
+  try {
+    const v = JSON.parse(localStorage.getItem('orch_stt_tuning') ?? '{}') as Partial<SttTuning>
+    const d = DEFAULT_TUNING
+    return {
+      silence: num(v.silence, d.silence, 0.2, 5),
+      stableSecondsOn: typeof v.stableSecondsOn === 'boolean' ? v.stableSecondsOn : d.stableSecondsOn,
+      stableSeconds: num(v.stableSeconds, d.stableSeconds, 0.3, 5),
+      stableRepeatsOn: typeof v.stableRepeatsOn === 'boolean' ? v.stableRepeatsOn : d.stableRepeatsOn,
+      stableRepeats: num(v.stableRepeats, d.stableRepeats, 1, 1000),
+    }
+  } catch {
+    return DEFAULT_TUNING
+  }
+}
+
+export function setSttTuning(t: SttTuning) {
+  try { localStorage.setItem('orch_stt_tuning', JSON.stringify(t)) } catch { /* private mode */ }
+}
+
+// The fields of the /ws/stt start message for these settings (an off rule is sent as 0).
+export function tuningMessage(t: SttTuning) {
+  return {
+    silence_seconds: t.silence,
+    stable_seconds: t.stableSecondsOn ? t.stableSeconds : 0,
+    stable_repeats: t.stableRepeatsOn ? Math.round(t.stableRepeats) : 0,
+  }
+}
+
 export interface AudioDevices {
   inputs: MediaDeviceInfo[]
   outputs: MediaDeviceInfo[]
