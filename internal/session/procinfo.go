@@ -1,5 +1,7 @@
 package session
 
+import dbpkg "claude-orchestrator/internal/db"
+
 // ProcessInfo says whether a session has a persistent claude process alive between
 // turns. A one-shot turn has its process only while it runs, which the session status
 // already tells, so it is not reported here.
@@ -15,8 +17,12 @@ type ProcessInfo struct {
 // WorkspaceOf is the last claude_workspace event of a session (nil if none yet).
 func (m *Manager) WorkspaceOf(sessID string) map[string]any {
 	m.liveMu.Lock()
-	defer m.liveMu.Unlock()
-	return m.workspaces[sessID]
+	ws := m.workspaces[sessID]
+	m.liveMu.Unlock()
+	if ws == nil && m.db != nil { // after a restart of the hub: the last one saved
+		ws = dbpkg.GetSessionWorkspace(m.db, sessID)
+	}
+	return ws
 }
 
 // ProcessInfoOf reports the persistent claude process of a session. A process on a

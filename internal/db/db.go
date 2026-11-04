@@ -418,6 +418,16 @@ CREATE TABLE IF NOT EXISTS card_images (
 		return fmt.Errorf("create card_images: %w", err)
 	}
 
+	// session_workspaces — where claude last worked in a session (cwd, branch, worktree...), as JSON
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS session_workspaces (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    data       TEXT NOT NULL
+);
+`); err != nil {
+		return fmt.Errorf("create session_workspaces: %w", err)
+	}
+
 	// card_reviews — the git branch/worktree of a task sitting in the Review list
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS card_reviews (

@@ -281,6 +281,9 @@ func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]
 			}
 			m.workspaces[sessID] = ev
 			m.liveMu.Unlock()
+			if err := dbpkg.SaveSessionWorkspace(m.db, sessID, ev); err != nil {
+				log.Printf("[session] save workspace of %s: %v", sessID, err)
+			}
 		case "session_status":
 			if status, _ := ev["status"].(string); status != "" {
 				dbpkg.UpdateSessionStatus(m.db, sessID, status)

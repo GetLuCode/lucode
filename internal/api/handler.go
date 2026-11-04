@@ -516,6 +516,15 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	for i := range sessions {
 		if sessions[i].CardID != "" {
 			sessions[i].Worktree, sessions[i].Branch = dbpkg.SessionWorktree(h.db, sessions[i].ID)
+			if sessions[i].Branch == "" {
+				// a worktree made by claude --worktree leaves no trace in the transcript:
+				// use where the process reported it works, or the branch waiting in Review
+				if rv, ok := h.resolveReview(sessions[i].ID, sessions[i].CardID); ok {
+					sessions[i].Worktree, sessions[i].Branch = rv.WorktreePath, rv.Branch
+				} else if rv, err := dbpkg.GetCardReview(h.db, sessions[i].CardID); err == nil {
+					sessions[i].Worktree, sessions[i].Branch = rv.WorktreePath, rv.Branch
+				}
+			}
 		}
 	}
 	jsonResp(w, http.StatusOK, sessions)

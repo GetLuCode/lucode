@@ -1601,6 +1601,31 @@ func EnsureReviewList(db *sql.DB, projectID string) error {
 	return InsertKanbanList(db, KanbanList{ID: uuid.New().String(), ProjectID: projectID, Name: "Review", Position: pos, Kind: KanbanReview})
 }
 
+// SaveSessionWorkspace keeps the last claude_workspace event of a session so it
+// survives a restart of the hub.
+func SaveSessionWorkspace(db *sql.DB, sessionID string, ws map[string]any) error {
+	b, err := json.Marshal(ws)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO session_workspaces (session_id, data) VALUES (?,?)
+		ON CONFLICT(session_id) DO UPDATE SET data=excluded.data`, sessionID, string(b))
+	return err
+}
+
+// GetSessionWorkspace returns the saved workspace of a session (nil if none).
+func GetSessionWorkspace(db *sql.DB, sessionID string) map[string]any {
+	var data string
+	if db.QueryRow(`SELECT data FROM session_workspaces WHERE session_id=?`, sessionID).Scan(&data) != nil {
+		return nil
+	}
+	var ws map[string]any
+	if json.Unmarshal([]byte(data), &ws) != nil {
+		return nil
+	}
+	return ws
+}
+
 // CardReview is the git work a task left waiting for review: the branch of the
 // agent's worktree, where that worktree is and the main checkout it belongs to.
 type CardReview struct {
