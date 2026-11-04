@@ -44,7 +44,12 @@ export function RunningView() {
   const statusOf =(s: Session) => sessionStatus[s.id] ?? s.status
   const rank = (s: Session) => (statusOf(s) === 'idle' ? 1 : 0)
   // Only task sessions (tied to a kanban card), live ones first; the store keeps the rest by activity.
-  const list = sessions.filter(s => s.card_id).sort((a, b) => rank(a) - rank(b))
+  const taskSessions = sessions.filter(s => s.card_id)
+  // A session is finished once its task has a finished_at.
+  const isFinished = (s: Session) => !!(s.card_id && cards[s.card_id]?.finished_at)
+  const [tab, setTab] = useState<'current' | 'finished'>('current')
+  const nFinished = taskSessions.filter(isFinished).length
+  const list = taskSessions.filter(s => isFinished(s) === (tab === 'finished')).sort((a, b) => rank(a) - rank(b))
 
   const dot = (s: Session) => {
     const st = statusOf(s)
@@ -78,8 +83,16 @@ export function RunningView() {
 
   return (
     <div className="running-view">
+      <div className="agent-form__tabs">
+        <button className={`agent-form__tab${tab === 'current' ? ' agent-form__tab--active' : ''}`} onClick={() => setTab('current')}>
+          Current <span className="agent-form__tab-badge">{taskSessions.length - nFinished}</span>
+        </button>
+        <button className={`agent-form__tab${tab === 'finished' ? ' agent-form__tab--active' : ''}`} onClick={() => setTab('finished')}>
+          Finished <span className="agent-form__tab-badge">{nFinished}</span>
+        </button>
+      </div>
       {list.length === 0 ? (
-        <div className="running-view__empty">No sessions yet. Move a task to In Progress to start one.</div>
+        <div className="running-view__empty">{tab === 'finished' ? 'No finished tasks yet.' : 'No sessions yet. Move a task to In Progress to start one.'}</div>
       ) : (
         <ul className="running-list">
           {list.map(s => (
