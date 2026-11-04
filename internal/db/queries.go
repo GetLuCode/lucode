@@ -1545,6 +1545,7 @@ const (
 	KanbanInProgress = "inprogress"
 	KanbanDone       = "done"
 	KanbanBlocked    = "blocked"
+	KanbanReview     = "review" // work finished in a git worktree, waiting for the user to merge it
 )
 
 func InsertKanbanList(db *sql.DB, l KanbanList) error {
@@ -1566,6 +1567,7 @@ func EnsureDefaultKanbanLists(db *sql.DB, projectID string) error {
 		{"Backlog", KanbanBacklog},
 		{"Todo", KanbanTodo},
 		{"In Progress", KanbanInProgress},
+		{"Review", KanbanReview},
 		{"Done", KanbanDone},
 		{"Blocked", KanbanBlocked},
 	}
@@ -1575,6 +1577,56 @@ func EnsureDefaultKanbanLists(db *sql.DB, projectID string) error {
 		}
 	}
 	return nil
+}
+
+// EnsureReviewList adds the Review list to a project that predates it, right before
+// Done (or at the end when it has no Done list). It does nothing when one exists, or
+// when the project has no lists yet (the defaults will include it).
+func EnsureReviewList(db *sql.DB, projectID string) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM kanban_lists WHERE project_id=?`, projectID).Scan(&n); err != nil || n == 0 {
+		return err
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM kanban_lists WHERE project_id=? AND kind=?`, projectID, KanbanReview).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	pos := -1
+	if err := db.QueryRow(`SELECT position FROM kanban_lists WHERE project_id=? AND kind=? ORDER BY position ASC LIMIT 1`, projectID, KanbanDone).Scan(&pos); err != nil {
+		if err := db.QueryRow(`SELECT COALESCE(MAX(position)+1,0) FROM kanban_lists WHERE project_id=?`, projectID).Scan(&pos); err != nil {
+			return err
+		}
+	} else if _, err := db.Exec(`UPDATE kanban_lists SET position=position+1 WHERE project_id=? AND position>=?`, projectID, pos); err != nil {
+		return err
+	}
+	return InsertKanbanList(db, KanbanList{ID: uuid.New().String(), ProjectID: projectID, Name: "Review", Position: pos, Kind: KanbanReview})
+}
+
+// CardReview is the git work a task left waiting for review: the branch of the
+// agent's worktree, where that worktree is and the main checkout it belongs to.
+type CardReview struct {
+	CardID       string `json:"card_id"`
+	Branch       string `json:"branch"`
+	WorktreePath string `json:"worktree_path"`
+	RepoPath     string `json:"repo_path"`
+}
+
+func SaveCardReview(db *sql.DB, r CardReview) error {
+	_, err := db.Exec(`INSERT INTO card_reviews (card_id, branch, worktree_path, repo_path) VALUES (?,?,?,?)
+		ON CONFLICT(card_id) DO UPDATE SET branch=excluded.branch, worktree_path=excluded.worktree_path, repo_path=excluded.repo_path`,
+		r.CardID, r.Branch, r.WorktreePath, r.RepoPath)
+	return err
+}
+
+func GetCardReview(db *sql.DB, cardID string) (CardReview, error) {
+	var r CardReview
+	err := db.QueryRow(`SELECT card_id, branch, worktree_path, repo_path FROM card_reviews WHERE card_id=?`, cardID).
+		Scan(&r.CardID, &r.Branch, &r.WorktreePath, &r.RepoPath)
+	return r, err
+}
+
+func DeleteCardReview(db *sql.DB, cardID string) error {
+	_, err := db.Exec(`DELETE FROM card_reviews WHERE card_id=?`, cardID)
+	return err
 }
 
 // FindKanbanListByKind returns the project's list with the given workflow role.
@@ -1872,7 +1924,7 @@ func backfillKanbanListKinds(db *sql.DB) {
 	for _, r := range todo {
 		key := strings.NewReplacer(" ", "", "-", "", "_", "").Replace(strings.ToLower(r.name))
 		switch key {
-		case "backlog", "todo", "inprogress", "done", "blocked":
+		case "backlog", "todo", "inprogress", "review", "done", "blocked":
 			db.Exec(`UPDATE kanban_lists SET kind=? WHERE id=?`, key, r.id)
 		}
 	}

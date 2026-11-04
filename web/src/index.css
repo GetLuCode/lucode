@@ -7068,3 +7068,14 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 .mermaid-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; padding: 16px; background: rgba(0, 0, 0, 0.75); }
 .mermaid-diagram--full { flex: 1; margin: 0; min-width: 0; display: flex; flex-direction: column; }
 .mermaid-diagram--full .mermaid-diagram__scroll { flex: 1; max-height: none; min-height: 0; }
+
+/* ── Review modal ───────────────────────────────────────────────────────── */
+.review { padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.review__meta code, .review__path { font-family: var(--font-mono, monospace); font-size: 12px; }
+.review__path { color: var(--text-muted); word-break: break-all; }
+.review__label { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-top: 4px; }
+.review__msg { margin: 0; padding: 6px 10px; border-radius: 6px; }
+.review__msg--ok { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
+.review__msg--bad { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
+.review__files { margin: 0; padding: 0; list-style: none; max-height: 220px; overflow-y: auto; font-family: var(--font-mono, monospace); font-size: 12px; }
+.review__files li { padding: 1px 0; }

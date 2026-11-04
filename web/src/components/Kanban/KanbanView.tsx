@@ -13,6 +13,7 @@ import { KanbanFilters, NO_FILTERS, matchesFilters, type KanbanFilterState } fro
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { AgentAvatar } from '../Agents/AgentAvatar'
 import { OrchestratorOpenButton } from '../Orchestrator/OrchestratorOpenButton'
+import { ReviewModal } from './ReviewModal'
 
 // ---- pasted images -----------------------------------------------------------
 
@@ -731,6 +732,7 @@ export function KanbanView() {
   const [showArchived, setShowArchived] = useState(false)
   const [filters, setFilters] = useState<KanbanFilterState>(NO_FILTERS)
   const [selectedCard, setSelectedCard] = useState<KanbanCard | null>(null)
+  const [reviewCard, setReviewCard] = useState<KanbanCard | null>(null)
   const [addingList, setAddingList] = useState(false)
   const [newListName, setNewListName] = useState('')
   const [loading, setLoading] = useState(false)
@@ -937,7 +939,7 @@ export function KanbanView() {
             list={list}
             cards={visibleCards.filter(c => c.list_id === list.id).sort((a, b) => a.position - b.position)}
             agents={agents}
-            onCardClick={setSelectedCard}
+            onCardClick={c => (list.kind === 'review' ? setReviewCard(c) : setSelectedCard(c))}
             onAddCard={handleAddCard}
             onRenameList={handleRenameList}
             onDeleteList={handleDeleteList}
@@ -978,6 +980,16 @@ export function KanbanView() {
       <div className="kanban-view__footer">
         <OrchestratorOpenButton />
       </div>
+
+      {/* review: merge the branch an agent left, or send it back */}
+      {reviewCard && (
+        <ReviewModal
+          card={reviewCard}
+          onClose={() => setReviewCard(null)}
+          onDetails={() => { setSelectedCard(reviewCard); setReviewCard(null) }}
+          onChanged={async () => { setReviewCard(null); await reloadBoard() }}
+        />
+      )}
 
       {/* card modal */}
       {selectedCard && (

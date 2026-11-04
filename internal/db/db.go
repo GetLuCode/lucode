@@ -418,9 +418,21 @@ CREATE TABLE IF NOT EXISTS card_images (
 		return fmt.Errorf("create card_images: %w", err)
 	}
 
+	// card_reviews — the git branch/worktree of a task sitting in the Review list
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS card_reviews (
+    card_id       TEXT PRIMARY KEY REFERENCES kanban_cards(id) ON DELETE CASCADE,
+    branch        TEXT NOT NULL,
+    worktree_path TEXT NOT NULL DEFAULT '',
+    repo_path     TEXT NOT NULL
+);
+`); err != nil {
+		return fmt.Errorf("create card_reviews: %w", err)
+	}
+
 	// Column additions for tables created above (idempotent).
 	// kanban_lists.kind — the workflow role of a list ("backlog", "todo", "inprogress",
-	// "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
+	// "review", "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
 	db.Exec(`ALTER TABLE kanban_lists ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
 	// kanban_cards.started_at / finished_at — real timestamps, set when the card enters
 	// an "inprogress" / "done" list (start_date / end_date are the planned dates).

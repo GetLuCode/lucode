@@ -221,7 +221,7 @@ export interface KanbanList {
   project_id: string
   name: string
   position: number
-  kind?: string  // workflow role: backlog, todo, inprogress, done, blocked (custom lists have none)
+  kind?: string  // workflow role: backlog, todo, inprogress, review, done, blocked (custom lists have none)
   created_at: string
 }
 

@@ -179,6 +179,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/kanban/cards/{id}", h.updateKanbanCard)
 	mux.HandleFunc("DELETE /api/kanban/cards/{id}", h.deleteKanbanCard)
 	mux.HandleFunc("POST /api/kanban/cards/{id}/reset", h.resetKanbanCard)
+	mux.HandleFunc("GET /api/kanban/cards/{id}/review", h.getCardReview)
+	mux.HandleFunc("POST /api/kanban/cards/{id}/review/merge", h.mergeCardReview)
+	mux.HandleFunc("POST /api/kanban/cards/{id}/review/resolve", h.resolveCardReview)
 	mux.HandleFunc("GET /api/kanban/cards/{id}/images", h.listCardImages)
 	mux.HandleFunc("POST /api/kanban/cards/{id}/images", h.addCardImage)
 	mux.HandleFunc("DELETE /api/kanban/cards/{id}/images/{name}", h.deleteCardImage)
@@ -2573,6 +2576,9 @@ func (h *Handler) listKanbanLists(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	if err := dbpkg.EnsureDefaultKanbanLists(h.db, pid); err != nil {
 		log.Printf("kanban: default lists for %s: %v", pid, err)
+	}
+	if err := dbpkg.EnsureReviewList(h.db, pid); err != nil {
+		log.Printf("kanban: review list for %s: %v", pid, err)
 	}
 	lists, err := dbpkg.ListKanbanLists(h.db, pid)
 	if err != nil {
