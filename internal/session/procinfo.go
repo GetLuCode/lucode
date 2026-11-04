@@ -7,22 +7,33 @@ type ProcessInfo struct {
 	Alive  bool   `json:"alive"`
 	PID    int    `json:"pid,omitempty"`    // on the machine that runs it (the runner's, when Runner is set)
 	Runner string `json:"runner,omitempty"` // the runner holding it, when it is not this instance
+	// Workspace is where claude works (cwd, path, branch, worktree, repo), as the
+	// machine running it reported at its last start; nil until the first turn.
+	Workspace map[string]any `json:"workspace,omitempty"`
+}
+
+// WorkspaceOf is the last claude_workspace event of a session (nil if none yet).
+func (m *Manager) WorkspaceOf(sessID string) map[string]any {
+	m.liveMu.Lock()
+	defer m.liveMu.Unlock()
+	return m.workspaces[sessID]
 }
 
 // ProcessInfoOf reports the persistent claude process of a session. A process on a
 // remote runner is assumed alive from its first turn until it is closed: the runner does
 // not report its idle exit back.
 func (m *Manager) ProcessInfoOf(sessID string) ProcessInfo {
+	ws := m.WorkspaceOf(sessID)
 	if l := m.getLive(sessID); l != nil {
-		return ProcessInfo{Alive: true, PID: l.PID()}
+		return ProcessInfo{Alive: true, PID: l.PID(), Workspace: ws}
 	}
 	m.liveMu.Lock()
 	runner, pid := m.remoteRunnerOf[sessID], m.remotePID[sessID]
 	m.liveMu.Unlock()
 	if runner != "" {
-		return ProcessInfo{Alive: true, PID: pid, Runner: runner}
+		return ProcessInfo{Alive: true, PID: pid, Runner: runner, Workspace: ws}
 	}
-	return ProcessInfo{}
+	return ProcessInfo{Workspace: ws}
 }
 
 // emitProcess tells the browsers the persistent process of a session started or ended.

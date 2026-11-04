@@ -274,6 +274,13 @@ func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]
 				"session_id": sessID,
 				"message":    map[string]any{"role": role, "content": content},
 			}
+		case "claude_workspace":
+			m.liveMu.Lock()
+			if m.workspaces == nil {
+				m.workspaces = map[string]map[string]any{}
+			}
+			m.workspaces[sessID] = ev
+			m.liveMu.Unlock()
 		case "session_status":
 			if status, _ := ev["status"].(string); status != "" {
 				dbpkg.UpdateSessionStatus(m.db, sessID, status)

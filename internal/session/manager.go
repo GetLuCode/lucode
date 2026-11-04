@@ -35,6 +35,9 @@ type Manager struct {
 	// of the last notice about it, to drop stale ones. Guarded by liveMu like the rest.
 	remotePID map[string]int
 	remoteAt  map[string]int64
+	// workspaces: where claude works in each session (its claude_workspace event), as
+	// the machine that runs it reported. Guarded by liveMu.
+	workspaces map[string]map[string]any
 
 	// OnTurnEnd runs after a turn finishes and the session is free again (used to
 	// deliver messages other agents queued for it).
@@ -81,6 +84,7 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 		remoteRunnerOf:     make(map[string]string),
 		remotePID:          make(map[string]int),
 		remoteAt:           make(map[string]int64),
+		workspaces:         make(map[string]map[string]any),
 		turnCounters:       make(map[string]int),
 		pendingApprovals:   make(map[string]chan hookResponse),
 		deniedThisTurn:     make(map[string]bool),

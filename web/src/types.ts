@@ -156,6 +156,7 @@ export type WSEvent =
   | { type: 'info'; session_id: string; message: string }
   | { type: 'progress'; session_id: string; text: string }
   | { type: 'claude_process'; session_id: string; alive: boolean; pid?: number; runner?: string }
+  | ({ type: 'claude_workspace'; session_id: string } & ClaudeWorkspace)
   | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
   | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
   | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
@@ -366,6 +367,16 @@ export interface ClaudeProcess {
   alive: boolean
   pid?: number     // local processes only
   runner?: string  // the runner holding it, when it is not this instance
+  workspace?: ClaudeWorkspace
+}
+
+// Where claude works, as the machine that runs it reported when the process started.
+export interface ClaudeWorkspace {
+  cwd: string
+  path?: string      // git root of the cwd (the worktree itself, when it is one)
+  branch?: string
+  worktree?: boolean // a linked git worktree, not the main checkout
+  repo?: string      // the main checkout a worktree belongs to
 }
 
 // A Google AI Mode conversation of the local model: the chat it belongs to and the url that

@@ -206,6 +206,10 @@ func (l *Live) loop(stdout io.Reader) {
 			continue
 		}
 
+		if event.Cwd != "" {
+			l.publish(WorkspaceEvent(sessID, event.Cwd))
+		}
+
 		if event.EventType == "control_response" {
 			if cu, err := ParseContextUsage(event.Event); err == nil {
 				l.publish(map[string]any{

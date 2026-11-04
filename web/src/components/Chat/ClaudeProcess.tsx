@@ -44,8 +44,15 @@ export function ClaudeProcess({ sessionId }: { sessionId: string }) {
     }
   }
 
+  // Where it works, when it is a worktree: the branch is what tells agents apart.
+  const ws = info?.workspace
+  const wsTitle = ws
+    ? [`cwd: ${ws.cwd}`, ws.path && ws.path !== ws.cwd ? `root: ${ws.path}` : '', ws.branch ? `branch: ${ws.branch}` : '',
+       ws.worktree ? `worktree of ${ws.repo ?? 'another checkout'}` : ''].filter(Boolean).join('\n')
+    : ''
+
   // No claude in this session: show nothing.
-  if (!alive && !turnRunning) return null
+  if (!alive && !turnRunning && !ws?.worktree) return null
 
   return (
     <div className="claude-proc header-menu">
@@ -53,6 +60,11 @@ export function ClaudeProcess({ sessionId }: { sessionId: string }) {
         <span className="claude-proc__dot" />
         {label}
       </span>
+      {ws?.branch && (
+        <span className="claude-proc__badge" title={wsTitle}>
+          {ws.worktree ? 'worktree ' : ''}{ws.branch}
+        </span>
+      )}
       {alive && (
         <button
           className="claude-proc__menu-btn"

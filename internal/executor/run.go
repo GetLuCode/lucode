@@ -73,6 +73,10 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 			continue
 		}
 
+		if event.Cwd != "" {
+			publish(WorkspaceEvent(req.SessionID, event.Cwd))
+		}
+
 		if event.EventType == "control_response" {
 			if cu, err := ParseContextUsage(event.Event); err == nil {
 				publish(map[string]any{
