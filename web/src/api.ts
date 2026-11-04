@@ -107,6 +107,15 @@ export interface TTSSettings { configured: boolean; model: string; voice_id: str
 export const getTTSSettings = () => req<TTSSettings>('GET', '/api/tts/settings')
 export const saveTTSSettings = (data: { api_key?: string; clear_key?: boolean; model: string; voice_id: string; speed: number }) =>
   req<TTSSettings>('PUT', '/api/tts/settings', data)
+// Speech recognition model of the shared voice worker. `selected` is the choice kept by lucode;
+// `worker` is what runs right now (null: nothing answers, it starts when somebody needs it).
+export interface SttModel { id: string; label: string; device: 'gpu' | 'cpu'; memory: string; recommended?: boolean }
+export interface SttWorkerInfo { model: string; ready: boolean; listening: boolean }
+export interface SttModels { models: SttModel[]; selected: string; worker: SttWorkerInfo | null }
+export const getSttModels = () => req<SttModels>('GET', '/api/stt/models')
+// Saves the choice and replaces a running worker that uses another model.
+export const setSttModel = (model: string) =>
+  req<{ selected: string; worker: SttWorkerInfo | null }>('POST', '/api/stt/model', { model })
 // Raw PCM16 mono audio stream of the text (X-Sample-Rate says the rate).
 export const speakRequest = (text: string, signal: AbortSignal) => {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }

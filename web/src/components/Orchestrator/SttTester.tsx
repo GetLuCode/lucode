@@ -68,7 +68,7 @@ export function SttTester({ onClose }: { onClose: () => void }) {
           <span className={`stt-test__state stt-test__state--${mic.state}`}>{LABEL[mic.state]}</span>
         </div>
         <div className="stt-test__list" ref={list} aria-live="polite">
-          {lines.length === 0 && !live && <div className="stt-test__empty">What the worker hears shows up here.</div>}
+          {lines.length === 0 && !live.trim() && <div className="stt-test__empty">What the worker hears shows up here.</div>}
           {lines.map(l => (
             <div key={l.id} className="stt-test__line">
               <span className="stt-test__time">{l.at}</span>
@@ -76,7 +76,14 @@ export function SttTester({ onClose }: { onClose: () => void }) {
               <span>{l.text}</span>
             </div>
           ))}
-          {live && <div className="stt-test__line stt-test__line--live">{live}</div>}
+          {live.trim() && (
+            // Same row layout as a finished line (time column + text), like the grey "hablando…" bubble
+            // of SttApp: when the final arrives only the colour and the label change, nothing jumps.
+            <div className="stt-test__line stt-test__line--live">
+              <span className="stt-test__time">speaking…</span>
+              <span>{live.trim()}</span>
+            </div>
+          )}
         </div>
         {mic.error && <div className="orch__error">{mic.error}</div>}
         <div className="orch-dialog__actions">
