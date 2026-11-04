@@ -597,7 +597,7 @@ function ChatViewFull() {
             className={`chat__header-trigger${headerMenuOpen ? ' chat__header-trigger--open' : ''}`}
             onClick={() => setHeaderMenuOpen(v => !v)}
           >
-            <span className="chat__session-name">{headerName}</span>
+            <span className="chat__session-name" title={headerName}>{headerName}</span>
             {session?.card_id && activeProjectId && <TaskStatus projectId={activeProjectId} cardId={session.card_id} />}
             <span className="chat__header-model-badge">
               {[...CLAUDE_MODELS, ...MINIMAX_MODELS, ...LOCAL_MODELS].find(m => m.value === model)?.label

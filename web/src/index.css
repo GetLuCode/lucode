@@ -1608,12 +1608,18 @@ html, body, #root {
 .chat__session-name {
   font-size: 14px;
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat__header-menu {
   position: relative;
   display: flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat__header-trigger {
@@ -1627,6 +1633,8 @@ html, body, #root {
   border-radius: 5px;
   color: var(--text);
   transition: background 0.12s;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat__header-trigger:hover {
@@ -6998,9 +7006,11 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 .running-item--active { border-color: rgba(0, 212, 170, 0.35); background: rgba(0, 212, 170, 0.07); }
 .running-item__info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .running-item__name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.running-item__meta { font-size: 11px; color: var(--text-dim); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.running-item__meta { display: block; min-width: 0; font-size: 11px; color: var(--text-dim); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .running-item__mono { font-family: var(--font-mono, monospace); }
-.running-item__task-status { color: var(--accent); }
+.running-item__task { display: flex; }
+.running-item__task-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.running-item__task-status { color: var(--accent); flex-shrink: 0; white-space: pre; }
 .project-tab__badge {
   margin-left: 6px; min-width: 16px; padding: 0 5px; border-radius: 8px;
   background: var(--accent); color: #000; font-size: 10px; font-weight: 600; line-height: 16px; display: inline-block; text-align: center;
