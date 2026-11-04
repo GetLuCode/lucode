@@ -22,6 +22,7 @@ import { ContextBar } from './ContextBar'
 import { CacheBadge, useCacheCountdown } from './CacheBadge'
 import { ClaudeProcess } from './ClaudeProcess'
 import { TaskStatus } from './TaskStatus'
+import { CopyIdsMenu } from './CopyIdsMenu'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import { listOllamaModels, cancelTurn } from '../../api'
 import type { Message } from '../../types'
@@ -569,10 +570,22 @@ function ChatViewFull() {
 
   const virtualItems = virtualizer.getVirtualItems()
 
+  // Wheel over the chat outside the message list (side margins, header, input area) scrolls the
+  // list too, unless the pointer is over something that scrolls by itself.
+  const forwardWheelToMessages = (e: React.WheelEvent<HTMLDivElement>) => {
+    const list = scrollRef.current
+    if (!list || e.ctrlKey || list.contains(e.target as Node)) return
+    for (let el = e.target as HTMLElement | null; el && el !== e.currentTarget; el = el.parentElement) {
+      const oy = getComputedStyle(el).overflowY
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return
+    }
+    list.scrollTop += e.deltaY
+  }
+
   const headerName = isPending ? 'New session' : (session?.name || 'Session')
 
   return (
-    <div className={`chat${filePreview ? ' chat--preview-open' : ''}${fileBrowserOpen ? ' chat--file-browser-open' : ''}`}>
+    <div className={`chat${filePreview ? ' chat--preview-open' : ''}${fileBrowserOpen ? ' chat--file-browser-open' : ''}`} onWheel={forwardWheelToMessages}>
       <div className="chat__header">
         <div className="chat__header-menu" ref={headerMenuRef}>
           <button
@@ -704,6 +717,7 @@ function ChatViewFull() {
         <div className="chat__header-right">
           {activeSessionId && !pendingSession && isClaudeModel && <CacheBadge cache={cache} />}
           {activeSessionId && !pendingSession && isClaudeModel && <ClaudeProcess sessionId={activeSessionId} />}
+          {activeSessionId && !pendingSession && <CopyIdsMenu sessionId={activeSessionId} taskId={session?.card_id} />}
           {sessionUsage && (
             <span className="chat__usage-total">
               ↑{fmt(sessionUsage.input_tokens)} ↓{fmt(sessionUsage.output_tokens)} tokens
@@ -767,6 +781,7 @@ function ChatViewFull() {
           ))}
         </div>
 
+        <div className="chat__column">
         {/* Sending indicator: shown while message is in-flight to server */}
         {isSending && (
           <div className="msg msg--user" style={{ marginTop: '12px' }}>
@@ -804,6 +819,8 @@ function ChatViewFull() {
         {sessionStatus === 'error' && sessionError && (
           <SessionErrorBanner error={sessionError} />
         )}
+
+        </div>
 
         <div ref={bottomRef} />
       </div>

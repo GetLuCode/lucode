@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	_ "embed"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -44,7 +43,8 @@ func main() {
 	}
 
 	port := flag.Int("port", 8090, "HTTP listen port")
-	natsURL := flag.String("nats-url", "nats://127.0.0.1:4222", "External NATS server URL")
+	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "External NATS server: host, host:port or a full URL")
+	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
 	natsCreds := flag.String("nats-creds", "", "Path to NATS credentials file (.creds)")
 	aiAPIURL  := flag.String("aiapi-url", "http://localhost:8091", "URL of the aiapi service (Claude CLI + Ollama + Anthropic executor)")
 	authURL   := flag.String("auth-url", "http://localhost:8092", "URL of the centralized auth service")
@@ -52,7 +52,9 @@ func main() {
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
 	minimaxSubKey := flag.String("minimax-subscription-key", os.Getenv("MINIMAX_SUBSCRIPTION_KEY"), "MiniMax subscription API key for token plan monitoring")
+	hubOnly := flag.Bool("hub-only", false, "orchestrate only: run no claude on this machine (every project needs a runner)")
 	flag.Parse()
+	*natsURL = natspkg.NormalizeURL(*natsURL) // "hub" or "192.168.1.5" are enough
 
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
 		log.Fatalf("mkdir data: %v", err)
@@ -101,6 +103,7 @@ func main() {
 	hookSettings := sessionpkg.InstallHookSettings(embeddedHook)
 
 	manager := sessionpkg.NewManager(db, bus, *natsURL, hookSettings)
+	manager.BaseDir = *workingDir
 	manager.SetAIAPIURL(*aiAPIURL)
 	if *natsCreds != "" {
 		manager.SetNATSCreds(*natsCreds)
@@ -112,13 +115,15 @@ func main() {
 
 	instanceID, _ := natspkg.LoadOrCreateInstanceID(*dataDir)
 	if err := bus.StartDiscovery(natspkg.InstanceInfo{
-		ID:   instanceID,
-		Type: "lucode",
+		ID:    instanceID,
+		Type:  "lucode",
+		Extra: map[string]any{"hub_only": *hubOnly},
 	}); err != nil {
 		log.Printf("[discovery] start error: %v", err)
 	}
 
 	handler := apipkg.New(db, bus, manager, *workingDir)
+	handler.SetHubOnly(*hubOnly)
 	bus.OnTaskTool = handler.HandleTaskTool
 	bus.OwnsSession = func(id string) bool { _, err := dbpkg.GetSession(db, id); return err == nil }
 	manager.OnTurnEnd = handler.DrainInbox         // deliver messages other agents queued
@@ -129,10 +134,38 @@ func main() {
 		handler.SetMinimaxSubscriptionKey(*minimaxSubKey)
 	}
 
-	// Accept turns hubs send to this instance as a runner.
-	if err := bus.StartRunnerServer(manager.ServeRemoteTurn, manager.CancelRemoteTurn, manager.CloseRemoteLive); err != nil {
-		log.Printf("[runner] start error: %v", err)
+	// Accept turns hubs send to this instance as a runner (a pure hub does not).
+	if !*hubOnly {
+		if err := bus.StartRunnerServer(manager.ServeRemoteTurn, manager.CancelRemoteTurn, manager.CloseRemoteLive); err != nil {
+			log.Printf("[runner] start error: %v", err)
+		}
 	}
+	// Turns that were running on runners when this instance stopped: pick up their events.
+	manager.RecoverRunnerTurns()
+
+	// Persistent claude processes on runners: as a runner, answer which ones are alive;
+	// as a hub, follow the start/exit notices and ask each runner that shows up.
+	if !*hubOnly {
+		if err := bus.ServeRunnerProcesses(manager.RunnerProcesses); err != nil {
+			log.Printf("[runner] processes server: %v", err)
+		}
+	}
+	if err := manager.WatchRunnerProcesses(); err != nil {
+		log.Printf("[runner] processes watch: %v", err)
+	}
+	syncRunners := func(peers []natspkg.InstanceInfo) {
+		for _, p := range peers {
+			if p.Type == "lucode" && p.IsRunner() {
+				go manager.SyncRunnerProcesses(p.ID)
+			}
+		}
+	}
+	prevPeersChange := bus.OnPeersChange
+	bus.OnPeersChange = func(peers []natspkg.InstanceInfo) {
+		prevPeersChange(peers)
+		syncRunners(peers)
+	}
+	syncRunners(bus.Peers()) // those already known before this callback existed
 
 	// Start RPC server after handler is created so it can serve remote requests
 	if err := bus.StartRPCServer(apipkg.Wrap(handler)); err != nil {
@@ -406,64 +439,4 @@ func defaultHookBinary() string {
 // give an agent the task_comment / task_done / task_blocked tools. Calls are
 // forwarded to the running lucode over NATS. stdout carries only protocol
 // messages, so everything diagnostic goes to stderr.
-func runMCPTask() {
-	sessionID := os.Getenv("LUCODE_SESSION_ID")
-	natsURL := os.Getenv("LUCODE_NATS_URL")
-	if natsURL == "" {
-		natsURL = "nats://127.0.0.1:4222"
-	}
-
-	var nc *nats.Conn
-	call := func(tool string, args json.RawMessage) (string, error) {
-		if sessionID == "" {
-			return "", fmt.Errorf("not running under lucode (no LUCODE_SESSION_ID)")
-		}
-		if nc == nil {
-			opts := []nats.Option{nats.Timeout(10 * time.Second), nats.RetryOnFailedConnect(false)}
-			if creds := os.Getenv("LUCODE_NATS_CREDS"); creds != "" {
-				opts = append(opts, nats.UserCredentials(creds))
-			}
-			c, err := nats.Connect(natsURL, opts...)
-			if err != nil {
-				return "", fmt.Errorf("cannot reach lucode: %w", err)
-			}
-			nc = c
-		}
-		payload, _ := json.Marshal(map[string]any{"tool": tool, "args": args})
-		msg, err := nc.Request("lucode.tasktools."+sessionID, payload, 30*time.Second)
-		if err != nil {
-			return "", fmt.Errorf("lucode did not answer: %w", err)
-		}
-		var reply struct {
-			OK      bool   `json:"ok"`
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(msg.Data, &reply); err != nil {
-			return "", fmt.Errorf("bad reply from lucode: %w", err)
-		}
-		if !reply.OK {
-			return "", fmt.Errorf("%s", reply.Message)
-		}
-		return reply.Message, nil
-	}
-
-	// LUCODE_TOOLS (comma separated) limits which lucode tools this agent has; unset
-	// means all of them and an empty value means none.
-	var allowed []string
-	if v, ok := os.LookupEnv("LUCODE_TOOLS"); ok {
-		allowed = []string{}
-		for _, name := range strings.Split(v, ",") {
-			if name = strings.TrimSpace(name); name != "" {
-				allowed = append(allowed, name)
-			}
-		}
-	}
-	err := taskmcp.RunWithTools(os.Stdin, os.Stdout, call, allowed)
-	if nc != nil {
-		nc.Close()
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "mcp-task:", err)
-		os.Exit(1)
-	}
-}
+func runMCPTask() { taskmcp.RunFromEnv() }

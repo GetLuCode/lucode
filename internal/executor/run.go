@@ -64,6 +64,9 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 
 		log.Printf("[executor/stdout] session=%s: %s", sid8, string(line))
 
+		if wt := EnteredWorktree(line); wt != "" {
+			publish(WorkspaceEvent(req.SessionID, wt))
+		}
 		event, isResult, err := ParseLine(req.SessionID, line)
 		if err != nil {
 			log.Printf("[executor] session=%s parse error: %v", sid8, err)
@@ -71,6 +74,10 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 		}
 		if event.EventType == "" {
 			continue
+		}
+
+		if event.Cwd != "" {
+			publish(WorkspaceEvent(req.SessionID, event.Cwd))
 		}
 
 		if event.EventType == "control_response" {

@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import {
   IconPlus, IconX, IconTrash, IconArchive,
   IconArchiveOff, IconRobot, IconCalendar, IconLink,
-  IconTag, IconGripVertical, IconRefresh,
+  IconTag, IconGripVertical, IconRefresh, IconGitMerge, IconCopy,
 } from '@tabler/icons-react'
+import { copyText } from '../../lib/copyText'
 import { useStore } from '../../store'
 import type { Agent, CardComment, KanbanCard, KanbanList } from '../../types'
 import * as api from '../../api'
@@ -12,7 +13,7 @@ import { backdropClose } from '../../lib/backdropClose'
 import { KanbanFilters, NO_FILTERS, matchesFilters, type KanbanFilterState } from './KanbanFilters'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { AgentAvatar } from '../Agents/AgentAvatar'
-import { OrchestratorOpenButton } from '../Orchestrator/OrchestratorOpenButton'
+import { ReviewModal } from './ReviewModal'
 
 // ---- pasted images -----------------------------------------------------------
 
@@ -248,6 +249,10 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
               >⋯</button>
               {menuOpen && (
                 <div className="nav-tree__dropdown" style={{ right: 0, left: 'auto' }}>
+                  <button className="nav-tree__menu-item" onClick={() => { copyText(card.id); setMenuOpen(false) }} title={card.id}>
+                    <IconCopy size={14} />
+                    <span>Copy task id</span>
+                  </button>
                   <button className="nav-tree__menu-item" onClick={handleReset}>
                     <IconRefresh size={14} />
                     <span>Reset</span>
@@ -507,6 +512,7 @@ interface CardItemProps {
   card: KanbanCard
   agents: Agent[]
   onClick: () => void
+  onReview?: () => void   // only for cards in the Review list: opens the merge dialog
   onDragStart: (e: React.DragEvent) => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
@@ -518,7 +524,7 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
   error:        { label: '✕ error',          color: '#ef4444' },
 }
 
-function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop }: CardItemProps) {
+function KanbanCardItem({ card, agents, onClick, onReview, onDragStart, onDragOver, onDrop }: CardItemProps) {
   const agent = agents.find(a => a.id === card.agent_id)
   // Live state of the agent working on this task (its chat session).
   const runStatus = useStore(s => {
@@ -548,6 +554,19 @@ function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop
       {card.description && (
         <p className="kcard__desc">{card.description}</p>
       )}
+      {runStatus === 'error' && card.last_error && (
+        <p className="kcard__error" title={card.last_error}>{card.last_error}</p>
+      )}
+      {onReview && (
+        <button
+          className="kcard__review-btn"
+          draggable={false}
+          onClick={e => { e.stopPropagation(); onReview() }}
+          title="Check the branch and merge it"
+        >
+          <IconGitMerge size={12} /> Review &amp; merge
+        </button>
+      )}
       <div className="kcard__meta">
         {hasDates && (
           <span className={`kcard__date${isOverdue ? ' kcard__date--overdue' : ''}`}>
@@ -559,7 +578,7 @@ function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop
           <span key={t} className="kcard__tag">{t}</span>
         ))}
         {badge && (
-          <span className="kcard__status" style={{ color: badge.color }}>{badge.label}</span>
+          <span className="kcard__status" style={{ color: badge.color }} title={runStatus === 'error' ? card.last_error : undefined}>{badge.label}</span>
         )}
         {card.depends_on.length > 0 && (
           <span className="kcard__deps" title={`${card.depends_on.length} dependency`}>
@@ -604,6 +623,7 @@ interface ColumnProps {
   cards: KanbanCard[]
   agents: Agent[]
   onCardClick: (c: KanbanCard) => void
+  onReviewCard: (c: KanbanCard) => void
   onAddCard: (listId: string, title: string) => void
   onRenameList: (id: string, name: string) => void
   onDeleteList: (id: string) => void
@@ -613,7 +633,7 @@ interface ColumnProps {
 
 function KanbanColumn({
   list, cards, agents,
-  onCardClick, onAddCard, onRenameList, onDeleteList,
+  onCardClick, onReviewCard, onAddCard, onRenameList, onDeleteList,
   onCardDragStart, onCardDrop,
 }: ColumnProps) {
   const [addingCard, setAddingCard] = useState(false)
@@ -676,6 +696,7 @@ function KanbanColumn({
             card={card}
             agents={agents}
             onClick={() => onCardClick(card)}
+            onReview={list.kind === 'review' ? () => onReviewCard(card) : undefined}
             onDragStart={() => onCardDragStart(card.id, list.id)}
             onDragOver={e => e.preventDefault()}
             onDrop={() => onCardDrop(list.id, card.id)}
@@ -731,6 +752,7 @@ export function KanbanView() {
   const [showArchived, setShowArchived] = useState(false)
   const [filters, setFilters] = useState<KanbanFilterState>(NO_FILTERS)
   const [selectedCard, setSelectedCard] = useState<KanbanCard | null>(null)
+  const [reviewCard, setReviewCard] = useState<KanbanCard | null>(null)
   const [addingList, setAddingList] = useState(false)
   const [newListName, setNewListName] = useState('')
   const [loading, setLoading] = useState(false)
@@ -938,6 +960,7 @@ export function KanbanView() {
             cards={visibleCards.filter(c => c.list_id === list.id).sort((a, b) => a.position - b.position)}
             agents={agents}
             onCardClick={setSelectedCard}
+            onReviewCard={setReviewCard}
             onAddCard={handleAddCard}
             onRenameList={handleRenameList}
             onDeleteList={handleDeleteList}
@@ -974,10 +997,15 @@ export function KanbanView() {
         )}
       </div>
 
-      {/* board actions live under the board */}
-      <div className="kanban-view__footer">
-        <OrchestratorOpenButton />
-      </div>
+      {/* review: merge the branch an agent left, or send it back */}
+      {reviewCard && (
+        <ReviewModal
+          card={reviewCard}
+          onClose={() => setReviewCard(null)}
+          onDetails={() => { setSelectedCard(reviewCard); setReviewCard(null) }}
+          onChanged={async () => { setReviewCard(null); await reloadBoard() }}
+        />
+      )}
 
       {/* card modal */}
       {selectedCard && (

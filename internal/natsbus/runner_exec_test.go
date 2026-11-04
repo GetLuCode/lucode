@@ -28,31 +28,46 @@ func testBusAt(t *testing.T, url, id string) *Bus {
 }
 
 func TestRunnerStreamsEventsAndCancels(t *testing.T) {
-	runnerID := "test-runner-" + time.Now().Format("150405.000")
-	runner := testBus(t, runnerID)
-	hub := testBus(t, "test-hub-"+runnerID)
+	url := startJetStreamServer(t)
+	runnerID := "test-runner"
+	runner := testBusAt(t, url, runnerID)
+	hub := testBusAt(t, url, "test-hub")
 
 	cancelled := make(chan string, 1)
-	err := runner.StartRunnerServer(func(payload []byte, reply string) {
-		runner.PublishStreamEvent(reply, []byte(`{"type":"message_ready","role":"assistant","content":"hi from runner"}`))
-		runner.PublishStreamEvent(reply, []byte(`{"type":"heartbeat"}`))
-		runner.PublishStreamDone(reply)
+	err := runner.StartRunnerServer(func(payload []byte, sink *TurnSink) {
+		sink.Event([]byte(`{"type":"message_ready","role":"assistant","content":"hi from runner"}`))
+		sink.Event([]byte(`{"type":"result"}`))
+		sink.Done()
 	}, func(sessID string) { cancelled <- sessID }, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var got []string
-	err = hub.RunnerExecute(runnerID, []byte(`{"req":{"session_id":"s1"}}`), func(ev []byte) bool {
+	done := make(chan struct{})
+	f, err := hub.FollowRunnerTurn(runnerID, "s1", false, nil, func(ev RunnerEvent) error {
+		if ev.Done {
+			close(done)
+			return nil
+		}
 		var m map[string]any
-		json.Unmarshal(ev, &m)
+		json.Unmarshal(ev.Event, &m)
 		got = append(got, m["type"].(string))
-		return true
+		return nil
 	})
 	if err != nil {
-		t.Fatalf("RunnerExecute: %v", err)
+		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0] != "message_ready" || got[1] != "heartbeat" {
+	defer f.Close()
+	if err := hub.RunnerStartTurn(runnerID, "s1", "turn-1", []byte(`{"req":{"session_id":"s1"}}`)); err != nil {
+		t.Fatalf("RunnerStartTurn: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no turn_done")
+	}
+	if len(got) != 2 || got[0] != "message_ready" || got[1] != "result" {
 		t.Errorf("events = %v", got)
 	}
 

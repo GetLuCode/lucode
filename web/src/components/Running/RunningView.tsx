@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconDownload, IconEdit, IconTrash } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
-import type { Session } from '../../types'
+import type { KanbanCard, Session } from '../../types'
 
 // Running: the project's current sessions (the chats of its tasks), live ones first.
 export function RunningView() {
@@ -20,7 +20,28 @@ export function RunningView() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
 
-  const statusOf = (s: Session) => sessionStatus[s.id] ?? s.status
+  const [cards, setCards] = useState<Record<string, KanbanCard>>({})
+  const [lists, setLists] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!activeProjectId) return
+    let cancelled = false
+    const load = () => Promise.all([api.listKanbanCards(activeProjectId), api.listKanbanLists(activeProjectId)]).then(([cs, ls]) => {
+      if (cancelled) return
+      setCards(Object.fromEntries(cs.map(c => [c.id, c])))
+      setLists(Object.fromEntries(ls.map(l => [l.id, l.name])))
+    }).catch(() => {})
+    load()
+    const t = setInterval(load, 10000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [activeProjectId])
+
+  const fmt = (iso?: string) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return isNaN(d.getTime()) || d.getFullYear() < 2000 ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+
+  const statusOf =(s: Session) => sessionStatus[s.id] ?? s.status
   const rank = (s: Session) => (statusOf(s) === 'idle' ? 1 : 0)
   // Only task sessions (tied to a kanban card), live ones first; the store keeps the rest by activity.
   const list = sessions.filter(s => s.card_id).sort((a, b) => rank(a) - rank(b))
@@ -89,7 +110,29 @@ export function RunningView() {
                 ) : (
                   <>
                     <span className="running-item__name">{s.name || 'Untitled'}</span>
-                    <span className="running-item__meta">{s.message_count} msgs</span>
+                    <span className="running-item__meta">{s.message_count} msgs · {statusOf(s)}</span>
+                    {(() => {
+                      const c = s.card_id ? cards[s.card_id] : undefined
+                      const started = fmt(c?.started_at || s.created_at)
+                      const finished = fmt(c?.finished_at)
+                      return (
+                        <>
+                          {c && (
+                            <span className="running-item__meta">
+                              Task: {c.title} · <span className="running-item__task-status">{lists[c.list_id] ?? '—'}</span>
+                            </span>
+                          )}
+                          <span className="running-item__meta">
+                            Started {started || '—'} · {finished ? `Finished ${finished}` : `Active ${fmt(s.last_active) || '—'}`}
+                          </span>
+                          {(s.branch || s.worktree) && (
+                            <span className="running-item__meta running-item__mono" title={s.worktree}>
+                              {s.branch && <>⎇ {s.branch}</>}{s.branch && s.worktree && ' · '}{s.worktree}
+                            </span>
+                          )}
+                        </>
+                      )
+                    })()}
                   </>
                 )}
               </div>

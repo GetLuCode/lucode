@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -140,6 +141,10 @@ type Session struct {
 	// Kind is "" for an ordinary chat and SessionKindOrchestrator for the project's
 	// main chat (the right-hand panel), which is not listed with the other sessions.
 	Kind string `json:"kind,omitempty"`
+	// Worktree and Branch are where the agent works on its task, read from its transcript
+	// (EnterWorktree / git worktree add); only listSessions fills them.
+	Worktree string `json:"worktree,omitempty"`
+	Branch   string `json:"branch,omitempty"`
 }
 
 const SessionKindOrchestrator = "orchestrator"
@@ -273,6 +278,29 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+var (
+	enterWorktreeRe = regexp.MustCompile(`Created worktree at "([^"]+)" on branch "([^"]+)"`)
+	gitWorktreeRe   = regexp.MustCompile(`git worktree add (\S+) -b ([^\s"\\]+)`)
+	quoteNorm       = strings.NewReplacer(`“`, `"`, `”`, `"`, "“", `"`, "”", `"`, `\"`, `"`)
+)
+
+// SessionWorktree finds the git worktree path and branch a session's agent created, from its
+// newest EnterWorktree result or `git worktree add -b` command; empty when it has none.
+func SessionWorktree(db *sql.DB, sessionID string) (path, branch string) {
+	var content string
+	if db.QueryRow(`SELECT content FROM messages WHERE session_id=? AND content LIKE '%Created worktree at%' ORDER BY seq DESC LIMIT 1`, sessionID).Scan(&content) == nil {
+		if m := enterWorktreeRe.FindStringSubmatch(quoteNorm.Replace(content)); m != nil {
+			return m[1], m[2]
+		}
+	}
+	if db.QueryRow(`SELECT content FROM messages WHERE session_id=? AND role='tool_use' AND content LIKE '%git worktree add%' ORDER BY seq DESC LIMIT 1`, sessionID).Scan(&content) == nil {
+		if m := gitWorktreeRe.FindStringSubmatch(content); m != nil {
+			return m[1], m[2]
+		}
+	}
+	return "", ""
 }
 
 // UpdateSessionContextUsage persists the last known context window breakdown for a session.
@@ -1387,32 +1415,40 @@ type Agent struct {
 	// LucodeTools are the lucode tools (task_*, agent_list, send_to_agent,
 	// task_info) the agent has. nil in memory means all of them; an empty list
 	// means none.
-	LucodeTools []string  `json:"lucode_tools"`
-	Executor    string    `json:"executor"`   // "aiapi" | "claude"
-	Persistent  bool      `json:"persistent"` // keep the claude -p process alive between turns
-	ReportsTo   string    `json:"reports_to"` // id of the supervising agent ("" = none)
+	LucodeTools []string `json:"lucode_tools"`
+	Executor    string   `json:"executor"`   // "aiapi" | "claude"
+	Persistent  bool     `json:"persistent"` // keep the claude -p process alive between turns
+	ReportsTo   string   `json:"reports_to"` // id of the supervising agent ("" = none)
 	// RunnerID and AIProfileID override the project's environment for this agent
 	// ("" = use the project's). The AI belongs to the runner it is set with.
-	RunnerID    string    `json:"runner_id"`
-	AIProfileID string    `json:"ai_profile_id"`
+	RunnerID    string `json:"runner_id"`
+	AIProfileID string `json:"ai_profile_id"`
 	// AutoMode runs claude with --permission-mode auto: it decides on its own which
 	// tools are safe, so lucode's approval hook is not installed for this agent.
-	AutoMode  bool      `json:"auto_mode"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	AutoMode bool `json:"auto_mode"`
+	// Worktree makes claude work in its own git worktree (--worktree). WorktreeBaseRef
+	// is the worktree.baseRef setting passed through --settings: "head" (the
+	// current branch/commit, the default) or "fresh" (the remote default branch).
+	Worktree        bool      `json:"worktree"`
+	WorktreeBaseRef string    `json:"worktree_base_ref"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // DefaultLucodeTools is every lucode tool; new agents start with all of them.
 var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete", "project_info"}
 
-const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, created_at, updated_at`
+const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, worktree, worktree_base_ref, created_at, updated_at`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var toolsJSON, lucodeJSON, createdAt, updatedAt string
 	if err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &lucodeJSON,
-		&a.Executor, &a.Persistent, &a.ReportsTo, &a.RunnerID, &a.AIProfileID, &a.AutoMode, &createdAt, &updatedAt); err != nil {
+		&a.Executor, &a.Persistent, &a.ReportsTo, &a.RunnerID, &a.AIProfileID, &a.AutoMode, &a.Worktree, &a.WorktreeBaseRef, &createdAt, &updatedAt); err != nil {
 		return a, err
+	}
+	if a.WorktreeBaseRef != "fresh" {
+		a.WorktreeBaseRef = "head"
 	}
 	json.Unmarshal([]byte(toolsJSON), &a.Tools)
 	if err := json.Unmarshal([]byte(lucodeJSON), &a.LucodeTools); err != nil || a.LucodeTools == nil {
@@ -1438,10 +1474,18 @@ func lucodeToolsJSON(tools []string) string {
 func InsertAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode,
+		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, worktree, worktree_base_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.Worktree, worktreeBaseRef(a.WorktreeBaseRef),
 	)
 	return err
+}
+
+// worktreeBaseRef normalizes the stored worktree.baseRef: anything but "fresh" is "head".
+func worktreeBaseRef(v string) string {
+	if v == "fresh" {
+		return v
+	}
+	return "head"
 }
 
 // ListAgents returns the agents available in a project: its own plus the global ones.
@@ -1472,8 +1516,8 @@ func GetAgent(db *sql.DB, id string) (Agent, error) {
 func UpdateAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, runner_id=?, ai_profile_id=?, auto_mode=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.ID,
+		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, runner_id=?, ai_profile_id=?, auto_mode=?, worktree=?, worktree_base_ref=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.Worktree, worktreeBaseRef(a.WorktreeBaseRef), a.ID,
 	)
 	return err
 }
@@ -1501,6 +1545,7 @@ const (
 	KanbanInProgress = "inprogress"
 	KanbanDone       = "done"
 	KanbanBlocked    = "blocked"
+	KanbanReview     = "review" // work finished in a git worktree, waiting for the user to merge it
 )
 
 func InsertKanbanList(db *sql.DB, l KanbanList) error {
@@ -1522,6 +1567,7 @@ func EnsureDefaultKanbanLists(db *sql.DB, projectID string) error {
 		{"Backlog", KanbanBacklog},
 		{"Todo", KanbanTodo},
 		{"In Progress", KanbanInProgress},
+		{"Review", KanbanReview},
 		{"Done", KanbanDone},
 		{"Blocked", KanbanBlocked},
 	}
@@ -1531,6 +1577,81 @@ func EnsureDefaultKanbanLists(db *sql.DB, projectID string) error {
 		}
 	}
 	return nil
+}
+
+// EnsureReviewList adds the Review list to a project that predates it, right before
+// Done (or at the end when it has no Done list). It does nothing when one exists, or
+// when the project has no lists yet (the defaults will include it).
+func EnsureReviewList(db *sql.DB, projectID string) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM kanban_lists WHERE project_id=?`, projectID).Scan(&n); err != nil || n == 0 {
+		return err
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM kanban_lists WHERE project_id=? AND kind=?`, projectID, KanbanReview).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	pos := -1
+	if err := db.QueryRow(`SELECT position FROM kanban_lists WHERE project_id=? AND kind=? ORDER BY position ASC LIMIT 1`, projectID, KanbanDone).Scan(&pos); err != nil {
+		if err := db.QueryRow(`SELECT COALESCE(MAX(position)+1,0) FROM kanban_lists WHERE project_id=?`, projectID).Scan(&pos); err != nil {
+			return err
+		}
+	} else if _, err := db.Exec(`UPDATE kanban_lists SET position=position+1 WHERE project_id=? AND position>=?`, projectID, pos); err != nil {
+		return err
+	}
+	return InsertKanbanList(db, KanbanList{ID: uuid.New().String(), ProjectID: projectID, Name: "Review", Position: pos, Kind: KanbanReview})
+}
+
+// SaveSessionWorkspace keeps the last claude_workspace event of a session so it
+// survives a restart of the hub.
+func SaveSessionWorkspace(db *sql.DB, sessionID string, ws map[string]any) error {
+	b, err := json.Marshal(ws)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO session_workspaces (session_id, data) VALUES (?,?)
+		ON CONFLICT(session_id) DO UPDATE SET data=excluded.data`, sessionID, string(b))
+	return err
+}
+
+// GetSessionWorkspace returns the saved workspace of a session (nil if none).
+func GetSessionWorkspace(db *sql.DB, sessionID string) map[string]any {
+	var data string
+	if db.QueryRow(`SELECT data FROM session_workspaces WHERE session_id=?`, sessionID).Scan(&data) != nil {
+		return nil
+	}
+	var ws map[string]any
+	if json.Unmarshal([]byte(data), &ws) != nil {
+		return nil
+	}
+	return ws
+}
+
+// CardReview is the git work a task left waiting for review: the branch of the
+// agent's worktree, where that worktree is and the main checkout it belongs to.
+type CardReview struct {
+	CardID       string `json:"card_id"`
+	Branch       string `json:"branch"`
+	WorktreePath string `json:"worktree_path"`
+	RepoPath     string `json:"repo_path"`
+}
+
+func SaveCardReview(db *sql.DB, r CardReview) error {
+	_, err := db.Exec(`INSERT INTO card_reviews (card_id, branch, worktree_path, repo_path) VALUES (?,?,?,?)
+		ON CONFLICT(card_id) DO UPDATE SET branch=excluded.branch, worktree_path=excluded.worktree_path, repo_path=excluded.repo_path`,
+		r.CardID, r.Branch, r.WorktreePath, r.RepoPath)
+	return err
+}
+
+func GetCardReview(db *sql.DB, cardID string) (CardReview, error) {
+	var r CardReview
+	err := db.QueryRow(`SELECT card_id, branch, worktree_path, repo_path FROM card_reviews WHERE card_id=?`, cardID).
+		Scan(&r.CardID, &r.Branch, &r.WorktreePath, &r.RepoPath)
+	return r, err
+}
+
+func DeleteCardReview(db *sql.DB, cardID string) error {
+	_, err := db.Exec(`DELETE FROM card_reviews WHERE card_id=?`, cardID)
+	return err
 }
 
 // FindKanbanListByKind returns the project's list with the given workflow role.
@@ -1608,6 +1729,9 @@ type KanbanCard struct {
 	ParentID    string    `json:"parent_id"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// LastError is why the task's session is in error (its newest error note); only
+	// listKanbanCards fills it, nothing is stored on the card.
+	LastError string `json:"last_error,omitempty"`
 }
 
 func scanKanbanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
@@ -1828,7 +1952,7 @@ func backfillKanbanListKinds(db *sql.DB) {
 	for _, r := range todo {
 		key := strings.NewReplacer(" ", "", "-", "", "_", "").Replace(strings.ToLower(r.name))
 		switch key {
-		case "backlog", "todo", "inprogress", "done", "blocked":
+		case "backlog", "todo", "inprogress", "review", "done", "blocked":
 			db.Exec(`UPDATE kanban_lists SET kind=? WHERE id=?`, key, r.id)
 		}
 	}
@@ -1930,6 +2054,27 @@ func InsertCardComment(db *sql.DB, c CardComment) error {
 		c.ID, c.CardID, c.SessionID, c.Author, c.Kind, c.Body,
 	)
 	return err
+}
+
+// LatestCardErrors maps each task of the project whose session is in error to its
+// newest error note.
+func LatestCardErrors(db *sql.DB, projectID string) map[string]string {
+	out := map[string]string{}
+	rows, err := db.Query(`SELECT c.card_id, c.body FROM card_comments c
+		JOIN kanban_cards k ON k.id=c.card_id AND k.project_id=?
+		WHERE c.kind='error' AND EXISTS (SELECT 1 FROM sessions s WHERE s.card_id=c.card_id AND s.status='error')
+		ORDER BY c.created_at ASC, c.rowid ASC`, projectID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, body string
+		if rows.Scan(&id, &body) == nil {
+			out[id] = body
+		}
+	}
+	return out
 }
 
 func ListCardComments(db *sql.DB, cardID string) ([]CardComment, error) {

@@ -18,6 +18,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { HomeView } from './components/Home/HomeView'
 import { RunningView } from './components/Running/RunningView'
 import { OrchestratorPanel } from './components/Orchestrator/OrchestratorPanel'
+import { OrchestratorOpenButton } from './components/Orchestrator/OrchestratorOpenButton'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
@@ -137,6 +138,8 @@ export default function App() {
               {isHome ? <HomeView /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isAgentTab ? null : <ChatView />}
             </ErrorBoundary>
           </div>
+          {/* same button on every tab except the chat; the Agent tab already shows the panel */}
+          {!isHome && !isAgentTab && (isAgentsRoute || isKanbanRoute || isRunningRoute) && <OrchestratorOpenButton />}
         </main>
         {!isHome && <OrchestratorPanel full={isAgentTab} />}
         <aside

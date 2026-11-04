@@ -155,6 +155,7 @@ func (a *App) startServer() {
 	_ = hookBinary // legacy: claude-CLI hook path removed; permission gate is now NATS-based
 
 	manager := sessionpkg.NewManager(db, bus, natsURL, "")
+	manager.BaseDir = workDir
 	if natsCreds != "" {
 		manager.SetNATSCreds(natsCreds)
 	}

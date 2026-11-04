@@ -54,13 +54,13 @@ func newCard(t *testing.T, h *Handler, pid string, list dbpkg.KanbanList, title 
 
 func TestDefaultKanbanLists(t *testing.T) {
 	_, _, lists := newTaskTestHandler(t)
-	for _, kind := range []string{"backlog", "todo", "inprogress", "done", "blocked"} {
+	for _, kind := range []string{"backlog", "todo", "inprogress", "review", "done", "blocked"} {
 		if _, ok := lists[kind]; !ok {
 			t.Errorf("missing default list %q", kind)
 		}
 	}
-	if len(lists) != 5 {
-		t.Errorf("want 5 default lists, got %d", len(lists))
+	if len(lists) != 6 {
+		t.Errorf("want 6 default lists, got %d", len(lists))
 	}
 }
 
