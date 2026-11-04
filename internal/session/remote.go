@@ -315,6 +315,8 @@ func (m *Manager) ServeRemoteTurn(payload []byte, sink *natspkg.TurnSink) {
 		}
 		req.ClaudeConfigDir = ai.ClaudeConfigDir
 	}
+	// The hub sends the work dirs as the user typed them: a relative one is relative to this runner.
+	req.WorkDirs = m.ResolveWorkDirs(req.WorkDirs)
 	// Everything that points at this machine is filled in here, not by the hub.
 	req.MCPConfig = m.writeTaskMCPConfig(sessID, rt.LucodeTools)
 	req.ClaudeSettings = m.claudeSettings
