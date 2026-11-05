@@ -37,6 +37,14 @@ type Endpointer struct {
 	lastFinal string    // normalized text of the last phrase sent
 	fresh     bool      // a partial different from lastFinal has been seen in this phrase
 	suspect   bool      // only stale-looking partials so far
+
+	// A phrase closed here whose worker final had not arrived when the next phrase began: the
+	// worker can take seconds to answer a flush, so that late final lands after SPEECH_START of
+	// the next phrase. It must still be dropped (it is the old phrase, usually longer by the
+	// words the partials had not caught up with), not delivered as if it were the new one.
+	staleText    string // normalized text that was sent for it
+	stalePending bool
+	staleSpoken  int // phrases that began while it was pending
 }
 
 // The worker keeps its stale text across listening sessions too (the first partials of a new
@@ -67,6 +75,15 @@ func NewEndpointer(idle time.Duration) *Endpointer {
 func (e *Endpointer) Speech(now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.closed && e.staleText != "" { // closed here, the worker's final still to come: keep expecting it
+		e.stalePending = true
+		e.staleSpoken = 0
+	}
+	if e.stalePending {
+		if e.staleSpoken++; e.staleSpoken > 2 { // it is not coming (the flush produced nothing)
+			e.stalePending = false
+		}
+	}
 	e.phrase.Reset()
 	e.active, e.closed = true, false
 	e.fresh, e.suspect = false, false
@@ -105,8 +122,16 @@ func (e *Endpointer) Final(text string) (out string, usedPartial, send bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
-		e.closed = false
+		e.closed, e.stalePending = false, false
 		return "", false, false
+	}
+	if e.stalePending {
+		e.stalePending = false
+		if n := normalize(text); n != "" && relatedToStale(n, e.staleText) {
+			// the late final of the phrase closed before this one began: drop it, and the
+			// phrase in progress goes on (its own final is still to come)
+			return "", false, false
+		}
 	}
 	e.active, e.lastShown = false, ""
 	out, usedPartial = e.phrase.Final(text)
@@ -149,11 +174,19 @@ func (e *Endpointer) Tick(now time.Time) (Close, bool) {
 	}
 	e.closed = true
 	if isNoise(best) {
+		e.staleText = "" // nothing was sent: there is no late final to recognise
 		return Close{Flush: true}, true
 	}
 	e.lastFinal = normalize(best)
+	e.staleText = e.lastFinal
 	rememberSent(e.lastFinal)
 	return Close{Text: best, Flush: true}, true
+}
+
+// relatedToStale tells whether a worker final (normalized) is the late final of the phrase
+// that was already sent as s: the same words, or those words plus the ones the partials missed.
+func relatedToStale(n, s string) bool {
+	return n == s || strings.HasPrefix(n, s+" ") || strings.HasPrefix(s, n+" ") || sameText(n, s)
 }
 
 // sameText tells whether two normalized texts are the same phrase. The worker's echo of the

@@ -215,6 +215,7 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 
 	dbg := newSTTDebug() // ~/.lucode/stt-bridge.log, see sttdebug.go
 	defer dbg.Close()
+	dbg.StartRaw(start.SampleRate)
 	dbg.Printf("start: sample_rate=%d wake=%v backend=%q external=%v silence=%s stable=%s repeats=%s",
 		start.SampleRate, start.Wake, start.WakeBackend, start.WakeExternal, ptr(start.SilenceSeconds), ptr(start.StableSeconds), ptr(start.StableRepeats))
 
@@ -273,6 +274,7 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[stt] no changes for %v and no speech text: closing as noise", end.Idle)
 					send(map[string]any{"type": "noise"})
 				}
+				dbg.Raw(rawFlush, nil)
 				_ = sess.Flush()
 			}
 		}
@@ -350,6 +352,7 @@ func (h *Handler) sttSocket(w http.ResponseWriter, r *http.Request) {
 			switch m.Type {
 			case "flush":
 				dbg.Printf("pagina: flush")
+				dbg.Raw(rawFlush, nil)
 				_ = sess.Flush()
 			case "awake", "armed": // only with wake_external: bring the model back / let it go
 				if start.WakeExternal {

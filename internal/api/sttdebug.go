@@ -25,7 +25,20 @@ type sttDebug struct {
 	samples int
 	maxRMS  float64
 	lastAt  time.Time
+
+	// LUCODE_STT_TRACE_AUDIO=1: the raw audio of the session too, with the time each chunk arrived, so a
+	// phrase that went wrong can be replayed exactly (see raw below). It is the user's microphone on disk:
+	// off unless asked for, and overwritten by the next session.
+	raw *os.File
 }
+
+// Layout of ~/.lucode/stt-audio-last.bin: the magic "LSTA1" and a newline, the sample rate (uint32 LE) and then
+// records [kind u8][ms since the start u32 LE][len u32 LE][len bytes]:
+// kind 0 = PCM16 mono audio, kind 1 = flush (the page's or the bridge's, as it was sent to the worker).
+const (
+	rawAudio = 0
+	rawFlush = 1
+)
 
 func newSTTDebug() *sttDebug {
 	if os.Getenv("LUCODE_STT_TRACE") == "0" {
@@ -41,7 +54,42 @@ func newSTTDebug() *sttDebug {
 	if err != nil {
 		return &sttDebug{}
 	}
-	return &sttDebug{f: f, t0: time.Now()}
+	d := &sttDebug{f: f, t0: time.Now()}
+	if os.Getenv("LUCODE_STT_TRACE_AUDIO") == "1" {
+		if raw, err := os.Create(filepath.Join(dir, "stt-audio-last.bin")); err == nil {
+			d.raw = raw
+		}
+	}
+	return d
+}
+
+// StartRaw writes the header of the raw capture (no-op when it is off).
+func (d *sttDebug) StartRaw(sampleRate int) {
+	if d.raw == nil {
+		return
+	}
+	hdr := append([]byte("LSTA1\n"), 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(hdr[6:], uint32(sampleRate))
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, _ = d.raw.Write(hdr)
+}
+
+// Raw appends one record of the raw capture (no-op when it is off).
+func (d *sttDebug) Raw(kind byte, data []byte) {
+	if d.raw == nil {
+		return
+	}
+	rec := make([]byte, 9, 9+len(data))
+	rec[0] = kind
+	binary.LittleEndian.PutUint32(rec[1:], uint32(time.Since(d.t0).Milliseconds()))
+	binary.LittleEndian.PutUint32(rec[5:], uint32(len(data)))
+	rec = append(rec, data...)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.raw != nil {
+		_, _ = d.raw.Write(rec)
+	}
 }
 
 // ptr formats an optional value of the start message ("-" = not sent, the default applies).
@@ -60,6 +108,10 @@ func (d *sttDebug) Close() {
 	d.mu.Lock()
 	_ = d.f.Close()
 	d.f = nil
+	if d.raw != nil {
+		_ = d.raw.Close()
+		d.raw = nil
+	}
 	d.mu.Unlock()
 }
 
@@ -80,6 +132,7 @@ func (d *sttDebug) Audio(pcm []byte) {
 	if d.f == nil {
 		return
 	}
+	d.Raw(rawAudio, pcm)
 	now := time.Now()
 	d.mu.Lock()
 	if d.winFrom.IsZero() {
