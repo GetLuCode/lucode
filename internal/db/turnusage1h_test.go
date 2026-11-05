@@ -26,15 +26,15 @@ func TestUsageAggregatesCarryTheOneHourCacheWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	models, err := AggregateModelUsage(d, time.Time{})
+	models, err := AggregateModelUsage(d, time.Time{}, time.Time{})
 	if err != nil || len(models) != 1 || models[0].CacheCreationInputTokens != 1500 || models[0].CacheCreation1h != 1000 {
 		t.Fatalf("by model: %+v %v", models, err)
 	}
-	daily, err := AggregateDailyUsage(d, time.Time{})
+	daily, err := AggregateDailyUsage(d, time.Time{}, time.Time{}, false)
 	if err != nil || len(daily) != 1 || daily[0].CacheCreation1h != 1000 {
 		t.Fatalf("by day: %+v %v", daily, err)
 	}
-	sessions, err := AggregateSessionUsage(d, time.Time{}, "")
+	sessions, err := AggregateSessionUsage(d, time.Time{}, time.Time{}, "")
 	if err != nil || len(sessions) != 1 || sessions[0].CacheCreation1h != 1000 {
 		t.Fatalf("by session: %+v %v", sessions, err)
 	}

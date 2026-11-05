@@ -2258,9 +2258,23 @@ func (h *Handler) requireAPIKey(r *http.Request) (string, error) {
 
 // ---- Usage / Metrics ----
 
-// parseRangeParam maps a "range" query param (7d|30d|90d|all) to a since time.Time.
-func parseRangeParam(r *http.Request) time.Time {
-	switch r.URL.Query().Get("range") {
+// rangeSince maps a "range" preset (7d|30d|90d|all) to a since time.Time.
+// parseWindow is the time window of a usage request: "from"/"to" (RFC3339, to excluded) when
+// given, otherwise the "range" preset. A zero until means no upper limit.
+func parseWindow(r *http.Request) (since, until time.Time) {
+	q := r.URL.Query()
+	if from, err := time.Parse(time.RFC3339, q.Get("from")); err == nil {
+		since = from
+		if to, err := time.Parse(time.RFC3339, q.Get("to")); err == nil {
+			until = to
+		}
+		return since, until
+	}
+	return rangeSince(q.Get("range")), time.Time{}
+}
+
+func rangeSince(name string) time.Time {
+	switch name {
 	case "7d":
 		return time.Now().AddDate(0, 0, -7)
 	case "30d":
@@ -2273,8 +2287,8 @@ func parseRangeParam(r *http.Request) time.Time {
 }
 
 func (h *Handler) usageDaily(w http.ResponseWriter, r *http.Request) {
-	since := parseRangeParam(r)
-	rows, err := dbpkg.AggregateDailyUsage(h.db, since)
+	since, until := parseWindow(r)
+	rows, err := dbpkg.AggregateDailyUsage(h.db, since, until, r.URL.Query().Get("granularity") == "hour")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2286,8 +2300,8 @@ func (h *Handler) usageDaily(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) usageModels(w http.ResponseWriter, r *http.Request) {
-	since := parseRangeParam(r)
-	rows, err := dbpkg.AggregateModelUsage(h.db, since)
+	since, until := parseWindow(r)
+	rows, err := dbpkg.AggregateModelUsage(h.db, since, until)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2299,9 +2313,9 @@ func (h *Handler) usageModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
-	since := parseRangeParam(r)
+	since, until := parseWindow(r)
 	projectID := r.URL.Query().Get("project_id")
-	rows, err := dbpkg.AggregateSessionUsage(h.db, since, projectID)
+	rows, err := dbpkg.AggregateSessionUsage(h.db, since, until, projectID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2315,7 +2329,8 @@ func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
 // usageTools serves what each tool used (tokens by price class, per tool and model). Only
 // sessions run since the runners started reporting per-call usage have data.
 func (h *Handler) usageTools(w http.ResponseWriter, r *http.Request) {
-	rows, err := dbpkg.ToolCosts(h.db, parseRangeParam(r), r.URL.Query().Get("project_id"))
+	since, until := parseWindow(r)
+	rows, err := dbpkg.ToolCosts(h.db, since, until, r.URL.Query().Get("project_id"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

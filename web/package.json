@@ -10,7 +10,7 @@
     "@/*": "./src/$1"
   },
   "scripts": {
-    "dev": "node --no-warnings --unhandled-rejections=warn ./node_modules/parcel/lib/bin.js index.html --port 5173",
+    "dev": "node -e \"require('fs').rmSync('.parcel-cache',{recursive:true,force:true})\" && node --no-warnings --unhandled-rejections=warn ./node_modules/parcel/lib/bin.js index.html --port 5173",
     "build": "tsc -b && parcel build index.html --dist-dir dist",
     "lint": "eslint .",
     "test": "node --test tests/pendingHooks.test.ts tests/highlight.test.ts tests/commandLine.test.ts tests/tokenPricing.test.ts tests/toolCosts.test.ts"

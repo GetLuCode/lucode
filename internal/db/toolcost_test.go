@@ -58,7 +58,7 @@ func TestToolCostsAttributesTheGrowthOfTheContextToTheToolsThatCausedIt(t *testi
 		t.Fatalf("another session has no tools: %v %v", none, err)
 	}
 
-	rows, err := ToolCosts(d, time.Time{}, "")
+	rows, err := ToolCosts(d, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestToolCostsKeepsSubAgentsAndProjectsApart(t *testing.T) {
 	if err := SaveToolResult(d, "s", "t1", 50, 0, false); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := ToolCosts(d, time.Time{}, "p1")
+	rows, err := ToolCosts(d, time.Time{}, time.Time{}, "p1")
 	if err != nil {
 		t.Fatal(err)
 	}

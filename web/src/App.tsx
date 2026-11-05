@@ -18,6 +18,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { HomeView } from './components/Home/HomeView'
 import { RunningView } from './components/Running/RunningView'
 import { RunnersView } from './components/Runners/RunnersView'
+import { UsagePage } from './components/Usage/UsagePage'
 import { OrchestratorPanel } from './components/Orchestrator/OrchestratorPanel'
 import { OrchestratorOpenButton } from './components/Orchestrator/OrchestratorOpenButton'
 
@@ -106,7 +107,7 @@ export default function App() {
   useEffect(() => {
     const path = location.pathname
     if (path === '/') return // the start page
-    if (['/agents', '/agent', '/kanban', '/running', '/runners', '/checkpoints'].some(p => path.includes(p))) return
+    if (['/agents', '/agent', '/kanban', '/running', '/runners', '/checkpoints', '/usage'].some(p => path.includes(p))) return
     if (!activeProjectId) return
     if (path.includes('/sessions/')) {
       if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
@@ -115,6 +116,7 @@ export default function App() {
     navigate(`/projects/${activeProjectId}/kanban`, { replace: true })
   }, [activeProjectId, activeSessionId, navigate, location.pathname])
 
+  const isUsage = location.pathname === '/usage' // account-wide: no project header, no supervisor panel
   const isHome = location.pathname === '/'
   const isAgentsRoute = location.pathname.includes('/agents')
   const isKanbanRoute = location.pathname.includes('/kanban')
@@ -132,18 +134,18 @@ export default function App() {
       <div className={`app-content${isAgentTab ? ' app-content--agent' : ''}`}>
         <NavPanel />
         <main className={`main${isCheckpointsOpen ? ' main--with-drawer' : ''}`}>
-          {!isHome && <ProjectHeader onOpenSearch={() => setSearchOpen(true)} />}
+          {!isHome && !isUsage && <ProjectHeader onOpenSearch={() => setSearchOpen(true)} />}
           {/* Agents, Kanban and Running replace the chat (full-page views). */}
           <div className="main__content">
             {/* a render error stays inside the page and clears when the route changes */}
             <ErrorBoundary key={location.pathname}>
-              {isHome ? <HomeView /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
+              {isHome ? <HomeView /> : isUsage ? <UsagePage /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
             </ErrorBoundary>
           </div>
           {/* same button on every tab except the chat; the Agent tab already shows the panel */}
-          {!isHome && !isAgentTab && (isAgentsRoute || isKanbanRoute || isRunningRoute) && <OrchestratorOpenButton />}
+          {!isHome && !isUsage && !isAgentTab && (isAgentsRoute || isKanbanRoute || isRunningRoute) && <OrchestratorOpenButton />}
         </main>
-        {!isHome && <OrchestratorPanel full={isAgentTab} />}
+        {!isHome && !isUsage && <OrchestratorPanel full={isAgentTab} />}
         <aside
           className={`checkpoints-drawer${isCheckpointsOpen ? ' checkpoints-drawer--open' : ''}`}
           aria-hidden={!isCheckpointsOpen}

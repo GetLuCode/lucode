@@ -112,7 +112,7 @@ func TestBackfillRebuildsCallsFromRawEvents(t *testing.T) {
 		t.Fatalf("created_at %q (%v) project %q", at, err, project)
 	}
 
-	costs, err := ToolCosts(d, base.Add(-time.Hour), "p1")
+	costs, err := ToolCosts(d, base.Add(-time.Hour), time.Time{}, "p1")
 	if err != nil {
 		t.Fatal(err)
 	}

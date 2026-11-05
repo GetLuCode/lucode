@@ -130,8 +130,8 @@ type toolRow struct {
 func (c callRow) ctx() int { return c.input + c.cc + c.cr }
 
 // ToolCosts totals, per tool and model, what the tool calls since the given time used.
-func ToolCosts(db *sql.DB, since time.Time, projectID string) ([]ToolCostRow, error) {
-	cond, args := `created_at >= ?`, []any{since.Format(time.RFC3339)}
+func ToolCosts(db *sql.DB, since, until time.Time, projectID string) ([]ToolCostRow, error) {
+	cond, args := timeCond("created_at", since, until)
 	if projectID != "" {
 		cond += ` AND project_id = ?`
 		args = append(args, projectID)

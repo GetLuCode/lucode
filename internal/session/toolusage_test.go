@@ -40,7 +40,7 @@ func TestRunnerEventsBecomeTheCostOfEachTool(t *testing.T) {
 		t.Fatal("other events are not tool events: they must go on to the chat")
 	}
 
-	rows, err := dbpkg.ToolCosts(d, time.Time{}, "proj")
+	rows, err := dbpkg.ToolCosts(d, time.Time{}, time.Time{}, "proj")
 	if err != nil {
 		t.Fatal(err)
 	}

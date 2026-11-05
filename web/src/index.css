@@ -5349,6 +5349,9 @@ html, body, #root {
 
 /* a section's title with its filter */
 .usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.usage-page__filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.usage-dayfilter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.usage-dayfilter .usage-select:disabled { opacity: 0.5; }
 .usage-filter { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted); }
 .usage-select {
   background: var(--bg-secondary);

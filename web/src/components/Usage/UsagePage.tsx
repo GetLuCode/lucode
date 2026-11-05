@@ -34,7 +34,7 @@ const MODEL_COLORS = ['#6366f1', '#d97706', '#22c55e', '#f59e0b', '#8b5cf6', '#3
 // ─── Range selector ──────────────────────────────────────────────────────────
 
 interface RangeSelectorProps {
-  value: UsageRange
+  value: UsageRange | null // null while a day is chosen
   onChange: (r: UsageRange) => void
 }
 
@@ -56,6 +56,62 @@ function RangeSelector({ value, onChange }: RangeSelectorProps) {
           {o.label}
         </button>
       ))}
+    </div>
+  )
+}
+
+// ─── Day and hours filter ────────────────────────────────────────────────────
+
+interface DayFilterProps {
+  day: string
+  fromHour: number
+  toHour: number
+  onChange: (f: { day: string; fromHour: number; toHour: number }) => void
+}
+
+// One day (local time) narrowed to an hour span; it replaces the preset range while a day is set.
+function DayFilter({ day, fromHour, toHour, onChange }: DayFilterProps) {
+  const hours = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i)
+  const label = (h: number) => `${String(h % 24).padStart(2, '0')}:00`
+  return (
+    <div className="usage-dayfilter">
+      <label className="usage-filter">
+        <span>Day</span>
+        <input
+          type="date"
+          className="usage-select"
+          value={day}
+          max={new Date().toLocaleDateString('sv')}
+          onChange={e => onChange({ day: e.target.value, fromHour, toHour })}
+        />
+      </label>
+      <label className="usage-filter">
+        <span>From</span>
+        <select
+          className="usage-select"
+          value={fromHour}
+          disabled={!day}
+          onChange={e => { const f = Number(e.target.value); onChange({ day, fromHour: f, toHour: Math.max(toHour, f + 1) }) }}
+        >
+          {hours(0, 23).map(h => <option key={h} value={h}>{label(h)}</option>)}
+        </select>
+      </label>
+      <label className="usage-filter">
+        <span>To</span>
+        <select
+          className="usage-select"
+          value={toHour}
+          disabled={!day}
+          onChange={e => onChange({ day, fromHour, toHour: Number(e.target.value) })}
+        >
+          {hours(fromHour + 1, 24).map(h => <option key={h} value={h}>{h === 24 ? '24:00' : label(h)}</option>)}
+        </select>
+      </label>
+      {day && (
+        <button className="usage-range__btn" onClick={() => onChange({ day: '', fromHour: 0, toHour: 24 })} title="Back to the range">
+          Clear
+        </button>
+      )}
     </div>
   )
 }
@@ -91,29 +147,37 @@ interface DailyChartProps {
   data: DailyUsageRow[]
   chartType: ChartType
   showCache: boolean
+  hourly: boolean // rows are hours ("YYYY-MM-DDTHH", UTC) instead of days
 }
 
-function aggregateByDate(data: DailyUsageRow[]): { date: string; input: number; output: number; cache_read: number; cache_write: number }[] {
-  const map: Record<string, { input: number; output: number; cache_read: number; cache_write: number }> = {}
+interface DayTotals { input: number; output: number; cache_read: number; write_5m: number; write_1h: number }
+
+function aggregateByDate(data: DailyUsageRow[]): ({ date: string } & DayTotals)[] {
+  const map: Record<string, DayTotals> = {}
   for (const row of data) {
-    if (!map[row.date]) map[row.date] = { input: 0, output: 0, cache_read: 0, cache_write: 0 }
+    if (!map[row.date]) map[row.date] = { input: 0, output: 0, cache_read: 0, write_5m: 0, write_1h: 0 }
+    const written = row.cache_creation_input_tokens
+    const oneHour = Math.min(row.cache_creation_1h_input_tokens ?? 0, written)
     map[row.date].input      += row.input_tokens
     map[row.date].output     += row.output_tokens
-    map[row.date].cache_read  += row.cache_read_input_tokens
-    map[row.date].cache_write += row.cache_creation_input_tokens
+    map[row.date].cache_read += row.cache_read_input_tokens
+    map[row.date].write_5m   += written - oneHour
+    map[row.date].write_1h   += oneHour
   }
   return Object.entries(map)
     .map(([date, v]) => ({ date, ...v }))
     .sort((a, b) => a.date.localeCompare(b.date))
 }
 
-function DailyChart({ data, chartType, showCache }: DailyChartProps) {
+function DailyChart({ data, chartType, showCache, hourly }: DailyChartProps) {
   const aggregated = useMemo(() => aggregateByDate(data), [data])
   if (aggregated.length === 0) return <div className="usage-chart__empty">No data for this period</div>
 
   const chartData = aggregated.map(d => ({
     ...d,
-    date: fmtDate(d.date),
+    date: hourly
+      ? new Date(`${d.date}:00:00Z`).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+      : fmtDate(d.date),
   }))
 
   const commonProps = {
@@ -121,12 +185,14 @@ function DailyChart({ data, chartType, showCache }: DailyChartProps) {
     margin: { top: 4, right: 8, left: 0, bottom: 0 },
   }
 
+  // the same colors as "Where the cost goes" (COST_PARTS)
   const bars = [
-    { key: 'input',       name: 'Input',       color: '#6366f1' },
-    { key: 'output',      name: 'Output',      color: '#d97706' },
+    { key: 'input',  name: 'Input',  color: '#3b82f6' },
+    { key: 'output', name: 'Output', color: '#8b5cf6' },
     ...(showCache ? [
-      { key: 'cache_read',  name: 'Cache read',  color: '#22c55e' },
-      { key: 'cache_write', name: 'Cache write', color: '#f59e0b' },
+      { key: 'cache_read', name: 'Cache read',          color: '#22c55e' },
+      { key: 'write_5m',   name: 'Cache write (5 min)', color: '#f59e0b' },
+      { key: 'write_1h',   name: 'Cache write (1 h)',   color: '#d97706' },
     ] : []),
   ]
 
@@ -442,8 +508,18 @@ export function UsagePage() {
   const setTab = (t: UsageTab) => setParams(t === 'overview' ? {} : { tab: t }, { replace: true })
 
   const [range, setRange] = useState<UsageRange>('30d')
+  // A chosen day (local) with an hour span replaces the preset range.
+  const [day, setDay] = useState('')
+  const [fromHour, setFromHour] = useState(0)
+  const [toHour, setToHour] = useState(24)
+  const filter = useMemo<UsageRange | api.UsageWindow>(() => {
+    if (!day) return range
+    const [y, m, d] = day.split('-').map(Number)
+    return { from: new Date(y, m - 1, d, fromHour).toISOString(), to: new Date(y, m - 1, d, toHour).toISOString() }
+  }, [range, day, fromHour, toHour])
+  const hourly = !!day
   const [projectId, setProjectId] = useState('')
-  const [chartType, setChartType] = useState<ChartType>('bar')
+  const [chartType, setChartType] = useState<ChartType>('area')
   const [showCache, setShowCache] = useState(false)
 
   const [dailyData, setDailyData] = useState<DailyUsageRow[]>([])
@@ -459,23 +535,23 @@ export function UsagePage() {
   // Overview: the whole account, by day and by model
   useEffect(() => {
     setLoadingOverview(true)
-    Promise.all([api.getUsageDaily(range), api.getUsageModels(range)])
+    Promise.all([api.getUsageDaily(filter, hourly), api.getUsageModels(filter)])
       .then(([d, m]) => { setDailyData(d); setModelData(m) })
       .catch(() => {})
       .finally(() => setLoadingOverview(false))
-  }, [range])
+  }, [filter, hourly])
 
   // Sessions and tools: they can be narrowed to one project
   useEffect(() => {
     setLoadingDetail(true)
     Promise.all([
-      api.getUsageSessions(range, projectId || undefined),
-      api.getUsageTools(range, projectId || undefined).catch(() => [] as api.ToolCostRow[]), // an older hub has no such route
+      api.getUsageSessions(filter, projectId || undefined),
+      api.getUsageTools(filter, projectId || undefined).catch(() => [] as api.ToolCostRow[]), // an older hub has no such route
     ])
       .then(([s, t]) => { setSessionData(s); setToolData(t) })
       .catch(() => {})
       .finally(() => setLoadingDetail(false))
-  }, [range, projectId])
+  }, [filter, projectId])
 
   const kpis = useMemo(() => {
     const sum = (f: (r: DailyUsageRow) => number) => dailyData.reduce((s, r) => s + f(r), 0)
@@ -503,7 +579,15 @@ export function UsagePage() {
           <h1 className="usage-page__title">Usage</h1>
           <p className="usage-page__subtitle">Tokens and estimated cost (list prices, not billed)</p>
         </div>
-        <RangeSelector value={range} onChange={setRange} />
+        <div className="usage-page__filters">
+          <DayFilter
+            day={day}
+            fromHour={fromHour}
+            toHour={toHour}
+            onChange={f => { setDay(f.day); setFromHour(f.fromHour); setToHour(f.toHour) }}
+          />
+          <RangeSelector value={day ? null : range} onChange={r => { setDay(''); setFromHour(0); setToHour(24); setRange(r) }} />
+        </div>
       </div>
 
       <nav className="usage-tabs" aria-label="Usage sections">
@@ -545,7 +629,7 @@ export function UsagePage() {
 
             <section className="usage-section">
               <div className="usage-section__header">
-                <span className="usage-section-label">Daily token usage</span>
+                <span className="usage-section-label">{hourly ? 'Hourly token usage' : 'Daily token usage'}</span>
                 <div className="usage-section__tools">
                   <label className="usage-cache-toggle">
                     <input type="checkbox" checked={showCache} onChange={e => setShowCache(e.target.checked)} />
@@ -554,7 +638,7 @@ export function UsagePage() {
                   <ChartTypeSelector value={chartType} onChange={setChartType} />
                 </div>
               </div>
-              <DailyChart data={dailyData} chartType={chartType} showCache={showCache} />
+              <DailyChart data={dailyData} chartType={chartType} showCache={showCache} hourly={hourly} />
             </section>
 
             {modelData.length > 0 && (

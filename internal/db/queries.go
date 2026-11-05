@@ -1058,17 +1058,37 @@ type DailyUsageRow struct {
 	TurnCount                int    `json:"turn_count"`
 }
 
-func AggregateDailyUsage(db *sql.DB, since time.Time) ([]DailyUsageRow, error) {
+// tsBound formats a time like the created_at columns (UTC, milliseconds, "Z") so that it
+// compares correctly as text.
+func tsBound(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
+
+// timeCond is `col >= since [AND col < until]`; a zero until means no upper limit.
+func timeCond(col string, since, until time.Time) (string, []any) {
+	cond, args := col+` >= ?`, []any{tsBound(since)}
+	if !until.IsZero() {
+		cond += ` AND ` + col + ` < ?`
+		args = append(args, tsBound(until))
+	}
+	return cond, args
+}
+
+// AggregateDailyUsage groups by UTC day, or by UTC hour ("YYYY-MM-DDTHH") when hourly.
+func AggregateDailyUsage(db *sql.DB, since, until time.Time, hourly bool) ([]DailyUsageRow, error) {
+	bucket := `date(created_at)`
+	if hourly {
+		bucket = `strftime('%Y-%m-%dT%H', created_at)`
+	}
+	cond, args := timeCond("created_at", since, until)
 	rows, err := db.Query(`
-SELECT date(created_at) as day, model,
+SELECT `+bucket+` as day, model,
        SUM(input_tokens), SUM(output_tokens),
        SUM(cache_creation_input_tokens), SUM(cache_read_input_tokens),
        SUM(cache_creation_1h_input_tokens),
        COUNT(*) as turn_count
 FROM turn_usage
-WHERE created_at >= ?
+WHERE `+cond+`
 GROUP BY day, model
-ORDER BY day`, since.Format(time.RFC3339))
+ORDER BY day`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1096,7 +1116,8 @@ type ModelUsageRow struct {
 	TurnCount                int    `json:"turn_count"`
 }
 
-func AggregateModelUsage(db *sql.DB, since time.Time) ([]ModelUsageRow, error) {
+func AggregateModelUsage(db *sql.DB, since, until time.Time) ([]ModelUsageRow, error) {
+	cond, args := timeCond("created_at", since, until)
 	rows, err := db.Query(`
 SELECT model,
        SUM(input_tokens), SUM(output_tokens),
@@ -1104,9 +1125,9 @@ SELECT model,
        SUM(cache_creation_1h_input_tokens),
        COUNT(*) as turn_count
 FROM turn_usage
-WHERE created_at >= ?
+WHERE `+cond+`
 GROUP BY model
-ORDER BY SUM(input_tokens + output_tokens) DESC`, since.Format(time.RFC3339))
+ORDER BY SUM(input_tokens + output_tokens) DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1139,7 +1160,8 @@ type SessionUsageRow struct {
 	CreatedAt                string  `json:"created_at"`
 }
 
-func AggregateSessionUsage(db *sql.DB, since time.Time, projectID string) ([]SessionUsageRow, error) {
+func AggregateSessionUsage(db *sql.DB, since, until time.Time, projectID string) ([]SessionUsageRow, error) {
+	cond, args := timeCond("tu.created_at", since, until)
 	query := `
 SELECT tu.session_id, s.name, tu.project_id, tu.model,
        SUM(tu.input_tokens), SUM(tu.output_tokens),
@@ -1150,8 +1172,7 @@ SELECT tu.session_id, s.name, tu.project_id, tu.model,
        s.created_at
 FROM turn_usage tu
 JOIN sessions s ON s.id = tu.session_id
-WHERE tu.created_at >= ?`
-	args := []any{since.Format(time.RFC3339)}
+WHERE ` + cond
 	if projectID != "" {
 		query += ` AND tu.project_id = ?`
 		args = append(args, projectID)
