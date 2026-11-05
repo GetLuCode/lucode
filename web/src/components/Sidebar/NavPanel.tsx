@@ -47,7 +47,7 @@ export function NavPanel() {
     <aside className="nav-panel nav-panel--collapsed">
       <div className="nav-panel__rail">
         <button className="nav-panel__rail-logo" onClick={() => navigate('/')} title="Home" aria-label="Home" style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-          <img src="/logo-icon.svg" alt="LuCode" width="20" height="20" />
+          <img src={new URL('../../../public/logo-icon.svg', import.meta.url).href} alt="LuCode" width="20" height="20" />
         </button>
 
         {/* project icon buttons */}

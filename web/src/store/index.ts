@@ -1146,7 +1146,7 @@ export const useStore = create<AppState>((set, get) => ({
 
       case 'claude_workspace': {
         const { type: _t, session_id, ...workspace } = event
-        set(s => ({ claudeProcess: { ...s.claudeProcess, [session_id]: { alive: false, ...s.claudeProcess[session_id], workspace } } }))
+        set(s => ({ claudeProcess: { ...s.claudeProcess, [session_id]: { ...s.claudeProcess[session_id], alive: s.claudeProcess[session_id]?.alive ?? false, workspace } } }))
         break
       }
 

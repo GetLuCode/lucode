@@ -15,7 +15,7 @@ export function NavRail({ activePage, onOpenSearch, onNavigate }: NavRailProps) 
     <div className="nav-panel nav-panel--collapsed nav-panel--rail-only">
       <div className="nav-panel__rail">
         <div className="nav-panel__rail-logo">
-          <img src="/logo-icon.svg" alt="LuCode" width="20" height="20" />
+          <img src={new URL('../../../public/logo-icon.svg', import.meta.url).href} alt="LuCode" width="20" height="20" />
         </div>
         <button
           className="nav-panel__rail-btn"

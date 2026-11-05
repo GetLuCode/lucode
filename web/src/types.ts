@@ -191,6 +191,7 @@ export type WSEvent =
   | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
   | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
   | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
+  | { type: 'peers_changed' }
 
 // Structured assistant message content
 export interface AssistantMessage {

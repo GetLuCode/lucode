@@ -1,7 +1,7 @@
 import type { Alert, AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
-const BASE = import.meta.env.VITE_API_BASE ?? ''
+const BASE = process.env.VITE_API_BASE ?? ''
 
 // Active remote lucode instance — when set, all requests are proxied via NATS.
 let activeRemoteId: string | null = null
