@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { DayPicker, type DateRange } from 'react-day-picker'
 import { format } from 'date-fns'
-import { IconArchive, IconBolt, IconBookmark, IconBug, IconCircleCheck, IconPlayerPlay, IconChecklist, IconCategory, IconFilterOff, IconFlask, IconTag, IconTool, IconSearch, IconUserOff, IconUsers, IconX } from '@tabler/icons-react'
+import { IconArchive, IconArchiveOff, IconCheck, IconDotsVertical, IconLayoutKanban, IconList, IconBolt, IconBookmark, IconBug, IconCircleCheck, IconPlayerPlay, IconChecklist, IconCategory, IconFilterOff, IconFlask, IconTag, IconTool, IconSearch, IconUserOff, IconUsers, IconX } from '@tabler/icons-react'
 import 'react-day-picker/style.css'
 import './KanbanFilters.css'
 import type { Agent, KanbanCard } from '../../types'
@@ -81,6 +81,41 @@ function TypeBadge({ type, color, large }: { type: string; color: string; large?
   )
 }
 
+// Three-dot menu of the board: List | Kanban view and the archived toggle.
+function BoardMenu({ view, onViewChange, showArchived, onToggleArchived }: {
+  view: 'list' | 'kanban'
+  onViewChange: (v: 'list' | 'kanban') => void
+  showArchived: boolean
+  onToggleArchived: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const pick = (fn: () => void) => () => { fn(); setOpen(false) }
+  return (
+    <div className="header-menu">
+      <button type="button" className="header-icon-btn" onClick={() => setOpen(v => !v)} title="Board options" aria-label="Board options" aria-expanded={open}>
+        <IconDotsVertical size={16} />
+      </button>
+      {open && (
+        <>
+          <div className="header-menu__backdrop" onClick={() => setOpen(false)} />
+          <div className="nav-tree__dropdown header-menu__dropdown" style={{ minWidth: 170 }}>
+            <button type="button" className="nav-tree__menu-item" onClick={pick(() => onViewChange('list'))}>
+              <IconList size={14} /><span>List</span>{view === 'list' && <IconCheck size={14} style={{ marginLeft: 'auto' }} />}
+            </button>
+            <button type="button" className="nav-tree__menu-item" onClick={pick(() => onViewChange('kanban'))}>
+              <IconLayoutKanban size={14} /><span>Kanban</span>{view === 'kanban' && <IconCheck size={14} style={{ marginLeft: 'auto' }} />}
+            </button>
+            <button type="button" className="nav-tree__menu-item" onClick={pick(onToggleArchived)}>
+              {showArchived ? <IconArchiveOff size={14} /> : <IconArchive size={14} />}
+              <span>{showArchived ? 'Hide archived' : 'Show archived'}</span>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // A date-range filter: a pill that opens a popover with presets and a two-month calendar.
 function DateRangeFilter({ label, value, onChange }: {
   label: string; value: DateRange | undefined; onChange: (r: DateRange | undefined) => void
@@ -131,7 +166,9 @@ function DateRangeFilter({ label, value, onChange }: {
   )
 }
 
-export function KanbanFilters({ filters, onChange, types, typeColor, agents, showArchived, onToggleArchived, shown, total }: {
+export function KanbanFilters({ filters, onChange, types, typeColor, agents, showArchived, onToggleArchived, view, onViewChange }: {
+  view: 'list' | 'kanban'
+  onViewChange: (v: 'list' | 'kanban') => void
   filters: KanbanFilterState
   onChange: (f: KanbanFilterState) => void
   types: string[]
@@ -260,17 +297,15 @@ export function KanbanFilters({ filters, onChange, types, typeColor, agents, sho
         <DateRangeFilter label="Finished" value={filters.finished} onChange={r => set({ finished: r })} />
 
         <div className="kf-end">
-          <span className="kf-count"><b>{shown}</b> of {total} cards</span>
-          <button type="button" role="switch" aria-checked={showArchived} className={`kf-switch${showArchived ? ' kf-switch--on' : ''}`} onClick={onToggleArchived}>
-            <span className="kf-switch__track"><span className="kf-switch__thumb" /></span>
-            <IconArchive size={13} /> Archived
-          </button>
           {active > 0 && (
             <button type="button" className="kf-clear" onClick={() => onChange(NO_FILTERS)}>
               <IconFilterOff size={13} /> Clear <span className="kf-clear__n">{active}</span>
             </button>
           )}
         </div>
+      </div>
+      <div className="kf-menu">
+        <BoardMenu view={view} onViewChange={onViewChange} showArchived={showArchived} onToggleArchived={onToggleArchived} />
       </div>
     </section>
   )

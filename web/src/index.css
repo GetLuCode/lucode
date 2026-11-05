@@ -4729,30 +4729,64 @@ html, body, #root {
   text-overflow: ellipsis;
 }
 
-/* ---- Mobile sidebar (≤700px): floating / overlay ---- */
+/* ---- Mobile sidebar (≤700px): hidden, opened as an overlay from the logo ---- */
 
-.nav-panel__backdrop {
+.nav-panel__backdrop,
+.mobile-bar {
   display: none;
 }
 
 @media (max-width: 700px) {
+  .mobile-bar {
+    display: flex;
+    align-items: center;
+    height: 40px;
+    flex-shrink: 0;
+    padding: 0 8px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .mobile-bar__logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 32px;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .mobile-bar__actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+  }
+
+  .mobile-bar .usage-meters { margin-right: 0; }
+
+  .mobile-bar__logo:active {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  }
+
+  /* off-screen until opened; `left` (not transform) so fixed modals inside stay viewport-relative */
   .nav-panel {
     position: fixed;
     top: 0;
-    left: 0;
+    left: -40px;
     height: 100%;
     z-index: 200;
-    /* shadow when expanded */
+    transition: left 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .nav-panel--mobile-open {
+    left: 0;
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6);
   }
 
-  /* push main content just enough to clear the collapsed rail */
-  .main {
-    margin-left: 36px;
-  }
-
-  /* backdrop behind the open panel */
-  .nav-panel__backdrop {
+  .nav-panel--mobile-open .nav-panel__backdrop {
     display: block;
     position: fixed;
     inset: 0;

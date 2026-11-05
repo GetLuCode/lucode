@@ -24,6 +24,7 @@ import { OrchestratorOpenButton } from './components/Orchestrator/OrchestratorOp
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
+  const [navOpen, setNavOpen] = useState(false) // left bar as an overlay (phone width only)
   const loadProjects = useStore(s => s.loadProjects)
   const setActiveProject = useStore(s => s.setActiveProject)
   const setActiveSession = useStore(s => s.setActiveSession)
@@ -116,6 +117,9 @@ export default function App() {
     navigate(`/projects/${activeProjectId}/kanban`, { replace: true })
   }, [activeProjectId, activeSessionId, navigate, location.pathname])
 
+  // Any navigation closes the overlay.
+  useEffect(() => { setNavOpen(false) }, [location.pathname])
+
   const isUsage = location.pathname === '/usage' // account-wide: no project header, no supervisor panel
   const isHome = location.pathname === '/'
   const isAgentsRoute = location.pathname.includes('/agents')
@@ -131,8 +135,14 @@ export default function App() {
       <HookToastContainer />
       <SpotlightSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
       <RawEventsModal />
+      <div className="mobile-bar">
+        <button className="mobile-bar__logo" onClick={() => setNavOpen(v => !v)} aria-label="Menu" aria-expanded={navOpen}>
+          <img src={new URL('../public/logo-icon.svg', import.meta.url).href} alt="LuCode" width="24" height="24" />
+        </button>
+        <div id="mobile-bar-actions" className="mobile-bar__actions" />
+      </div>
       <div className={`app-content${isAgentTab ? ' app-content--agent' : ''}`}>
-        <NavPanel />
+        <NavPanel mobileOpen={navOpen} onMobileClose={() => setNavOpen(false)} />
         <main className={`main${isCheckpointsOpen ? ' main--with-drawer' : ''}`}>
           {!isHome && !isUsage && <ProjectHeader onOpenSearch={() => setSearchOpen(true)} />}
           {/* Agents, Kanban and Running replace the chat (full-page views). */}

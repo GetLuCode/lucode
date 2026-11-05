@@ -13,7 +13,7 @@ import * as api from '../../api'
 
 // The icon rail: projects, usage, task manager, settings and sign out.
 // Everything about the active project, and the search, live in the project header.
-export function NavPanel() {
+export function NavPanel({ mobileOpen = false, onMobileClose }: { mobileOpen?: boolean; onMobileClose?: () => void }) {
   const navigate = useNavigate()
   const projects = useStore(s => s.projects)
   const activeProjectId = useStore(s => s.activeProjectId)
@@ -44,7 +44,8 @@ export function NavPanel() {
   }
 
   return (
-    <aside className="nav-panel nav-panel--collapsed">
+    <aside className={`nav-panel nav-panel--collapsed${mobileOpen ? ' nav-panel--mobile-open' : ''}`}>
+      <div className="nav-panel__backdrop" onClick={onMobileClose} />
       <div className="nav-panel__rail">
         <button className="nav-panel__rail-logo" onClick={() => navigate('/')} title="Home" aria-label="Home" style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
           <img src={new URL('../../../public/logo-icon.svg', import.meta.url).href} alt="LuCode" width="20" height="20" />

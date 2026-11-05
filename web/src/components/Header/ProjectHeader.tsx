@@ -1,6 +1,8 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { IconCpu, IconEdit, IconRobot, IconSearch, IconTrash, IconUpload } from '@tabler/icons-react'
+import { IconCpu, IconEdit, IconInfoCircle, IconRobot, IconSearch, IconTrash, IconUpload } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import { RunnersButton } from '../Sidebar/RunnersList'
 import { ProjectEnvironmentModal } from '../Sidebar/ProjectEnvironmentModal'
@@ -21,13 +23,19 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const importRef = useRef<HTMLInputElement>(null)
   const runningCount = useStore(s => s.sessions.filter(x => x.card_id && (s.sessionStatus[x.id] ?? x.status) === 'running').length)
 
+  const isMobile = useIsMobile()
+  // Looked up after mount: the slot is rendered by App in the same commit as this header.
+  const [mobileSlot, setMobileSlot] = useState<HTMLElement | null>(null)
+  useEffect(() => { setMobileSlot(isMobile ? document.getElementById('mobile-bar-actions') : null) }, [isMobile])
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState('')
   const [envOpen, setEnvOpen] = useState(false)
+  const [infoOpen, setInfoOpen] = useState(false)
 
   const project = projects.find(p => p.id === activeProjectId)
   if (!project) return null
+  // At phone width the actions live in the mobile bar (App.tsx), next to the logo.
 
   const base = `/projects/${project.id}`
   const onAgents = pathname.includes('/agents')
@@ -61,6 +69,25 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
     }
   }
 
+  const actions = (
+      <div className="project-header__actions">
+        <UsageMeters />
+        <button className="header-icon-btn" onClick={onOpenSearch} title="Search (Ctrl+K)" aria-label="Search">
+          <IconSearch size={16} />
+        </button>
+        <AlertsBell projectId={project.id} />
+        <RunnersButton />
+        <button
+          className={`header-icon-btn${onAgents ? ' header-icon-btn--active' : ''}`}
+          onClick={() => navigate(`${base}/agents`)}
+          title="Agents"
+          aria-label="Agents"
+        >
+          <IconRobot size={16} />
+        </button>
+      </div>
+  )
+
   return (
     <header className="project-header">
       <div className="project-header__project">
@@ -80,13 +107,15 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
         ) : (
           <span className="project-header__name" title={project.name}>{project.name}</span>
         )}
-        <ProjectEnvInfo project={project} />
         <div className="header-menu">
           <button className="header-icon-btn" onClick={() => setMenuOpen(v => !v)} title="Project menu" aria-label="Project menu">⋯</button>
           {menuOpen && (
             <>
               <div className="header-menu__backdrop" onClick={() => setMenuOpen(false)} />
               <div className="nav-tree__dropdown header-menu__dropdown header-menu__dropdown--left">
+                <button className="nav-tree__menu-item" onClick={() => { setInfoOpen(true); setMenuOpen(false) }}>
+                  <IconInfoCircle size={14} /><span>Info</span>
+                </button>
                 <button className="nav-tree__menu-item" onClick={() => { setName(project.name); setEditing(true); setMenuOpen(false) }}>
                   <IconEdit size={14} /><span>Rename</span>
                 </button>
@@ -117,7 +146,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
         <button
           className={`project-tab${onKanban ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/kanban`)}
-        >Kanban</button>
+        >Work</button>
         <button
           className={`project-tab${onRunning ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/running`)}
@@ -127,23 +156,9 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
         </button>
       </nav>
 
-      <div className="project-header__actions">
-        <UsageMeters />
-        <button className="header-icon-btn" onClick={onOpenSearch} title="Search (Ctrl+K)" aria-label="Search">
-          <IconSearch size={16} />
-        </button>
-        <AlertsBell projectId={project.id} />
-        <RunnersButton />
-        <button
-          className={`header-icon-btn${onAgents ? ' header-icon-btn--active' : ''}`}
-          onClick={() => navigate(`${base}/agents`)}
-          title="Agents"
-          aria-label="Agents"
-        >
-          <IconRobot size={16} />
-        </button>
-      </div>
+      {isMobile ? (mobileSlot && createPortal(actions, mobileSlot)) : actions}
 
+      {infoOpen && <ProjectEnvInfo project={project} onClose={() => setInfoOpen(false)} />}
       {envOpen && (
         <ProjectEnvironmentModal
           project={project}

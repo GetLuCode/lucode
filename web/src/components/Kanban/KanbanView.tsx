@@ -591,6 +591,72 @@ function KanbanCardItem({ card, agents, onClick, onReview, onDragStart, onDragOv
   )
 }
 
+// ---- List view ---------------------------------------------------------------
+
+// The same cards as the board, grouped by status (list) as rows. Tasks are added per group.
+function KanbanListView({ lists, cards, agents, onCardClick, onAddCard }: {
+  lists: KanbanList[]
+  cards: KanbanCard[]
+  agents: Agent[]
+  onCardClick: (c: KanbanCard) => void
+  onAddCard: (listId: string, title: string) => void
+}) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  return (
+    <div className="klist">
+      {lists.map(list => {
+        const rows = cards.filter(c => c.list_id === list.id).sort((a, b) => a.position - b.position)
+        return (
+          <section key={list.id}>
+            <div className="klist__group-head">{list.name} <span className="klist__count">{rows.length}</span></div>
+            <div className="klist__rows">
+              {rows.length === 0 && <div className="klist__empty">No tasks</div>}
+              {rows.map(c => <KanbanListRow key={c.id} card={c} agents={agents} onClick={() => onCardClick(c)} />)}
+              <input
+                className="klist__add"
+                placeholder="+ Add a task…"
+                value={drafts[list.id] ?? ''}
+                onChange={e => setDrafts(d => ({ ...d, [list.id]: e.target.value }))}
+                onKeyDown={e => {
+                  const v = (drafts[list.id] ?? '').trim()
+                  if (e.key === 'Enter' && v) { onAddCard(list.id, v); setDrafts(d => ({ ...d, [list.id]: '' })) }
+                  if (e.key === 'Escape') setDrafts(d => ({ ...d, [list.id]: '' }))
+                }}
+              />
+            </div>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
+function KanbanListRow({ card, agents, onClick }: { card: KanbanCard; agents: Agent[]; onClick: () => void }) {
+  const agent = agents.find(a => a.id === card.agent_id)
+  const runStatus = useStore(s => {
+    const sess = s.sessions.find(x => x.card_id === card.id)
+    return sess ? (s.sessionStatus[sess.id] ?? sess.status) : undefined
+  })
+  const badge = runStatus ? STATUS_BADGE[runStatus] : undefined
+  const isOverdue = card.end_date && new Date(card.end_date) < new Date()
+  return (
+    <div className="klist__row" onClick={onClick}>
+      <span className="klist__type" style={{ color: typeColor(card.card_type) }}>{card.card_type}</span>
+      <p className="klist__title" title={card.title}>{card.title}</p>
+      <div className="klist__meta">
+        {card.tags.slice(0, 2).map(t => <span key={t} className="kcard__tag">{t}</span>)}
+        {(card.end_date || card.start_date) && (
+          <span className={`kcard__date${isOverdue ? ' kcard__date--overdue' : ''}`}>
+            <IconCalendar size={11} />{formatDate(card.end_date || card.start_date)}
+          </span>
+        )}
+        {badge && <span style={{ color: badge.color }}>{badge.label}</span>}
+        {agent && <CardAgent agent={agent} />}
+      </div>
+    </div>
+  )
+}
+
 // The agent of a card: just its avatar, on the right; hovering shows its name.
 function CardAgent({ agent }: { agent: Agent }) {
   const [open, setOpen] = useState(false)
@@ -750,6 +816,13 @@ export function KanbanView() {
   const [cards, setCards] = useState<KanbanCard[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [showArchived, setShowArchived] = useState(false)
+  const [view, setViewState] = useState<'list' | 'kanban'>(() => {
+    try { return localStorage.getItem('lucode.work.view') === 'list' ? 'list' : 'kanban' } catch { return 'kanban' }
+  })
+  const setView = (v: 'list' | 'kanban') => {
+    setViewState(v)
+    try { localStorage.setItem('lucode.work.view', v) } catch { /* private mode */ }
+  }
   const [filters, setFilters] = useState<KanbanFilterState>(NO_FILTERS)
   const [selectedCard, setSelectedCard] = useState<KanbanCard | null>(null)
   const [reviewCard, setReviewCard] = useState<KanbanCard | null>(null)
@@ -965,11 +1038,16 @@ export function KanbanView() {
         agents={agents}
         showArchived={showArchived}
         onToggleArchived={() => setShowArchived(v => !v)}
-        shown={visibleCards.length}
-        total={cards.filter(c => showArchived || !c.archived).length}
+        view={view}
+        onViewChange={setView}
       />
-      {/* board */}
-      <div className="kanban-board" ref={boardRef}>
+      <div className="kanban-content">
+        <span className="kanban-count"><b>{visibleCards.length}</b> of {cards.filter(c => showArchived || !c.archived).length} cards</span>
+      {view === 'list' && (
+        <KanbanListView lists={lists} cards={visibleCards} agents={agents} onCardClick={setSelectedCard} onAddCard={handleAddCard} />
+      )}
+      {/* board (kept mounted in list view: its wheel handler is bound to this element) */}
+      <div className="kanban-board" ref={boardRef} style={view === 'list' ? { display: 'none' } : undefined}>
         {loading && <div className="kanban-board__loading">Loading…</div>}
 
         {lists.map(list => (
@@ -1014,6 +1092,7 @@ export function KanbanView() {
             </button>
           )
         )}
+      </div>
       </div>
 
       {/* review: merge the branch an agent left, or send it back */}

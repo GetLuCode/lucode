@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import * as api from '../../api'
 import type { AIProfile } from '../../types'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { AccountAvatar } from './AccountAvatar'
 
 interface Win { pct: number | null; reset: string | null }
@@ -23,6 +24,7 @@ interface Meter {
 export function UsageMeters() {
   const [meters, setMeters] = useState<Meter[]>([])
   const [open, setOpen] = useState(false)
+  const isMobile = useIsMobile() // phone: just the avatar, the bars are in the modal
 
   useEffect(() => {
     let live = true
@@ -87,7 +89,7 @@ export function UsageMeters() {
         {shown.map(m => (
           <div key={m.key} className="usage-meter" title={tooltip(m)}>
             <AccountAvatar id={m.ai.id} name={m.ai.name} size={20} />
-            {m.error ? <span className="usage-meter__err">n/a</span> : (
+            {isMobile ? null : m.error ? <span className="usage-meter__err">n/a</span> : (
               <>
                 <Bar label="5h" pct={m.five} />
                 <Bar label="7d" pct={m.seven} />

@@ -407,6 +407,11 @@ func spaHandler(spaFS fs.FS) http.Handler {
 			return
 		}
 		f.Close()
+		if strings.HasSuffix(path, "sw.js") {
+			// The service worker lives under /src/ in the Parcel build; this lets it control "/".
+			w.Header().Set("Service-Worker-Allowed", "/")
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		fileServer.ServeHTTP(w, r)
 	})
 }
