@@ -293,6 +293,104 @@ function SessionTable({ data }: { data: SessionUsageRow[] }) {
   )
 }
 
+// ─── Tool table ───────────────────────────────────────────────────────────────
+
+interface ToolTotals {
+  tool: string
+  calls: number
+  errors: number
+  unmeasured: number
+  resultTokens: number
+  carriedRead: number
+  outputTokens: number
+  // dollars: asking for the tool, writing its result to the cache, re-reading it in later calls
+  askCost: number
+  writeCost: number
+  readCost: number
+}
+
+// The tool rows come per model; add them up per tool, priced model by model.
+function totalsByTool(rows: api.ToolCostRow[]): ToolTotals[] {
+  const by = new Map<string, ToolTotals>()
+  for (const r of rows) {
+    const t = by.get(r.tool) ?? {
+      tool: r.tool, calls: 0, errors: 0, unmeasured: 0, resultTokens: 0, carriedRead: 0, outputTokens: 0,
+      askCost: 0, writeCost: 0, readCost: 0,
+    }
+    t.calls += r.calls
+    t.errors += r.errors
+    t.unmeasured += r.unmeasured
+    t.resultTokens += r.result_tokens
+    t.carriedRead += r.carried_read
+    t.outputTokens += r.output_tokens
+    t.askCost += estimateCost(r.model, 0, r.output_tokens)
+    t.writeCost += estimateCost(r.model, r.uncached, 0, 0, r.written_5m, r.written_1h)
+    t.readCost += estimateCost(r.model, 0, 0, r.carried_read)
+    by.set(r.tool, t)
+  }
+  return [...by.values()]
+}
+
+type ToolSort = 'calls' | 'cost'
+
+function ToolTable({ data }: { data: api.ToolCostRow[] }) {
+  const [sortKey, setSortKey] = useState<ToolSort>('cost')
+  const rows = useMemo(() => {
+    const cost = (t: ToolTotals) => t.askCost + t.writeCost + t.readCost
+    return totalsByTool(data).sort((a, b) => sortKey === 'cost' ? cost(b) - cost(a) : b.calls - a.calls)
+  }, [data, sortKey])
+
+  if (rows.length === 0) {
+    return (
+      <div className="usage-chart__empty">
+        No tool data in this period yet. It is collected from sessions run after the runners were updated.
+      </div>
+    )
+  }
+  const th = (key: ToolSort, label: string) => (
+    <th onClick={() => setSortKey(key)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+      {label} {sortKey === key ? '↓' : ''}
+    </th>
+  )
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table className="usage-table">
+        <thead>
+          <tr>
+            <th>Tool</th>
+            {th('calls', 'Calls')}
+            <th>Errors</th>
+            <th title="Tokens its results added to the context, per call">Avg result</th>
+            <th title="Result tokens x the later calls that re-read them from the cache">Re-read tokens</th>
+            <th title="What the model wrote to ask for the tool">Output</th>
+            {th('cost', 'Est. cost')}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(t => {
+            const measured = t.calls - t.unmeasured
+            const cost = t.askCost + t.writeCost + t.readCost
+            const tip = `Asking for it: ${formatCost(t.askCost)}\nWriting its results to the cache: ${formatCost(t.writeCost)}\n` +
+              `Re-reading its results in later calls: ${formatCost(t.readCost)}` +
+              (t.unmeasured ? `\n${t.unmeasured} call(s) ended a turn: their result could not be measured` : '')
+            return (
+              <tr key={t.tool}>
+                <td className="usage-table__model">{t.tool.replace(/^mcp__lucode__/, 'lucode:')}</td>
+                <td>{fmtNum(t.calls)}</td>
+                <td>{t.errors || ''}</td>
+                <td>{measured > 0 ? fmtNum(Math.round(t.resultTokens / measured)) : '—'}</td>
+                <td>{fmtNum(t.carriedRead)}</td>
+                <td>{fmtNum(t.outputTokens)}</td>
+                <td title={tip}>{formatCost(cost)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ─── Main page ───────────────────────────────────────────────────────────────
 
 export function UsagePage() {
@@ -303,6 +401,7 @@ export function UsagePage() {
   const [dailyData, setDailyData] = useState<DailyUsageRow[]>([])
   const [modelData, setModelData] = useState<ModelUsageRow[]>([])
   const [sessionData, setSessionData] = useState<SessionUsageRow[]>([])
+  const [toolData, setToolData] = useState<api.ToolCostRow[]>([])
   const [loading, setLoading] = useState(true)
 
   const loadProjects = useStore(s => s.loadProjects)
@@ -314,10 +413,12 @@ export function UsagePage() {
       api.getUsageDaily(range),
       api.getUsageModels(range),
       api.getUsageSessions(range),
-    ]).then(([d, m, s]) => {
+      api.getUsageTools(range).catch(() => [] as api.ToolCostRow[]), // an older hub has no such route
+    ]).then(([d, m, s, t]) => {
       setDailyData(d)
       setModelData(m)
       setSessionData(s)
+      setToolData(t)
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [range])
@@ -410,6 +511,12 @@ export function UsagePage() {
               </div>
             </div>
           )}
+
+          {/* Tools: most used and most expensive */}
+          <div className="usage-section">
+            <div className="usage-section-label">Tools</div>
+            <ToolTable data={toolData} />
+          </div>
 
           {/* Session breakdown */}
           <div className="usage-section">

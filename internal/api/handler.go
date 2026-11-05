@@ -211,6 +211,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/usage/daily", h.usageDaily)
 	mux.HandleFunc("GET /api/usage/models", h.usageModels)
 	mux.HandleFunc("GET /api/usage/sessions", h.usageSessions)
+	mux.HandleFunc("GET /api/usage/tools", h.usageTools)
 	mux.HandleFunc("GET /api/sessions/{id}/first-turn-usage", h.firstTurnUsage)
 
 	mux.HandleFunc("GET /ws", h.globalWS)
@@ -2310,9 +2311,30 @@ func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, rows)
 }
 
-// firstTurnUsage serves the tokens of the session's first turn (404 until it has one).
+// usageTools serves what each tool used (tokens by price class, per tool and model). Only
+// sessions run since the runners started reporting per-call usage have data.
+func (h *Handler) usageTools(w http.ResponseWriter, r *http.Request) {
+	rows, err := dbpkg.ToolCosts(h.db, parseRangeParam(r), r.URL.Query().Get("project_id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []dbpkg.ToolCostRow{}
+	}
+	jsonResp(w, http.StatusOK, rows)
+}
+
+// firstTurnUsage serves what the session's initial context billed (404 until it has usage).
+// Exact when the runner reported per-call usage: then it is the very first call. Older
+// sessions only have the turn totals, which were the LAST call of the turn: not the first.
 func (h *Handler) firstTurnUsage(w http.ResponseWriter, r *http.Request) {
-	u, err := dbpkg.FirstTurnUsage(h.db, r.PathValue("id"))
+	id := r.PathValue("id")
+	u, written1h, err := dbpkg.FirstCallUsage(h.db, id)
+	exact := err == nil
+	if errors.Is(err, sql.ErrNoRows) {
+		u, err = dbpkg.FirstTurnUsage(h.db, id)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "no usage yet", http.StatusNotFound)
 		return
@@ -2321,7 +2343,11 @@ func (h *Handler) firstTurnUsage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResp(w, http.StatusOK, u)
+	jsonResp(w, http.StatusOK, struct {
+		dbpkg.TurnUsage
+		Exact           bool `json:"exact"`
+		CacheCreation1h int  `json:"cache_creation_1h_tokens"` // of the written tokens, the ones billed at the 1h price
+	}{u, exact, written1h})
 }
 
 // remoteProxy intercepts requests with X-Lucode-Remote header and forwards

@@ -282,6 +282,10 @@ export const getUsageSessions = (range: UsageRange, projectId?: string) =>
 // The tokens of a session's first turn (what its initial context really wrote to / read from
 // the cache). Rejects with a 404 until the session has one.
 export interface FirstTurnUsage {
+  // true: the session's very first call to the model (exactly what its initial context billed).
+  // false: an older session, only with the turn totals, which hold the LAST call of the turn.
+  exact?: boolean
+  cache_creation_1h_tokens?: number // of the written tokens, the ones billed at the 1h price
   model: string
   input_tokens: number
   output_tokens: number
@@ -290,6 +294,23 @@ export interface FirstTurnUsage {
 }
 export const getFirstTurnUsage = (sessionId: string) =>
   req<FirstTurnUsage>('GET', `/api/sessions/${sessionId}/first-turn-usage`)
+
+// What one tool used in one model, in tokens by price class (see internal/db/toolcost.go).
+export interface ToolCostRow {
+  tool: string
+  model: string
+  calls: number
+  errors: number
+  result_tokens: number  // added to the context by its results
+  unmeasured: number     // calls whose result was never measured (the last call of a turn)
+  output_tokens: number  // the model's output to ask for them
+  written_1h: number     // result tokens written to the cache with a 1h TTL
+  written_5m: number
+  uncached: number
+  carried_read: number   // result tokens x the later calls that re-read them
+}
+export const getUsageTools = (range: UsageRange, projectId?: string) =>
+  req<ToolCostRow[]>('GET', `/api/usage/tools?range=${range}${projectId ? `&project_id=${projectId}` : ''}`)
 
 // User Tools
 export const listUserTools = () => req<UserTool[]>('GET', '/api/tools')

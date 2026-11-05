@@ -395,6 +395,41 @@ CREATE INDEX IF NOT EXISTS idx_kanban_lists_project ON kanban_lists(project_id, 
 		return fmt.Errorf("create kanban_lists: %w", err)
 	}
 
+	// api_calls / tool_calls — what each API call used and how big each tool result was,
+	// reported by the runner; they tell what every tool costs (see toolcost.go)
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS api_calls (
+    id                          TEXT PRIMARY KEY,
+    session_id                  TEXT NOT NULL,
+    project_id                  TEXT NOT NULL DEFAULT '',
+    parent                      TEXT NOT NULL DEFAULT '',
+    first_in_turn               INTEGER NOT NULL DEFAULT 0,
+    model                       TEXT NOT NULL DEFAULT '',
+    input_tokens                INTEGER NOT NULL DEFAULT 0,
+    output_tokens               INTEGER NOT NULL DEFAULT 0,
+    cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_input_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_creation_1h_tokens    INTEGER NOT NULL DEFAULT 0,
+    cache_creation_5m_tokens    INTEGER NOT NULL DEFAULT 0,
+    created_at                  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session_id);
+CREATE INDEX IF NOT EXISTS idx_api_calls_created ON api_calls(created_at);
+CREATE TABLE IF NOT EXISTS tool_calls (
+    tool_use_id   TEXT PRIMARY KEY,
+    session_id    TEXT NOT NULL,
+    call_id       TEXT NOT NULL DEFAULT '',
+    name          TEXT NOT NULL DEFAULT '',
+    has_result    INTEGER NOT NULL DEFAULT 0,
+    result_chars  INTEGER NOT NULL DEFAULT 0,
+    result_images INTEGER NOT NULL DEFAULT 0,
+    is_error      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_call ON tool_calls(call_id);
+`); err != nil {
+		return fmt.Errorf("create api_calls: %w", err)
+	}
+
 	// kanban_cards — cards belonging to a list
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS kanban_cards (

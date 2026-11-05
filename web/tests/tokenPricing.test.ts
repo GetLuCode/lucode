@@ -11,6 +11,11 @@ test('cache reads cost 10% and cache writes 125% of the input price', () => {
   near(estimateCost('claude-sonnet-4-6', 0, 0, 0, 1_000_000), 3.75)
 })
 
+test('writes to the 1 hour cache cost 200% of the input price', () => {
+  near(estimateCost('claude-sonnet-4-6', 0, 0, 0, 0, 1_000_000), 6)
+  near(estimateCost('claude-sonnet-4-6', 0, 0, 0, 1_000_000, 1_000_000), 3.75 + 6)
+})
+
 test('output tokens are priced separately', () => {
   near(estimateCost('claude-sonnet-4-6', 0, 1_000_000), 15)
 })

@@ -54,6 +54,7 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	accum := newTurnAccum()
+	tracker := newToolTracker()
 	turnCompleted := false
 
 	for scanner.Scan() {
@@ -66,6 +67,9 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 
 		if wt := EnteredWorktree(line); wt != "" {
 			publish(WorkspaceEvent(req.SessionID, wt))
+		}
+		for _, ev := range tracker.observe(req.SessionID, line) {
+			publish(ev)
 		}
 		event, isResult, err := ParseLine(req.SessionID, line)
 		if err != nil {
@@ -330,9 +334,11 @@ func (a *turnAccum) process(raw json.RawMessage, sessionID string) []accumMessag
 			} `json:"message"`
 		}
 		if err := json.Unmarshal(outer.Event, &msgStart); err == nil {
-			a.inputTokens = msgStart.Message.Usage.InputTokens
-			a.cacheCreationInputTokens = msgStart.Message.Usage.CacheCreationInputTokens
-			a.cacheReadInputTokens = msgStart.Message.Usage.CacheReadInputTokens
+			// a turn makes several API calls (one per tool round) and each bills its own
+			// input and cache: the turn's usage is the sum, not the last call
+			a.inputTokens += msgStart.Message.Usage.InputTokens
+			a.cacheCreationInputTokens += msgStart.Message.Usage.CacheCreationInputTokens
+			a.cacheReadInputTokens += msgStart.Message.Usage.CacheReadInputTokens
 		}
 
 	case "message_delta":
@@ -342,7 +348,7 @@ func (a *turnAccum) process(raw json.RawMessage, sessionID string) []accumMessag
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal(outer.Event, &msgDelta); err == nil {
-			a.outputTokens = msgDelta.Usage.OutputTokens
+			a.outputTokens += msgDelta.Usage.OutputTokens
 		}
 
 	case "content_block_start":

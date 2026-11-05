@@ -190,6 +190,7 @@ func (l *Live) loop(stdout io.Reader) {
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	accum := newTurnAccum()
+	tracker := newToolTracker()
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -199,6 +200,9 @@ func (l *Live) loop(stdout io.Reader) {
 
 		if wt := EnteredWorktree(line); wt != "" {
 			l.publish(WorkspaceEvent(sessID, wt))
+		}
+		for _, ev := range tracker.observe(sessID, line) {
+			l.publish(ev)
 		}
 		event, isResult, err := ParseLine(sessID, line)
 		if err != nil {

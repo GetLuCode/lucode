@@ -195,7 +195,8 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
           const written = firstTurn.cache_creation_input_tokens
           const read = firstTurn.cache_read_input_tokens
           const fresh = firstTurn.input_tokens
-          const cWritten = estimateCost(model, 0, 0, 0, written)
+          const written1h = Math.min(firstTurn.cache_creation_1h_tokens ?? 0, written)
+          const cWritten = estimateCost(model, 0, 0, 0, written - written1h, written1h)
           const cRead = estimateCost(model, 0, 0, read, 0)
           const cFresh = estimateCost(model, fresh, 0)
           const real = cWritten + cRead + cFresh
@@ -212,9 +213,11 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
             <>
               <div
                 className="context-detail__section"
-                title={'What the session’s first turn really billed for its input. A turn can make several API calls, so reads can include re-reads inside that turn; writes are what this session had to add to the cache.'}
-              >Initial context: real cost (first turn)</div>
-              {row(COLOR_MAP.cacheWrite, 'Written to cache', 'Not found in the cache: billed at 125% of the input price', written, cWritten)}
+                title={firstTurn.exact
+                  ? 'The session’s very first call to the model: exactly what its initial context billed.'
+                  : 'An older session: only its turn totals were kept, and those are the LAST call of the turn (after its tool results), so this is not the initial context. Sessions run now report every call.'}
+              >{firstTurn.exact ? 'Initial context: real cost (first call)' : 'First turn, last call (older session: approximate)'}</div>
+              {row(COLOR_MAP.cacheWrite, 'Written to cache', 'Not found in the cache: billed at 125% (5 min cache) or 200% (1 h cache) of the input price', written, cWritten)}
               {row(COLOR_MAP.cacheRead, 'Read from cache', 'Found in the cache (this or another session with the same prefix): billed at 10%', read, cRead)}
               {row(COLOR_MAP.input, 'Uncached input', 'Billed at the full input price', fresh, cFresh)}
               <div className="context-detail__row context-detail__row--muted">

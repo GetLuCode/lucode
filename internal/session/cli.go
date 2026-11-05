@@ -256,6 +256,9 @@ func (m *Manager) CloseLive(sessID string) {
 // shared by one-shot runs and live processes (which keep calling it across turns).
 func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]any) {
 	return func(ev map[string]any) {
+		if m.saveToolEvent(sessID, opts.ProjectID, ev) {
+			return // for the cost of tools only: not for the chat stream nor raw_events
+		}
 		evType, _ := ev["type"].(string)
 		switch evType {
 		case "message_ready":
