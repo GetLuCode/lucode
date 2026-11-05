@@ -10,7 +10,7 @@
     "@/*": "./src/$1"
   },
   "scripts": {
-    "dev": "parcel index.html --port 5173",
+    "dev": "node --no-warnings --unhandled-rejections=warn ./node_modules/parcel/lib/bin.js index.html --port 5173",
     "build": "tsc -b && parcel build index.html --dist-dir dist",
     "lint": "eslint .",
     "test": "node --test tests/pendingHooks.test.ts tests/highlight.test.ts tests/commandLine.test.ts"
@@ -54,6 +54,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "http-proxy-middleware": "^2.0.11",
     "parcel": "^2.16.4",
     "process": "^0.11.10",
     "typescript": "~5.9.3",
