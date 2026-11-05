@@ -17,6 +17,7 @@ go.sum
 # Node / Frontend
 web/node_modules/
 web/dist/
+web/.parcel-cache/
 
 # DB
 *.db
