@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { IconDownload, IconEdit, IconTrash } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
-import type { KanbanCard, Session } from '../../types'
+import { AgentAvatar } from '../Agents/AgentAvatar'
+import { estimateCost, formatCost } from '../../lib/tokenPricing'
+import type { Agent, KanbanCard, Session } from '../../types'
 
 // Running: the project's current sessions (the chats of its tasks), live ones first.
 export function RunningView() {
@@ -21,14 +23,29 @@ export function RunningView() {
   const [editingName, setEditingName] = useState('')
 
   const [cards, setCards] = useState<Record<string, KanbanCard>>({})
+  const [agents, setAgents] = useState<Record<string, Agent>>({})
   const [lists, setLists] = useState<Record<string, string>>({})
+  const [costs, setCosts] = useState<Record<string, number>>({})
   useEffect(() => {
     if (!activeProjectId) return
     let cancelled = false
-    const load = () => Promise.all([api.listKanbanCards(activeProjectId), api.listKanbanLists(activeProjectId)]).then(([cs, ls]) => {
+    const load = () => Promise.all([
+      api.listKanbanCards(activeProjectId),
+      api.listAgents(activeProjectId),
+      api.listKanbanLists(activeProjectId),
+      api.getUsageSessions('all', activeProjectId),
+    ]).then(([cs, ags, ls, usage]) => {
       if (cancelled) return
       setCards(Object.fromEntries(cs.map(c => [c.id, c])))
+      setAgents(Object.fromEntries(ags.map(a => [a.id, a])))
       setLists(Object.fromEntries(ls.map(l => [l.id, l.name])))
+      // One row per session and model: add them up into the session's estimated cost.
+      const byS: Record<string, number> = {}
+      for (const u of usage) {
+        byS[u.session_id] = (byS[u.session_id] ?? 0) +
+          estimateCost(u.model, u.input_tokens, u.output_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens)
+      }
+      setCosts(byS)
     }).catch(() => {})
     load()
     const t = setInterval(load, 10000)
@@ -39,6 +56,22 @@ export function RunningView() {
     if (!iso) return ''
     const d = new Date(iso)
     return isNaN(d.getTime()) || d.getFullYear() < 2000 ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+
+  const fmtFull = (iso?: string) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return isNaN(d.getTime()) || d.getFullYear() < 2000 ? '—' : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' })
+  }
+  // 42s, 7m 05s, 3h 12m, 2d 4h
+  const fmtDur = (ms: number) => {
+    const sec = Math.max(0, Math.round(ms / 1000))
+    if (sec < 60) return `${sec}s`
+    const min = Math.floor(sec / 60)
+    if (min < 60) return `${min}m ${String(sec % 60).padStart(2, '0')}s`
+    const h = Math.floor(min / 60)
+    if (h < 24) return `${h}h ${String(min % 60).padStart(2, '0')}m`
+    return `${Math.floor(h / 24)}d ${h % 24}h`
   }
 
   const statusOf =(s: Session) => sessionStatus[s.id] ?? s.status
@@ -122,28 +155,66 @@ export function RunningView() {
                   />
                 ) : (
                   <>
-                    <span className="running-item__name">{s.name || 'Untitled'}</span>
-                    <span className="running-item__meta">{s.message_count} msgs · {statusOf(s)}</span>
                     {(() => {
                       const c = s.card_id ? cards[s.card_id] : undefined
-                      const started = fmt(c?.started_at || s.created_at)
-                      const finished = fmt(c?.finished_at)
+                      const startIso = c?.started_at || s.created_at
+                      const startMs = new Date(startIso).getTime()
+                      // Finished tasks stop the clock at finished_at; a live session runs until now;
+                      // an idle one stops at its last activity.
+                      const endIso = c?.finished_at || (statusOf(s) === 'running' || statusOf(s) === 'waiting_hook' ? '' : s.last_active)
+                      const endMs = endIso ? new Date(endIso).getTime() : Date.now()
+                      const duration = isNaN(startMs) || isNaN(endMs) ? '—' : fmtDur(endMs - startMs)
+                      const dateTip = [
+                        `Started: ${fmtFull(startIso)}`,
+                        `Last active: ${fmtFull(s.last_active)}`,
+                        `Finished: ${fmtFull(c?.finished_at)}`,
+                      ].join('\n')
+                      const listName = c ? lists[c.list_id] : ''
+                      const cost = costs[s.id]
+                      const errText = c?.last_error || (statusOf(s) === 'error' ? 'The session ended with an error.' : '')
+                      const ag = agents[s.agent_id || c?.agent_id || '']
+                      const model = s.model || ag?.model
+                      const agentInfo = ag && [
+                        ag.name,
+                        model,
+                        ag.executor,
+                        ag.runner_id ? `runner ${ag.runner_id}` : '',
+                        ag.persistent ? 'persistent' : '',
+                        ag.worktree ? 'worktree' : '',
+                        ag.auto_mode ? 'auto' : '',
+                      ].filter(Boolean).join(' · ')
+                      const wtName = s.worktree ? s.worktree.split(/[\\/]/).filter(Boolean).pop() : ''
                       return (
                         <>
-                          {c && (
-                            <span className="running-item__meta running-item__task">
-                              <span className="running-item__task-title" title={c.title}>Task: {c.title}</span>
-                              <span className="running-item__task-status"> · {lists[c.list_id] ?? '—'}</span>
+                          <div className="running-item__top">
+                            <span className="running-item__name" title={s.name || 'Untitled'}>{s.name || 'Untitled'}</span>
+                            {ag && (
+                              <span className="running-item__agent" title={agentInfo}>
+                                <AgentAvatar agent={ag} size={20} />
+                                <span className="running-item__agent-name">{ag.name}</span>
+                                {model && <span className="running-item__agent-model">{model}</span>}
+                              </span>
+                            )}
+                          </div>
+                          <div className="running-item__chips">
+                            {listName && <span className="running-chip running-chip--status" title="Task status (its kanban list)">{listName}</span>}
+                            <span className={`running-chip running-chip--${statusOf(s)}`} title="Session status">{statusOf(s)}</span>
+                            <span className="running-chip" title="Messages in the session">{s.message_count} msgs</span>
+                            {cost !== undefined && (
+                              <span className="running-chip" title="Estimated cost from the tokens used (list prices, not billed)">~{formatCost(cost)}</span>
+                            )}
+                          </div>
+                          {errText && <div className="running-item__error" title={errText}>{errText}</div>}
+                          <div className="running-item__bottom">
+                            <span className="running-item__meta running-item__mono">
+                              {(s.branch || wtName) && (
+                                <span className="running-item__worktree" title={s.worktree}>
+                                  {s.branch ? `⎇ ${s.branch}` : wtName}
+                                </span>
+                              )}
                             </span>
-                          )}
-                          <span className="running-item__meta">
-                            Started {started || '—'} · {finished ? `Finished ${finished}` : `Active ${fmt(s.last_active) || '—'}`}
-                          </span>
-                          {(s.branch || s.worktree) && (
-                            <span className="running-item__meta running-item__mono" title={s.worktree}>
-                              {s.branch && <>⎇ {s.branch}</>}{s.branch && s.worktree && ' · '}{s.worktree}
-                            </span>
-                          )}
+                            <span className="running-item__date" title={dateTip}>⏱ {duration}</span>
+                          </div>
                         </>
                       )
                     })()}
