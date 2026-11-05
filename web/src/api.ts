@@ -279,6 +279,18 @@ export const getUsageModels = (range: UsageRange) =>
 export const getUsageSessions = (range: UsageRange, projectId?: string) =>
   req<SessionUsageRow[]>('GET', `/api/usage/sessions?range=${range}${projectId ? `&project_id=${projectId}` : ''}`)
 
+// The tokens of a session's first turn (what its initial context really wrote to / read from
+// the cache). Rejects with a 404 until the session has one.
+export interface FirstTurnUsage {
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+}
+export const getFirstTurnUsage = (sessionId: string) =>
+  req<FirstTurnUsage>('GET', `/api/sessions/${sessionId}/first-turn-usage`)
+
 // User Tools
 export const listUserTools = () => req<UserTool[]>('GET', '/api/tools')
 export const createUserTool = (data: Partial<UserTool>) => req<UserTool>('POST', '/api/tools', data)

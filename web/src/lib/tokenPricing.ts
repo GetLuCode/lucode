@@ -29,7 +29,8 @@ function getModelPricing(model: string): ModelPricing {
 /**
  * Estimate cost in USD for a set of token counts and a model.
  * Cache read tokens cost 10% of input price.
- * Cache write (creation) tokens cost 25% of input price.
+ * Cache write (creation) tokens cost 125% of input price (the 5-minute cache; the 1-hour
+ * cache writes at 200%, and the usage rows do not say which one was used).
  */
 export function estimateCost(
   model: string,
@@ -45,8 +46,15 @@ export function estimateCost(
     inputTokens     * perTok +
     outputTokens    * outPerTok +
     cacheReadTokens  * perTok * 0.10 +
-    cacheWriteTokens * perTok * 0.25
+    cacheWriteTokens * perTok * 1.25
   )
+}
+
+// 950, 12.3k, 4.2M
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
+  return String(n)
 }
 
 export function formatCost(usd: number): string {

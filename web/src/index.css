@@ -7066,6 +7066,8 @@ input[type="date"].kmodal__input { color-scheme: dark; }
   padding: 1px 8px; border-radius: 10px; font-size: 11px; line-height: 16px;
   color: var(--text-dim); background: var(--bg-input); border: 1px solid var(--border);
 }
+.running-chip--button { font-family: inherit; cursor: pointer; }
+.running-chip--button:hover { color: var(--text); border-color: var(--border-bright); }
 .running-chip--status { color: var(--accent); border-color: rgba(0, 212, 170, 0.35); background: rgba(0, 212, 170, 0.08); }
 .running-chip--running { color: #4ade80; }
 .running-chip--waiting_hook { color: #f5a524; }

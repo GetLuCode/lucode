@@ -1,11 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconDownload, IconEdit, IconTrash } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { AgentAvatar } from '../Agents/AgentAvatar'
-import { estimateCost, formatCost } from '../../lib/tokenPricing'
-import type { Agent, KanbanCard, Session } from '../../types'
+import { ContextDetailModal } from '../Chat/ContextBar'
+import { estimateCost, formatCost, formatTokens } from '../../lib/tokenPricing'
+import type { Agent, ContextUsage, KanbanCard, Session } from '../../types'
+
+// Tokens a session has used, added up over all its turns and models.
+interface TokenTotals { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+// Last context-window size the session reported (after its latest turn, so for a finished task
+// it is the final one). The session keeps it as JSON.
+function lastContext(s: Session, live?: ContextUsage): ContextUsage | null {
+  if (live && live.totalTokens > 0) return live
+  if (!s.context_usage) return null
+  try {
+    const c = JSON.parse(s.context_usage)
+    return typeof c.totalTokens === 'number' && c.totalTokens > 0 ? { ...c, session_id: s.id } : null
+  } catch { return null }
+}
 
 // Running: the project's current sessions (the chats of its tasks), live ones first.
 export function RunningView() {
@@ -14,6 +29,7 @@ export function RunningView() {
   const activeProjectId = useStore(s => s.activeProjectId)
   const activeSessionId = useStore(s => s.activeSessionId)
   const sessionStatus = useStore(s => s.sessionStatus)
+  const contextUsage = useStore(s => s.contextUsage)
   const setActiveSession = useStore(s => s.setActiveSession)
   const deleteSession = useStore(s => s.deleteSession)
   const renameSession = useStore(s => s.renameSession)
@@ -26,6 +42,10 @@ export function RunningView() {
   const [agents, setAgents] = useState<Record<string, Agent>>({})
   const [lists, setLists] = useState<Record<string, string>>({})
   const [costs, setCosts] = useState<Record<string, number>>({})
+  const [tokens, setTokens] = useState<Record<string, TokenTotals>>({})
+  // the session whose context breakdown is open
+  const [ctxId, setCtxId] = useState<string | null>(null)
+  const closeCtx = useCallback(() => setCtxId(null), [])
   useEffect(() => {
     if (!activeProjectId) return
     let cancelled = false
@@ -41,11 +61,18 @@ export function RunningView() {
       setLists(Object.fromEntries(ls.map(l => [l.id, l.name])))
       // One row per session and model: add them up into the session's estimated cost.
       const byS: Record<string, number> = {}
+      const tokS: Record<string, TokenTotals> = {}
       for (const u of usage) {
         byS[u.session_id] = (byS[u.session_id] ?? 0) +
           estimateCost(u.model, u.input_tokens, u.output_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens)
+        const t = tokS[u.session_id] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+        t.input += u.input_tokens
+        t.output += u.output_tokens
+        t.cacheRead += u.cache_read_input_tokens
+        t.cacheWrite += u.cache_creation_input_tokens
       }
       setCosts(byS)
+      setTokens(tokS)
     }).catch(() => {})
     load()
     const t = setInterval(load, 10000)
@@ -190,6 +217,9 @@ export function RunningView() {
                       ].join('\n')
                       const listName = c ? lists[c.list_id] : ''
                       const cost = costs[s.id]
+                      const tok = tokens[s.id]
+                      const tokTotal = tok ? tok.input + tok.output + tok.cacheRead + tok.cacheWrite : 0
+                      const ctx = lastContext(s, contextUsage[s.id])
                       const errText = c?.last_error || (statusOf(s) === 'error' ? 'The session ended with an error.' : '')
                       const ag = agents[s.agent_id || c?.agent_id || '']
                       const model = s.model || ag?.model
@@ -219,6 +249,24 @@ export function RunningView() {
                             {listName && <span className="running-chip running-chip--status" title="Task status (its kanban list)">{listName}</span>}
                             <span className={`running-chip running-chip--${statusOf(s)}`} title="Session status">{statusOf(s)}</span>
                             <span className="running-chip" title="Messages in the session">{s.message_count} msgs</span>
+                            {tok && (
+                              <span
+                                className="running-chip"
+                                title={`Tokens used over all turns, counting the whole context each turn re-reads\n` +
+                                  `${tok.input.toLocaleString()} input · ${tok.output.toLocaleString()} output\n` +
+                                  `${tok.cacheRead.toLocaleString()} cache read · ${tok.cacheWrite.toLocaleString()} cache write`}
+                              >{formatTokens(tokTotal)} tok</span>
+                            )}
+                            {ctx && (
+                              <button
+                                type="button"
+                                data-context-trigger
+                                className="running-chip running-chip--button"
+                                onClick={e => { e.stopPropagation(); setCtxId(ctxId === s.id ? null : s.id) }}
+                                title={`Context window after the latest turn${c?.finished_at ? ' (final: the task is finished)' : ''}: ` +
+                                  `${ctx.totalTokens.toLocaleString()}${ctx.maxTokens ? ` of ${ctx.maxTokens.toLocaleString()} tokens (${ctx.percentage}%)` : ' tokens'}\nClick for the full breakdown`}
+                              >ctx {formatTokens(ctx.totalTokens)}{ctx.maxTokens ? ` · ${ctx.percentage}%` : ''}</button>
+                            )}
                             {cost !== undefined && (
                               <span className="running-chip" title="Estimated cost from the tokens used (list prices, not billed)">~{formatCost(cost)}</span>
                             )}
@@ -292,6 +340,22 @@ export function RunningView() {
           ))}
         </ul>
       )}
+      {ctxId && (() => {
+        const sess = sessions.find(x => x.id === ctxId)
+        const cu = sess && lastContext(sess, contextUsage[ctxId])
+        const t = tokens[ctxId]
+        if (!cu) return null
+        return (
+          <ContextDetailModal
+            contextUsage={cu}
+            sessionUsage={t && {
+              input_tokens: t.input, output_tokens: t.output,
+              cache_read_input_tokens: t.cacheRead, cache_creation_input_tokens: t.cacheWrite,
+            }}
+            onClose={closeCtx}
+          />
+        )
+      })()}
     </div>
   )
 }

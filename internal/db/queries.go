@@ -975,6 +975,27 @@ func InsertTurnUsage(db *sql.DB, u TurnUsage) error {
 	return err
 }
 
+// FirstTurnUsage is the session's first turn that used any tokens: what the initial
+// context (system prompt, tools, skills...) really cost, written to or read from the cache.
+// sql.ErrNoRows when the session has none yet.
+func FirstTurnUsage(db *sql.DB, sessionID string) (TurnUsage, error) {
+	var u TurnUsage
+	var createdAt string
+	err := db.QueryRow(
+		`SELECT id, session_id, project_id, account_id, model, input_tokens, output_tokens,
+		        cache_creation_input_tokens, cache_read_input_tokens, created_at
+		 FROM turn_usage
+		 WHERE session_id=? AND input_tokens+cache_creation_input_tokens+cache_read_input_tokens > 0
+		 ORDER BY created_at ASC, rowid ASC LIMIT 1`, sessionID,
+	).Scan(&u.ID, &u.SessionID, &u.ProjectID, &u.AccountID, &u.Model, &u.InputTokens, &u.OutputTokens,
+		&u.CacheCreationInputTokens, &u.CacheReadInputTokens, &createdAt)
+	if err != nil {
+		return u, err
+	}
+	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	return u, nil
+}
+
 // UpdateToolExecutionTokens embeds turn-level token usage into tool_execution messages
 // that belong to the current turn (seq >= minSeq). This lets the chat history show
 // token counts even after page refresh.

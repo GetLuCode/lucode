@@ -211,6 +211,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/usage/daily", h.usageDaily)
 	mux.HandleFunc("GET /api/usage/models", h.usageModels)
 	mux.HandleFunc("GET /api/usage/sessions", h.usageSessions)
+	mux.HandleFunc("GET /api/sessions/{id}/first-turn-usage", h.firstTurnUsage)
 
 	mux.HandleFunc("GET /ws", h.globalWS)
 	mux.HandleFunc("GET /ws/stt", h.sttSocket)
@@ -2307,6 +2308,20 @@ func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
 		rows = []dbpkg.SessionUsageRow{}
 	}
 	jsonResp(w, http.StatusOK, rows)
+}
+
+// firstTurnUsage serves the tokens of the session's first turn (404 until it has one).
+func (h *Handler) firstTurnUsage(w http.ResponseWriter, r *http.Request) {
+	u, err := dbpkg.FirstTurnUsage(h.db, r.PathValue("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "no usage yet", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, u)
 }
 
 // remoteProxy intercepts requests with X-Lucode-Remote header and forwards
