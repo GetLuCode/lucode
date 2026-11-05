@@ -6,7 +6,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px 20px;
+  padding: 10px 8px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
 }
@@ -66,12 +66,12 @@
 .kf-clear {
   display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px 0 11px;
   background: transparent; border: 1px solid var(--border-bright); border-radius: 999px;
-  font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer;
+  font: inherit; font-size: 12px; color: var(--error, #ef4444); cursor: pointer;
 }
-.kf-clear:hover { border-color: var(--accent); color: var(--accent); }
+.kf-clear:hover { border-color: var(--error, #ef4444); background: rgba(239, 68, 68, 0.1); }
 .kf-clear__n {
   display: inline-grid; place-items: center; min-width: 18px; height: 18px; border-radius: 9px;
-  background: var(--accent-dim); color: var(--accent); font-size: 10px; font-weight: 600;
+  background: rgba(239, 68, 68, 0.15); color: var(--error, #ef4444); font-size: 10px; font-weight: 600;
 }
 
 /* agent select (shadcn Select trigger + content) */
@@ -134,17 +134,30 @@ button.kf-select.kf-select--icon:hover { background: var(--bg-hover); }
 
 /* range popover */
 .kf-popover.kf-popover { max-width: none; padding: 0; background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: 12px; box-shadow: var(--shadow); }
-.kf-range { display: flex; }
-.kf-range__presets {
-  display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; min-width: 132px;
-  border-right: 1px solid var(--border);
+.kf-range { display: flex; flex-direction: column; max-width: calc(100vw - 16px); }
+.kf-range__tabs {
+  display: flex; gap: 2px; padding: 6px; overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid var(--border);
 }
+.kf-range__tabs::-webkit-scrollbar { display: none; }
+.kf-range__tab {
+  flex-shrink: 0; padding: 6px 12px; background: none; border: none; border-radius: 6px;
+  font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer; white-space: nowrap;
+}
+.kf-range__tab:hover { background: var(--bg-hover); color: var(--text); }
+.kf-range__tab--on, .kf-range__tab--on:hover { background: var(--accent-dim); color: var(--accent); }
+.kf-range__quick { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; padding: 12px; min-width: min(320px, calc(100vw - 32px)); }
 .kf-range__preset {
-  text-align: left; padding: 7px 12px; background: none; border: none; border-radius: 6px;
-  font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer;
+  padding: 9px 12px; background: none; border: 1px solid var(--border); border-radius: 8px;
+  font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer; text-align: center;
 }
 .kf-range__preset:hover { background: var(--bg-hover); color: var(--text); }
-.kf-range__preset--clear { margin-top: auto; color: var(--text-dim); }
+.kf-range__preset--on, .kf-range__preset--on:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.kf-range .kf-daypicker { padding: 8px 12px 12px; align-self: center; }
+
+@media (max-width: 700px) {
+  .kf-daypicker { --rdp-day-height: 40px; --rdp-day-width: 40px; --rdp-day_button-height: 38px; --rdp-day_button-width: 38px; }
+}
 
 /* react-day-picker on lucode's tokens */
 .kf-daypicker {
@@ -216,9 +229,19 @@ button.kf-select.kf-select--icon:hover { background: var(--bg-hover); }
 }
 
 /* the vertical three-dot menu is pinned to the top right; the filters flow around it */
-.kf { position: relative; padding-right: 56px; }
-.kf-menu { position: absolute; top: 10px; right: 20px; z-index: 6; }
+/* small horizontal padding; the right side also leaves room for the menu */
+.kf { position: relative; padding-right: 44px; }
+.kf-menu { position: absolute; top: 10px; right: 8px; z-index: 6; }
 @media (max-width: 700px) {
-  .kf { padding-right: 52px; }
-  .kf-menu { right: 12px; }
+}
+
+/* search: a fixed 32px slot keeps the row stable; the field itself may float over it */
+.kf-search-slot { width: 32px; height: 32px; flex-shrink: 0; }
+.kf-search--active { color: var(--accent); background: var(--accent-dim); }
+@media (max-width: 700px) {
+  /* expanded: over the first row of filters, not pushing them; .kf is the positioning context */
+  .kf-search--open, .kf-search--open:hover {
+    position: absolute; top: 10px; left: 8px; right: 44px; width: auto; z-index: 7;
+    background: var(--bg-input); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  }
 }
