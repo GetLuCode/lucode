@@ -45,6 +45,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* the visible viewport: 100vh ignores the phone browser bars */
   overflow: hidden;
 }
 
@@ -970,6 +971,7 @@ html, body, #root {
   width: 480px;
   max-width: 50vw;
   height: 100vh;
+  height: 100dvh;
   background: var(--bg-primary, #141414);
   border-left: 1px solid var(--border-primary, #2a2a2a);
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
@@ -1064,6 +1066,7 @@ html, body, #root {
   width: 420px;
   max-width: 60vw;
   height: 100vh;
+  height: 100dvh;
   background: var(--bg-primary, #141414);
   border-left: 1px solid var(--border-primary, #2a2a2a);
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);

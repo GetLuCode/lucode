@@ -15,6 +15,7 @@ import { OrchestratorEdit } from './OrchestratorEdit'
 import { ModelIcon } from './ModelIcon'
 import { EnvPicker } from './EnvPicker'
 import { useWorkerMic } from '@/hooks/useWorkerMic'
+import { playListenCue, playSendCue } from '@/lib/cues'
 import { useWorkerTTS } from '@/hooks/useWorkerTTS'
 import { markSpoken, wasSpoken } from '@/lib/spokenLog'
 import { VoiceSettingsDialog } from './VoiceSettingsDialog'
@@ -89,14 +90,14 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     onFinal: (text, viaHotword) => {
       if (!text.trim()) return
       // a command said after the hotword is sent on its own; if the agent is busy it waits in the box
-      if (viaHotword && !runningRef.current) { sendText(text.trim()); return }
+      if (viaHotword && !runningRef.current) { playSendCue(); sendText(text.trim()); return }
       dictBase.current = joinText(dictBase.current, text)
       setInput(dictBase.current)
       // plain dictation with "auto-send" on: the finished phrase turns the mic off and goes out
       // (if the agent is busy it stays in the box, mic off, to be sent by hand)
       if (!viaHotword && getAutoSend()) {
         mic.stop()
-        if (!runningRef.current) sendText(dictBase.current.trim())
+        if (!runningRef.current) { playSendCue(); sendText(dictBase.current.trim()) }
       }
     },
   })
@@ -116,6 +117,12 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   useEffect(() => { if (tts.state === 'idle') setSpeakingId(null) }, [tts.state])
   // the dictation must not hear the answer being spoken
   useEffect(() => { mic.setMuted(tts.state !== 'idle') }, [tts.state, mic])
+  // The hotword was heard and the mic now listens: a cue says so.
+  const prevMicState = useRef(mic.state)
+  useEffect(() => {
+    if (mic.state === 'awake' && prevMicState.current !== 'awake') playListenCue()
+    prevMicState.current = mic.state
+  }, [mic.state])
   const hotword = getHotword()
   const micTitle = {
     off: hotword.enabled ? `Listen for the hotword${hotword.backend === 'vosk' ? ` “${hotword.phrase}”` : ' “hey jarvis”'}` : 'Dictate (Parakeet, local)',

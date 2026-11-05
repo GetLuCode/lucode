@@ -16,7 +16,9 @@ async function getWSUrl(): Promise<string> {
       return `${protocol}//localhost:${port}/ws`
     }
   } catch {}
-  return `${protocol}//localhost:8090/ws`
+  // Same origin as the page: the hub serves /ws itself, and `pnpm dev` (Parcel) proxies it to :8090.
+  // A hardcoded localhost would point a phone at the phone itself.
+  return `${protocol}//${window.location.host}/ws`
 }
 
 // WebSocket of the voice-input bridge (same host as the main socket).

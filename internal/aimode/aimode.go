@@ -35,6 +35,7 @@ const DefaultPrimer = `A partir de ahora eres el asistente de un chat. Reglas pa
 4. No inventes nada: si no lo sabes o no encuentras una fuente fiable, dilo claramente.
 5. Responde directamente a lo que se pide: sin preámbulos, sin despedidas y sin preguntas de seguimiento ni ofertas de más ayuda.
 6. Si vas a mostrar un diagrama (flujos, arquitectura, secuencias, estados, relaciones), nunca lo dibujes con arte ASCII ni con caracteres de línea: dalo en Mermaid, dentro de un bloque de código cuyo lenguaje sea mermaid, con sintaxis válida y los textos entre comillas si llevan paréntesis o signos especiales.
+7. Tus respuestas se leen en voz alta con Fish Audio (síntesis de voz, TTS), que interpreta etiquetas de control escritas entre corchetes dentro del propio texto. Inserta esas etiquetas en línea, justo antes de la frase o palabra a la que afectan, para marcar: (a) tus acciones y sonidos corporales, p. ej. [suspira], [se aclara la garganta], [pausa]; (b) el modo en que hablas, p. ej. [susurrando], [en voz baja], [con énfasis], [lentamente]; (c) emociones, p. ej. [alegre], [triste], [sorprendido], [con ironía]; (d) risas y reacciones, p. ej. [ríe], [risita], [riendo]. Escribe cada etiqueta en el mismo idioma de la respuesta, con una o pocas palabras descriptivas, y úsalas con naturalidad y con moderación (no una por frase). Las etiquetas son solo para la voz: no las pongas dentro de bloques de código, diagramas Mermaid, URLs ni en la lista de "Referencias:".
 Si entendiste, responde solo: Listo.`
 
 // How long to wait for things on the page.
@@ -45,12 +46,14 @@ const (
 	turnWait    = 25 * time.Second // the new turn to appear after sending
 	answerWait  = 3 * time.Minute  // the answer to finish
 	poll        = 500 * time.Millisecond
+	turnCeiling = 12 * time.Minute // a whole turn, from queueing to the answer
 	stableFor   = 5 // polls with the same answer before it counts as finished (about 2.5 s)
 )
 
 // Client drives one Edge shared by all sessions that use the model. One question at a time.
 type Client struct {
 	mu      sync.Mutex
+	turn    chan struct{} // one question at a time; unlike a mutex, waiting for it can be cancelled
 	br      *cdp.Browser
 	port    int
 	profile string            // browser profile folder; "" = ~/.lucode/aimode-profile
@@ -95,7 +98,7 @@ func (c *Client) SetStore(s Store) {
 
 // newClient makes a client with its own Edge (port, profile folder and state name).
 func newClient(name string, port int, profile string) *Client {
-	return &Client{br: cdp.New(name, port), port: port, profile: profile, tabs: map[string]string{}}
+	return &Client{br: cdp.New(name, port), port: port, profile: profile, tabs: map[string]string{}, turn: make(chan struct{}, 1)}
 }
 
 // Default is the client every session uses.
@@ -123,6 +126,21 @@ func (c *Client) Ask(ctx context.Context, sessID, text string) (string, error) {
 
 // AskImage is Ask with a picture attached to the message (nil = none).
 func (c *Client) AskImage(ctx context.Context, sessID, text string, img *Image) (string, error) {
+	// A turn that never ends must not wedge every other conversation: the whole turn has a
+	// ceiling, and one that is still waiting for its place can be stopped (Stop cancels ctx).
+	ctx, cancel := context.WithTimeout(ctx, turnCeiling)
+	defer cancel()
+	select {
+	case c.turn <- struct{}{}:
+	default:
+		report(ctx, "Waiting for another Gemini conversation to finish…")
+		select {
+		case c.turn <- struct{}{}:
+		case <-ctx.Done():
+			return "", fmt.Errorf("gave up waiting for another Gemini conversation to finish: %w", ctx.Err())
+		}
+	}
+	defer func() { <-c.turn }()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if strings.TrimSpace(text) == "" {
@@ -338,6 +356,11 @@ func (c *Client) enterAIMode(ctx context.Context) error {
 	}
 	if c.waitFind(ctx, pageWait, c.findInput) == nil {
 		return c.blocked("AI Mode did not show a message box (it may not be available for this account or region)")
+	}
+	// A plain Google search has a box too: typing the instructions there would run them as a
+	// search and leave a dead tab. AI Mode is on only when its address is.
+	if p, err := c.br.Info(); err != nil || !strings.Contains(p.URL, "udm=50") {
+		return c.blocked("Google showed its plain search instead of AI Mode (it may be asking to verify you are human, or AI Mode is not available for this account or region)")
 	}
 	return nil
 }
