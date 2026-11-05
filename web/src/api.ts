@@ -140,6 +140,18 @@ export const fetchVoskModel = async (): Promise<string> => {
   return URL.createObjectURL(await res.blob())
 }
 // The persistent claude process of a session: is it alive, and close it (the next message starts a new one).
+// What the session's task branch changes against its base; computed by the runner that holds the worktree.
+export interface DiffStat {
+  base: string
+  branch: string
+  added: number     // lines added
+  removed: number   // lines removed
+  created: number   // files created
+  modified: number
+  deleted: number   // files deleted
+  error?: string
+}
+export const getSessionDiffStat = (id: string) => req<DiffStat>('GET', `/api/sessions/${id}/diffstat`)
 export const getSessionProcess = (id: string) => req<ClaudeProcess>('GET', `/api/sessions/${id}/process`)
 export const closeSessionProcess = (id: string) => req<void>('DELETE', `/api/sessions/${id}/process`)
 export const cancelTurn = (id: string) =>

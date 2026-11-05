@@ -116,6 +116,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)
 	mux.HandleFunc("DELETE /api/sessions/{id}/turn", h.cancelTurn)
 	mux.HandleFunc("GET /api/sessions/{id}/process", h.getSessionProcess)
+	mux.HandleFunc("GET /api/sessions/{id}/diffstat", h.getSessionDiffStat)
 	mux.HandleFunc("DELETE /api/sessions/{id}/process", h.closeSessionProcess)
 	mux.HandleFunc("POST /api/sessions/{id}/fork", h.forkSession)
 

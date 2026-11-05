@@ -52,6 +52,25 @@ export function RunningView() {
     return () => { cancelled = true; clearInterval(t) }
   }, [activeProjectId])
 
+  // Lines and files the task's branch changes against its base. git runs on the runner, so it is
+  // asked again only when a session's activity or status changes, not on every poll.
+  const [diffs, setDiffs] = useState<Record<string, api.DiffStat>>({})
+  const diffKey = sessions
+    .filter(s => s.card_id && (s.branch || s.worktree))
+    .map(s => `${s.id}:${s.last_active}:${sessionStatus[s.id] ?? s.status}`)
+    .join('|')
+  useEffect(() => {
+    if (!diffKey) return
+    let cancelled = false
+    for (const part of diffKey.split('|')) {
+      const id = part.slice(0, part.indexOf(':'))
+      api.getSessionDiffStat(id).then(d => {
+        if (!cancelled) setDiffs(prev => ({ ...prev, [id]: d }))
+      }).catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [diffKey])
+
   const fmt = (iso?: string) => {
     if (!iso) return ''
     const d = new Date(iso)
@@ -204,6 +223,25 @@ export function RunningView() {
                               <span className="running-chip" title="Estimated cost from the tokens used (list prices, not billed)">~{formatCost(cost)}</span>
                             )}
                           </div>
+                          {(() => {
+                            const d = diffs[s.id]
+                            if (!d || d.error) return null
+                            const files = d.created + d.modified + d.deleted
+                            if (files === 0 && d.added === 0 && d.removed === 0) return null
+                            const tip = `Whole branch ${d.branch} against ${d.base}` +
+                              `\n${d.created} created · ${d.modified} modified · ${d.deleted} deleted`
+                            return (
+                              <div className="running-item__diff" title={tip}>
+                                <span className="running-diff running-diff--add">+{d.added}</span>
+                                <span className="running-diff running-diff--del">−{d.removed}</span>
+                                <span className="running-diff__files">
+                                  {d.created > 0 && <span className="running-diff--add">{d.created} new</span>}
+                                  {d.modified > 0 && <span>{d.modified} mod</span>}
+                                  {d.deleted > 0 && <span className="running-diff--del">{d.deleted} del</span>}
+                                </span>
+                              </div>
+                            )
+                          })()}
                           {errText && <div className="running-item__error" title={errText}>{errText}</div>}
                           <div className="running-item__bottom">
                             <span className="running-item__meta running-item__mono">

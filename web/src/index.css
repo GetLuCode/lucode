@@ -7070,6 +7070,13 @@ input[type="date"].kmodal__input { color-scheme: dark; }
 .running-chip--running { color: #4ade80; }
 .running-chip--waiting_hook { color: #f5a524; }
 .running-chip--error { color: #f87171; border-color: rgba(248, 113, 113, 0.4); }
+.running-item__diff {
+  display: flex; align-items: baseline; gap: 8px; margin-top: 8px; font-size: 11px;
+  font-family: var(--font-mono, monospace); color: var(--text-dim); cursor: help;
+}
+.running-diff--add { color: #4ade80; }
+.running-diff--del { color: #f87171; }
+.running-diff__files { display: inline-flex; gap: 8px; }
 .running-item__error {
   margin-top: 8px; padding: 6px 8px; border-radius: 6px; font-size: 11px; line-height: 1.4;
   color: #f87171; background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.3);
