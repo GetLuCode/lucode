@@ -134,6 +134,9 @@ func (a *App) startServer() {
 	if err != nil {
 		log.Fatalf("db init: %v", err)
 	}
+	if err := dbpkg.SeedDefaults(db); err != nil {
+		log.Fatalf("seed defaults: %v", err)
+	}
 
 	natsOpts := []natsclient.Option{
 		natsclient.Timeout(10 * time.Second),

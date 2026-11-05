@@ -67,6 +67,9 @@ func main() {
 		log.Fatalf("db init: %v", err)
 	}
 	defer db.Close()
+	if err := dbpkg.SeedDefaults(db); err != nil {
+		log.Fatalf("seed defaults: %v", err)
+	}
 
 	// Approvals waiting when the previous run ended are orphans: their state lived
 	// in memory and their hook process is gone, so nobody can answer them. Clear them

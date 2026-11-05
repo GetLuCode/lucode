@@ -335,7 +335,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     <aside className={`orch${full ? ' orch--full' : ''}`} onWheel={forwardWheel}>
       <header className="orch__header">
         <ModelIcon model={model} size={17} className="orch__model-icon" />
-        <span className="orch__title">Orchestrator</span>
+        <span className="orch__title">Supervisor</span>
         {!isLocalModel && <CacheBadge cache={cache} />}
         {sid && !isLocalModel && <ClaudeProcess sessionId={sid} />}
         {sid && <OrchestratorEdit projectId={projectId} sessionId={sid} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}

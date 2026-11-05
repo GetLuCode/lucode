@@ -49,10 +49,10 @@
 .orch__send:disabled { opacity: 0.4; cursor: default; }
 .orch__send--stop { background: var(--error); color: #fff; }
 
-/* collapsed: a button floating at the bottom center of <main> (position: relative),
+/* collapsed: a button floating at the bottom right of <main> (position: relative),
    out of the layout flow so it never leaves a gap, and above the page content */
 .orch-opener {
-  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  position: absolute; right: 16px; bottom: 16px;
   z-index: 40;
   display: flex; align-items: center; gap: 8px;
   background: var(--bg-panel); color: var(--text-muted);

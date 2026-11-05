@@ -559,13 +559,19 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		if agentErr != nil {
 			return "", errNoAgent
 		}
+		// A global agent (such as the Supervisor) belongs to no project: it manages the
+		// agents of the project its task is in.
+		caller := agent
+		if caller.ProjectID == "" {
+			caller.ProjectID = card.ProjectID
+		}
 		switch toolName {
 		case taskmcp.ToolAgentCreate:
-			return h.agentCreate(agent, args)
+			return h.agentCreate(caller, args)
 		case taskmcp.ToolAgentUpdate:
-			return h.agentUpdate(agent, args)
+			return h.agentUpdate(caller, args)
 		}
-		return h.agentDelete(agent, args)
+		return h.agentDelete(caller, args)
 
 	case taskmcp.ToolProjectInfo:
 		return h.projectInfo(sess)

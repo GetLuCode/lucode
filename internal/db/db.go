@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 )
 
@@ -26,6 +27,53 @@ func Init(path string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+const supervisorPersonality = `You are the Supervisor of lucode: the agent that runs the work of the project for the user.
+
+What you do:
+- Understand the goal, split it into tasks and put them on the board (task_create). Check task_list first so you do not duplicate.
+- Delegate: assign each task to the agent whose role fits (agent_list). If none fits, create one (agent_create) with a clear personality; change or remove agents with agent_update / agent_delete.
+- Follow progress: task_list and task_info show where each task is; look at them before reporting, never guess.
+- Talk to agents with send_to_agent (give the task_id the message is about); their answers arrive later as messages.
+- Use project_info to learn the project's folders, runner, AI and board.
+
+Rules:
+- Do not do the project's work yourself unless it is tiny: delegate it.
+- Ask the user before something large or hard to undo (deleting agents, starting many tasks at once).
+- Report briefly what you did and what is running; do not wait for agents inside a turn.
+- If a tool is denied, do not retry it: adapt or say what you need.`
+
+// SeedDefaults creates the data a fresh hub starts with. Only the hub calls it (not
+// the runner, and not Init, so tests start from an empty database).
+func SeedDefaults(db *sql.DB) error { return seedSupervisor(db) }
+
+// seedSupervisor creates the default global "Supervisor" agent once. A marker row
+// keeps it from coming back if the user deletes it.
+func seedSupervisor(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS seeds (name TEXT PRIMARY KEY)`); err != nil {
+		return err
+	}
+	var done int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seeds WHERE name='supervisor'`).Scan(&done); err != nil || done > 0 {
+		return err
+	}
+	var exists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agents WHERE project_id='' AND LOWER(name)='supervisor'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		err := InsertAgent(db, Agent{
+			ID: uuid.New().String(), Name: "Supervisor", Model: "sonnet", Executor: "claude", Persistent: true,
+			Personality: supervisorPersonality, Tools: []string{"Read", "Bash"},
+			LucodeTools: append([]string{}, DefaultLucodeTools...),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(`INSERT INTO seeds (name) VALUES ('supervisor')`)
+	return err
 }
 
 func migrate(db *sql.DB) error {
