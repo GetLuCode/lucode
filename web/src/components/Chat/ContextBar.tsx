@@ -3,7 +3,8 @@ import { useStore } from '../../store'
 import { getFirstTurnUsage, getMinimaxTokenPlan } from '../../api'
 import type { FirstTurnUsage } from '../../api'
 import { IconX } from '@tabler/icons-react'
-import { estimateCost, formatCost } from '../../lib/tokenPricing'
+import { estimateCost, estimateUsageCost, formatCost } from '../../lib/tokenPricing'
+import type { UsageTokens } from '../../lib/tokenPricing'
 import type { ContextUsage } from '../../types'
 
 // Maps Claude's internal color names to CSS colors
@@ -104,12 +105,7 @@ function TokenPlanBadge() {
   )
 }
 
-export interface ModalSessionUsage {
-  input_tokens: number
-  output_tokens: number
-  cache_read_input_tokens?: number
-  cache_creation_input_tokens?: number
-}
+export type ModalSessionUsage = UsageTokens
 
 // Categories that are not loaded context: free room, the autocompact reserve and deferred tools.
 const isLoadedCategory = (name: string) =>
@@ -254,13 +250,7 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
             <div className="context-detail__row context-detail__row--muted">
               <span className="context-detail__name">Estimated cost</span>
               <span className="context-detail__tokens">
-                {formatCost(estimateCost(
-                  contextUsage.model,
-                  sessionUsage.input_tokens,
-                  sessionUsage.output_tokens,
-                  sessionUsage.cache_read_input_tokens ?? 0,
-                  sessionUsage.cache_creation_input_tokens ?? 0,
-                ))}
+                {formatCost(estimateUsageCost(contextUsage.model, sessionUsage))}
               </span>
             </div>
           </>

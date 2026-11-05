@@ -56,6 +56,9 @@ func checkToolTurn(t *testing.T, ev *events) {
 		u["output_tokens"] != 100 || u["input_tokens"] != 4 {
 		t.Errorf("turn_usage must add up both calls: %v", u)
 	}
+	if u["cache_creation_1h_input_tokens"] != 1450 {
+		t.Errorf("turn_usage must say how much of the write used the 1h cache: %v", u)
+	}
 }
 
 func TestRunReportsEveryCallAndToolResult(t *testing.T) {

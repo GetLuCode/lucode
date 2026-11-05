@@ -53,6 +53,23 @@ export function estimateCost(
   )
 }
 
+export interface UsageTokens {
+  input_tokens: number
+  output_tokens: number
+  cache_read_input_tokens?: number
+  cache_creation_input_tokens?: number
+  // of cache_creation_input_tokens, the ones written to the 1 hour cache; the rest are priced as
+  // 5 minute writes (also what rows from before it was reported get)
+  cache_creation_1h_input_tokens?: number
+}
+
+// Cost of a usage row, pricing each kind of cache write with its own TTL.
+export function estimateUsageCost(model: string, u: UsageTokens): number {
+  const written = u.cache_creation_input_tokens ?? 0
+  const oneHour = Math.min(u.cache_creation_1h_input_tokens ?? 0, written)
+  return estimateCost(model, u.input_tokens, u.output_tokens, u.cache_read_input_tokens ?? 0, written - oneHour, oneHour)
+}
+
 // 950, 12.3k, 4.2M
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'

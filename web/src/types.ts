@@ -189,7 +189,7 @@ export type WSEvent =
   | { type: 'claude_process'; session_id: string; alive: boolean; pid?: number; runner?: string }
   | ({ type: 'claude_workspace'; session_id: string } & ClaudeWorkspace)
   | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
-  | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
+  | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; cache_creation_1h_input_tokens?: number; model: string }
   | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
   | { type: 'peers_changed' }
 

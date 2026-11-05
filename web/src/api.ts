@@ -244,6 +244,7 @@ export interface DailyUsageRow {
   output_tokens: number
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
+  cache_creation_1h_input_tokens?: number // of the written ones, the 1 hour cache
   turn_count: number
 }
 
@@ -253,6 +254,7 @@ export interface ModelUsageRow {
   output_tokens: number
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
+  cache_creation_1h_input_tokens?: number
   turn_count: number
 }
 
@@ -265,6 +267,7 @@ export interface SessionUsageRow {
   output_tokens: number
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
+  cache_creation_1h_input_tokens?: number
   turn_count: number
   duration_minutes: number
   created_at: string

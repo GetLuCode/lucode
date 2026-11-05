@@ -952,25 +952,27 @@ func DeleteAPIKey(db *sql.DB, id, userID string) error {
 // ---- TurnUsage ----
 
 type TurnUsage struct {
-	ID                       string    `json:"id"`
-	SessionID                string    `json:"session_id"`
-	ProjectID                string    `json:"project_id"`
-	AccountID                string    `json:"account_id"`
-	Model                    string    `json:"model"`
-	InputTokens              int       `json:"input_tokens"`
-	OutputTokens             int       `json:"output_tokens"`
-	CacheCreationInputTokens int       `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int       `json:"cache_read_input_tokens"`
-	CreatedAt                time.Time `json:"created_at"`
+	ID                       string `json:"id"`
+	SessionID                string `json:"session_id"`
+	ProjectID                string `json:"project_id"`
+	AccountID                string `json:"account_id"`
+	Model                    string `json:"model"`
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	// Of CacheCreationInputTokens, the ones written to the 1 hour cache (0 when not reported).
+	CacheCreation1hInputTokens int       `json:"cache_creation_1h_input_tokens"`
+	CreatedAt                  time.Time `json:"created_at"`
 }
 
 func InsertTurnUsage(db *sql.DB, u TurnUsage) error {
 	_, err := db.Exec(
 		`INSERT INTO turn_usage (id, session_id, project_id, account_id, model,
-		 input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)
-		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		 input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, cache_creation_1h_input_tokens)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		u.ID, u.SessionID, u.ProjectID, u.AccountID, u.Model,
-		u.InputTokens, u.OutputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens,
+		u.InputTokens, u.OutputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens, u.CacheCreation1hInputTokens,
 	)
 	return err
 }
@@ -1052,6 +1054,7 @@ type DailyUsageRow struct {
 	OutputTokens             int    `json:"output_tokens"`
 	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	CacheCreation1h          int    `json:"cache_creation_1h_input_tokens"` // of the written ones, the 1 hour cache
 	TurnCount                int    `json:"turn_count"`
 }
 
@@ -1060,6 +1063,7 @@ func AggregateDailyUsage(db *sql.DB, since time.Time) ([]DailyUsageRow, error) {
 SELECT date(created_at) as day, model,
        SUM(input_tokens), SUM(output_tokens),
        SUM(cache_creation_input_tokens), SUM(cache_read_input_tokens),
+       SUM(cache_creation_1h_input_tokens),
        COUNT(*) as turn_count
 FROM turn_usage
 WHERE created_at >= ?
@@ -1073,7 +1077,7 @@ ORDER BY day`, since.Format(time.RFC3339))
 	for rows.Next() {
 		var r DailyUsageRow
 		if err := rows.Scan(&r.Date, &r.Model, &r.InputTokens, &r.OutputTokens,
-			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.TurnCount); err != nil {
+			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.CacheCreation1h, &r.TurnCount); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1088,6 +1092,7 @@ type ModelUsageRow struct {
 	OutputTokens             int    `json:"output_tokens"`
 	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	CacheCreation1h          int    `json:"cache_creation_1h_input_tokens"`
 	TurnCount                int    `json:"turn_count"`
 }
 
@@ -1096,6 +1101,7 @@ func AggregateModelUsage(db *sql.DB, since time.Time) ([]ModelUsageRow, error) {
 SELECT model,
        SUM(input_tokens), SUM(output_tokens),
        SUM(cache_creation_input_tokens), SUM(cache_read_input_tokens),
+       SUM(cache_creation_1h_input_tokens),
        COUNT(*) as turn_count
 FROM turn_usage
 WHERE created_at >= ?
@@ -1109,7 +1115,7 @@ ORDER BY SUM(input_tokens + output_tokens) DESC`, since.Format(time.RFC3339))
 	for rows.Next() {
 		var r ModelUsageRow
 		if err := rows.Scan(&r.Model, &r.InputTokens, &r.OutputTokens,
-			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.TurnCount); err != nil {
+			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.CacheCreation1h, &r.TurnCount); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1127,6 +1133,7 @@ type SessionUsageRow struct {
 	OutputTokens             int     `json:"output_tokens"`
 	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
+	CacheCreation1h          int     `json:"cache_creation_1h_input_tokens"`
 	TurnCount                int     `json:"turn_count"`
 	DurationMinutes          float64 `json:"duration_minutes"`
 	CreatedAt                string  `json:"created_at"`
@@ -1137,6 +1144,7 @@ func AggregateSessionUsage(db *sql.DB, since time.Time, projectID string) ([]Ses
 SELECT tu.session_id, s.name, tu.project_id, tu.model,
        SUM(tu.input_tokens), SUM(tu.output_tokens),
        SUM(tu.cache_creation_input_tokens), SUM(tu.cache_read_input_tokens),
+       SUM(tu.cache_creation_1h_input_tokens),
        COUNT(*) as turn_count,
        ROUND((julianday(s.last_active) - julianday(s.created_at)) * 1440, 1) as duration_minutes,
        s.created_at
@@ -1160,7 +1168,7 @@ WHERE tu.created_at >= ?`
 		var r SessionUsageRow
 		if err := rows.Scan(&r.SessionID, &r.SessionName, &r.ProjectID, &r.Model,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationInputTokens, &r.CacheReadInputTokens,
-			&r.TurnCount, &r.DurationMinutes, &r.CreatedAt); err != nil {
+			&r.CacheCreation1h, &r.TurnCount, &r.DurationMinutes, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

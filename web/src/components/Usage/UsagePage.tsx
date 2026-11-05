@@ -7,7 +7,7 @@ import {
 import { useStore } from '../../store'
 import * as api from '../../api'
 import type { DailyUsageRow, ModelUsageRow, SessionUsageRow, UsageRange } from '../../api'
-import { estimateCost, formatCost } from '../../lib/tokenPricing'
+import { estimateCost, estimateUsageCost, formatCost } from '../../lib/tokenPricing'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -267,7 +267,7 @@ function SessionTable({ data }: { data: SessionUsageRow[] }) {
         <tbody>
           {sorted.map(row => {
             const proj = projects.find(p => p.id === row.project_id)
-            const cost = estimateCost(row.model, row.input_tokens, row.output_tokens, row.cache_read_input_tokens, row.cache_creation_input_tokens)
+            const cost = estimateUsageCost(row.model, row)
             return (
               <tr
                 key={row.session_id}
@@ -430,7 +430,7 @@ export function UsagePage() {
     const totalCacheW = dailyData.reduce((s, r) => s + r.cache_creation_input_tokens, 0)
     const totalTurns  = dailyData.reduce((s, r) => s + r.turn_count, 0)
     const totalCost   = modelData.reduce((s, r) =>
-      s + estimateCost(r.model, r.input_tokens, r.output_tokens, r.cache_read_input_tokens, r.cache_creation_input_tokens), 0)
+      s + estimateUsageCost(r.model, r), 0)
     return { totalInput, totalOutput, totalCacheR, totalCacheW, totalTurns, totalCost }
   }, [dailyData, modelData])
 
@@ -503,7 +503,7 @@ export function UsagePage() {
                         <td>{fmtNum(r.cache_read_input_tokens)}</td>
                         <td>{fmtNum(r.cache_creation_input_tokens)}</td>
                         <td>{r.turn_count}</td>
-                        <td>{formatCost(estimateCost(r.model, r.input_tokens, r.output_tokens, r.cache_read_input_tokens, r.cache_creation_input_tokens))}</td>
+                        <td>{formatCost(estimateUsageCost(r.model, r))}</td>
                       </tr>
                     ))}
                   </tbody>

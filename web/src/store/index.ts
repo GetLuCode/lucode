@@ -9,6 +9,7 @@ export interface TokenUsage {
   output_tokens: number
   cache_creation_input_tokens?: number
   cache_read_input_tokens?: number
+  cache_creation_1h_input_tokens?: number // of the written ones, the 1 hour cache
 }
 
 // Pending usage collected during a streaming turn (not exposed directly to components)
@@ -1207,6 +1208,7 @@ export const useStore = create<AppState>((set, get) => ({
                 output_tokens: prev.output_tokens + event.output_tokens,
                 cache_creation_input_tokens: (prev.cache_creation_input_tokens ?? 0) + event.cache_creation_input_tokens,
                 cache_read_input_tokens: (prev.cache_read_input_tokens ?? 0) + event.cache_read_input_tokens,
+                cache_creation_1h_input_tokens: (prev.cache_creation_1h_input_tokens ?? 0) + (event.cache_creation_1h_input_tokens ?? 0),
               },
             },
             messages: { ...s.messages, [tuSessId]: updatedMsgs },

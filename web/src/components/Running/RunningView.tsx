@@ -5,11 +5,11 @@ import { useStore } from '../../store'
 import * as api from '../../api'
 import { AgentAvatar } from '../Agents/AgentAvatar'
 import { ContextDetailModal } from '../Chat/ContextBar'
-import { estimateCost, formatCost, formatTokens } from '../../lib/tokenPricing'
+import { estimateUsageCost, formatCost, formatTokens } from '../../lib/tokenPricing'
 import type { Agent, ContextUsage, KanbanCard, Session } from '../../types'
 
 // Tokens a session has used, added up over all its turns and models.
-interface TokenTotals { input: number; output: number; cacheRead: number; cacheWrite: number }
+interface TokenTotals { input: number; output: number; cacheRead: number; cacheWrite: number; cacheWrite1h: number }
 
 // Last context-window size the session reported (after its latest turn, so for a finished task
 // it is the final one). The session keeps it as JSON.
@@ -64,8 +64,9 @@ export function RunningView() {
       const tokS: Record<string, TokenTotals> = {}
       for (const u of usage) {
         byS[u.session_id] = (byS[u.session_id] ?? 0) +
-          estimateCost(u.model, u.input_tokens, u.output_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens)
-        const t = tokS[u.session_id] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+          estimateUsageCost(u.model, u)
+        const t = tokS[u.session_id] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0 }
+        t.cacheWrite1h += u.cache_creation_1h_input_tokens ?? 0
         t.input += u.input_tokens
         t.output += u.output_tokens
         t.cacheRead += u.cache_read_input_tokens
@@ -351,6 +352,7 @@ export function RunningView() {
             sessionUsage={t && {
               input_tokens: t.input, output_tokens: t.output,
               cache_read_input_tokens: t.cacheRead, cache_creation_input_tokens: t.cacheWrite,
+              cache_creation_1h_input_tokens: t.cacheWrite1h,
             }}
             onClose={closeCtx}
           />

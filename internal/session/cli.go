@@ -333,6 +333,7 @@ func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]
 			tu.OutputTokens = num("output_tokens")
 			tu.CacheCreationInputTokens = num("cache_creation_input_tokens")
 			tu.CacheReadInputTokens = num("cache_read_input_tokens")
+			tu.CacheCreation1hInputTokens = num("cache_creation_1h_input_tokens")
 			if err := dbpkg.InsertTurnUsage(m.db, tu); err != nil {
 				log.Printf("[cli] turn_usage insert sess=%s: %v", sessID[:8], err)
 			}

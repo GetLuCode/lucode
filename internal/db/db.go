@@ -366,6 +366,10 @@ CREATE INDEX IF NOT EXISTS idx_turn_usage_created   ON turn_usage(created_at);
 	if err := migrateTurnUsageDropCascade(db); err != nil {
 		return fmt.Errorf("migrate turn_usage cascade: %w", err)
 	}
+	// How much of the cache writes used the 1 hour cache (billed at twice the input price instead
+	// of 1.25). After the migration above, whose SELECT * is positional. Rows from before the
+	// runners reported it hold 0: they are priced as 5 minute writes. Idempotent.
+	db.Exec(`ALTER TABLE turn_usage ADD COLUMN cache_creation_1h_input_tokens INTEGER NOT NULL DEFAULT 0`)
 
 	// raw_events — WS events persisted for debugging/inspection per session per turn
 	if _, err := db.Exec(`

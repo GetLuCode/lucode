@@ -149,6 +149,7 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 					"output_tokens":               accum.outputTokens,
 					"cache_creation_input_tokens": accum.cacheCreationInputTokens,
 					"cache_read_input_tokens":     accum.cacheReadInputTokens,
+					"cache_creation_1h_input_tokens": accum.cacheCreation1hTokens,
 					"turn_start_seq":              req.TurnStartSeq,
 				})
 			}
@@ -301,6 +302,7 @@ type turnAccum struct {
 	outputTokens             int
 	cacheCreationInputTokens int
 	cacheReadInputTokens     int
+	cacheCreation1hTokens    int // of cacheCreationInputTokens, the ones written to the 1 hour cache
 
 	resetsAt int64 // unix seconds from the last rejected rate_limit event
 }
@@ -330,6 +332,9 @@ func (a *turnAccum) process(raw json.RawMessage, sessionID string) []accumMessag
 					InputTokens              int `json:"input_tokens"`
 					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+					CacheCreation            struct {
+						OneHour int `json:"ephemeral_1h_input_tokens"`
+					} `json:"cache_creation"`
 				} `json:"usage"`
 			} `json:"message"`
 		}
@@ -339,6 +344,7 @@ func (a *turnAccum) process(raw json.RawMessage, sessionID string) []accumMessag
 			a.inputTokens += msgStart.Message.Usage.InputTokens
 			a.cacheCreationInputTokens += msgStart.Message.Usage.CacheCreationInputTokens
 			a.cacheReadInputTokens += msgStart.Message.Usage.CacheReadInputTokens
+			a.cacheCreation1hTokens += msgStart.Message.Usage.CacheCreation.OneHour
 		}
 
 	case "message_delta":

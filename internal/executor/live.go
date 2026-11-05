@@ -278,15 +278,16 @@ func (l *Live) loop(stdout io.Reader) {
 			log.Printf("[executor] session=%s live turn complete: subtype=%s", sid8, event.ResultSubtype)
 			if accum.inputTokens > 0 || accum.outputTokens > 0 {
 				l.publish(map[string]any{
-					"type":                        "turn_usage",
-					"session_id":                  sessID,
-					"project_id":                  l.req.ProjectID,
-					"account_id":                  l.req.AccountID,
-					"model":                       l.req.Model,
-					"input_tokens":                accum.inputTokens,
-					"output_tokens":               accum.outputTokens,
-					"cache_creation_input_tokens": accum.cacheCreationInputTokens,
-					"cache_read_input_tokens":     accum.cacheReadInputTokens,
+					"type":                           "turn_usage",
+					"session_id":                     sessID,
+					"project_id":                     l.req.ProjectID,
+					"account_id":                     l.req.AccountID,
+					"model":                          l.req.Model,
+					"input_tokens":                   accum.inputTokens,
+					"output_tokens":                  accum.outputTokens,
+					"cache_creation_input_tokens":    accum.cacheCreationInputTokens,
+					"cache_read_input_tokens":        accum.cacheReadInputTokens,
+					"cache_creation_1h_input_tokens": accum.cacheCreation1hTokens,
 				})
 			}
 			l.publish(map[string]any{"type": "session_status", "session_id": sessID, "status": "idle"})
