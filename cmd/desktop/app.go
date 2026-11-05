@@ -137,6 +137,11 @@ func (a *App) startServer() {
 	if err := dbpkg.SeedDefaults(db); err != nil {
 		log.Fatalf("seed defaults: %v", err)
 	}
+	go func() {
+		if _, err := dbpkg.BackfillToolUsage(db); err != nil {
+			log.Printf("backfill tool usage: %v", err)
+		}
+	}()
 
 	natsOpts := []natsclient.Option{
 		natsclient.Timeout(10 * time.Second),

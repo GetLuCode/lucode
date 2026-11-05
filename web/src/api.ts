@@ -315,6 +315,10 @@ export interface ToolCostRow {
 export const getUsageTools = (range: UsageRange, projectId?: string) =>
   req<ToolCostRow[]>('GET', `/api/usage/tools?range=${range}${projectId ? `&project_id=${projectId}` : ''}`)
 
+// What each tool cost in one session (empty until the session has reported its calls).
+export const getSessionToolCosts = (sessionId: string) =>
+  req<ToolCostRow[]>('GET', `/api/sessions/${sessionId}/tool-costs`)
+
 // User Tools
 export const listUserTools = () => req<UserTool[]>('GET', '/api/tools')
 export const createUserTool = (data: Partial<UserTool>) => req<UserTool>('POST', '/api/tools', data)

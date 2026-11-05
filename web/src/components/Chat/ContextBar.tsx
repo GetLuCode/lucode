@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../../store'
-import { getFirstTurnUsage, getMinimaxTokenPlan } from '../../api'
+import { getFirstTurnUsage, getMinimaxTokenPlan, getSessionToolCosts } from '../../api'
+import { totalsByTool, toolTotalCost, toolLabel } from '../../lib/toolCosts'
+import type { ToolTotals } from '../../lib/toolCosts'
 import type { FirstTurnUsage } from '../../api'
 import { IconX } from '@tabler/icons-react'
 import { estimateCost, estimateUsageCost, formatCost } from '../../lib/tokenPricing'
@@ -122,12 +124,17 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
 }) {
   const modalRef = useRef<HTMLDivElement>(null)
   const [firstTurn, setFirstTurn] = useState<FirstTurnUsage | null>(null)
+  const [tools, setTools] = useState<ToolTotals[]>([])
   const sid = contextUsage.session_id
   useEffect(() => {
     setFirstTurn(null)
+    setTools([])
     if (!sid) return
     let cancelled = false
     getFirstTurnUsage(sid).then(u => { if (!cancelled) setFirstTurn(u) }).catch(() => {})
+    getSessionToolCosts(sid)
+      .then(rows => { if (!cancelled) setTools(totalsByTool(rows).sort((a, b) => toolTotalCost(b) - toolTotalCost(a))) })
+      .catch(() => {})
     return () => { cancelled = true }
   }, [sid])
   useEffect(() => {
@@ -239,6 +246,30 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
             <span className="context-detail__tokens">{freeSpace.tokens.toLocaleString()}</span>
             <span className="context-detail__pct">{maxTokens > 0 ? ((freeSpace.tokens / maxTokens) * 100).toFixed(1) : '0'}%</span>
           </div>
+        )}
+        {tools.length > 0 && (
+          <>
+            <div
+              className="context-detail__section"
+              title={'What each tool cost in this task: what the model wrote to ask for it, plus its result, written to the cache once and re-read by every later call.'}
+            >Tools in this session (est. cost)</div>
+            {tools.slice(0, 8).map(t => (
+              <div
+                key={t.tool}
+                className="context-detail__row"
+                title={`Asking: ${formatCost(t.askCost)} · writing results: ${formatCost(t.writeCost)} · re-reading them: ${formatCost(t.readCost)}`}
+              >
+                <span className="context-detail__name">{toolLabel(t.tool)}</span>
+                <span className="context-detail__pct">{t.calls}×</span>
+                <span className="context-detail__tokens">{formatCost(toolTotalCost(t))}</span>
+              </div>
+            ))}
+            {tools.length > 8 && (
+              <div className="context-detail__row context-detail__row--muted">
+                <span className="context-detail__name">+{tools.length - 8} more</span>
+              </div>
+            )}
+          </>
         )}
         {sessionUsage && (
           <>

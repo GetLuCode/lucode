@@ -213,6 +213,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/usage/sessions", h.usageSessions)
 	mux.HandleFunc("GET /api/usage/tools", h.usageTools)
 	mux.HandleFunc("GET /api/sessions/{id}/first-turn-usage", h.firstTurnUsage)
+	mux.HandleFunc("GET /api/sessions/{id}/tool-costs", h.sessionToolCosts)
 
 	mux.HandleFunc("GET /ws", h.globalWS)
 	mux.HandleFunc("GET /ws/stt", h.sttSocket)
@@ -2315,6 +2316,19 @@ func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
 // sessions run since the runners started reporting per-call usage have data.
 func (h *Handler) usageTools(w http.ResponseWriter, r *http.Request) {
 	rows, err := dbpkg.ToolCosts(h.db, parseRangeParam(r), r.URL.Query().Get("project_id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []dbpkg.ToolCostRow{}
+	}
+	jsonResp(w, http.StatusOK, rows)
+}
+
+// sessionToolCosts serves what each tool cost in one session (empty until it has reported calls).
+func (h *Handler) sessionToolCosts(w http.ResponseWriter, r *http.Request) {
+	rows, err := dbpkg.SessionToolCosts(h.db, r.PathValue("id"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

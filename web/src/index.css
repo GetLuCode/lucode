@@ -5066,12 +5066,48 @@ html, body, #root {
 }
 
 .usage-page__header {
-  padding: 20px 36px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 20px 36px 14px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* section menu: one tab per section, under the header, with the divider the header used to draw */
+.usage-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 36px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.usage-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.usage-tab:hover { color: var(--text); }
+.usage-tab--active { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.usage-tab__badge {
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
 }
 
 .usage-page__title {
@@ -5170,6 +5206,9 @@ html, body, #root {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+.usage-kpi__sub { font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.usage-kpi--accent { border-color: rgba(0, 212, 170, 0.35); background: rgba(0, 212, 170, 0.06); }
+.usage-kpi--accent .usage-kpi__value { color: var(--accent); }
 
 /* Section label */
 .usage-section-label {
@@ -5301,10 +5340,54 @@ html, body, #root {
   cursor: pointer;
 }
 .usage-page__loading {
-  padding: 40px 36px;
+  padding: 40px 0;
   color: var(--text-muted);
   font-size: 13px;
 }
+.usage-page__footnote { margin: 0; font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+.usage-section__tools { display: flex; gap: 8px; align-items: center; }
+
+/* a section's title with its filter */
+.usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.usage-filter { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted); }
+.usage-select {
+  background: var(--bg-secondary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  max-width: 220px;
+}
+
+/* by model: the pie beside the table, stacked on narrow screens */
+.usage-models { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: 24px; align-items: center; }
+@media (max-width: 900px) { .usage-models { grid-template-columns: 1fr; } }
+
+/* where the cost goes */
+.usage-breakdown { display: flex; flex-direction: column; gap: 12px; }
+.usage-breakdown__bar {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+.usage-breakdown__seg { display: block; height: 100%; min-width: 2px; }
+.usage-breakdown__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 24px;
+}
+.usage-breakdown__row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.usage-breakdown__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.usage-breakdown__name { flex: 1; color: var(--text-muted); }
+.usage-breakdown__cost { color: var(--text); font-variant-numeric: tabular-nums; }
+.usage-breakdown__pct { min-width: 44px; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 /* ── Session list dot-menu ─────────────────────────────────────────────────── */
 

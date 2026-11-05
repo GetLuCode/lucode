@@ -70,6 +70,12 @@ func main() {
 	if err := dbpkg.SeedDefaults(db); err != nil {
 		log.Fatalf("seed defaults: %v", err)
 	}
+	// history for the cost of tools, rebuilt once from the stored stream (in the background)
+	go func() {
+		if _, err := dbpkg.BackfillToolUsage(db); err != nil {
+			log.Printf("backfill tool usage: %v", err)
+		}
+	}()
 
 	// Approvals waiting when the previous run ended are orphans: their state lived
 	// in memory and their hook process is gone, so nobody can answer them. Clear them

@@ -51,6 +51,13 @@ func TestToolCostsAttributesTheGrowthOfTheContextToTheToolsThatCausedIt(t *testi
 		t.Fatal("a session without calls must give ErrNoRows")
 	}
 
+	if one, err := SessionToolCosts(d, "s1"); err != nil || len(one) == 0 {
+		t.Fatalf("the costs of one session: %v %v", one, err)
+	}
+	if none, err := SessionToolCosts(d, "nobody"); err != nil || len(none) != 0 {
+		t.Fatalf("another session has no tools: %v %v", none, err)
+	}
+
 	rows, err := ToolCosts(d, time.Time{}, "")
 	if err != nil {
 		t.Fatal(err)

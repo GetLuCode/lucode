@@ -18,6 +18,8 @@ import (
 
 // APICall is one call to the model, as the runner reported it.
 type APICall struct {
+	// CreatedAt is set only when rebuilding old calls (RFC3339); live calls take the time of arrival.
+	CreatedAt                           string
 	SessionID, ProjectID, Parent, Model string
 	FirstInTurn                         bool
 	Input, Output, CacheCreation        int
@@ -38,12 +40,13 @@ func InsertAPICall(db *sql.DB, c APICall) error {
 	}
 	defer tx.Rollback()
 	id := uuid.New().String()
+	// created_at falls back to its default (now) when the call carries no time
 	if _, err := tx.Exec(
 		`INSERT INTO api_calls (id, session_id, project_id, parent, first_in_turn, model, input_tokens, output_tokens,
-		 cache_creation_input_tokens, cache_read_input_tokens, cache_creation_1h_tokens, cache_creation_5m_tokens)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 cache_creation_input_tokens, cache_read_input_tokens, cache_creation_1h_tokens, cache_creation_5m_tokens, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?, COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,
 		id, c.SessionID, c.ProjectID, c.Parent, boolToInt(c.FirstInTurn), c.Model, c.Input, c.Output,
-		c.CacheCreation, c.CacheRead, c.CacheCreation1h, c.CacheCreation5m,
+		c.CacheCreation, c.CacheRead, c.CacheCreation1h, c.CacheCreation5m, c.CreatedAt,
 	); err != nil {
 		return err
 	}
@@ -128,15 +131,23 @@ func (c callRow) ctx() int { return c.input + c.cc + c.cr }
 
 // ToolCosts totals, per tool and model, what the tool calls since the given time used.
 func ToolCosts(db *sql.DB, since time.Time, projectID string) ([]ToolCostRow, error) {
-	q := `SELECT id, session_id, parent, first_in_turn, model, input_tokens, output_tokens,
-	      cache_creation_input_tokens, cache_read_input_tokens, cache_creation_1h_tokens, cache_creation_5m_tokens
-	      FROM api_calls WHERE created_at >= ?`
-	args := []any{since.Format(time.RFC3339)}
+	cond, args := `created_at >= ?`, []any{since.Format(time.RFC3339)}
 	if projectID != "" {
-		q += ` AND project_id = ?`
+		cond += ` AND project_id = ?`
 		args = append(args, projectID)
 	}
-	q += ` ORDER BY session_id, rowid`
+	return toolCosts(db, cond, args)
+}
+
+// SessionToolCosts is ToolCosts for one session: what each tool cost in that task.
+func SessionToolCosts(db *sql.DB, sessionID string) ([]ToolCostRow, error) {
+	return toolCosts(db, `session_id = ?`, []any{sessionID})
+}
+
+func toolCosts(db *sql.DB, cond string, args []any) ([]ToolCostRow, error) {
+	q := `SELECT id, session_id, parent, first_in_turn, model, input_tokens, output_tokens,
+	      cache_creation_input_tokens, cache_read_input_tokens, cache_creation_1h_tokens, cache_creation_5m_tokens
+	      FROM api_calls WHERE ` + cond + ` ORDER BY session_id, rowid`
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
