@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import * as api from '../../api'
 import type { AIProfile } from '../../types'
+import { AccountAvatar } from './AccountAvatar'
 
 interface Win { pct: number | null; reset: string | null }
 interface Meter {
@@ -63,7 +64,16 @@ export function UsageMeters() {
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
+  // The account in use (set from the modal); without one, the first account stands in.
+  const [active, setActive] = useState<api.ActiveAI | null>(null)
+  useEffect(() => {
+    if (open) return // reloaded when the modal closes, since that is where it changes
+    api.getActiveAI().then(setActive).catch(() => setActive(null))
+  }, [open])
+
   if (!meters.length) return null
+  const inUse = meters.find(m => active && active.ai_profile_id === m.ai.id && active.runner_id === m.runnerId) ?? meters[0]
+  const shown = [inUse]
   return (
     <>
       <div
@@ -74,9 +84,9 @@ export function UsageMeters() {
         onClick={() => setOpen(true)}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }}
       >
-        {meters.map(m => (
+        {shown.map(m => (
           <div key={m.key} className="usage-meter" title={tooltip(m)}>
-            <span className="usage-meter__name">{m.ai.name}</span>
+            <AccountAvatar id={m.ai.id} name={m.ai.name} size={20} />
             {m.error ? <span className="usage-meter__err">n/a</span> : (
               <>
                 <Bar label="5h" pct={m.five} />
@@ -117,6 +127,7 @@ function UsageModal({ meters, onClose }: { meters: Meter[]; onClose: () => void 
           {meters.map(m => (
             <div key={m.key} className={`usage-modal__account${isActive(m) ? ' usage-modal__account--active' : ''}`}>
               <div className="usage-modal__account-head">
+                <AccountAvatar id={m.ai.id} name={m.ai.name} size={24} />
                 <span className="usage-modal__account-name">{m.ai.name}</span>
                 {m.ai.plan && <span className="usage-modal__badge">{m.ai.plan}</span>}
                 <button

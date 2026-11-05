@@ -111,6 +111,10 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
 
       <nav className="project-tabs" aria-label="Project sections">
         <button
+          className={`project-tab${onAgentTab ? ' project-tab--active' : ''}`}
+          onClick={() => navigate(`${base}/agent`)}
+        >Supervisor</button>
+        <button
           className={`project-tab${onKanban ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/kanban`)}
         >Kanban</button>
@@ -121,10 +125,6 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
           Running
           {runningCount > 0 && <span className="project-tab__badge" title={`${runningCount} agent(s) running`}>{runningCount}</span>}
         </button>
-        <button
-          className={`project-tab${onAgentTab ? ' project-tab--active' : ''}`}
-          onClick={() => navigate(`${base}/agent`)}
-        >Supervisor</button>
       </nav>
 
       <div className="project-header__actions">

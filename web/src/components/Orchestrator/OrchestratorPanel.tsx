@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX } from '@tabler/icons-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
@@ -32,12 +33,18 @@ const LS = {
   model: (pid: string) => `orch_model:${pid}`,
 }
 
-const MODELS = [
+const CLAUDE_MODELS = [
   { value: 'haiku', label: 'Haiku 5.5' },
   { value: 'sonnet', label: 'Sonnet 5.5' },
   { value: 'opus', label: 'Opus 5.5' },
-  // Local: Google's AI Mode in an Edge that lucode drives. No claude, no tools, no tokens.
-  { value: 'local:aimode', label: 'Google AI Mode (Edge)' },
+]
+// Gemini mode: Google's AI Mode in an Edge that lucode drives. No runner, no model choice,
+// no claude, no tools, no tokens.
+const GEMINI_MODEL = 'local:aimode'
+const MODELS = [...CLAUDE_MODELS, { value: GEMINI_MODEL, label: 'Google AI Mode (Edge)' }]
+const MODES = [
+  { value: 'supervisor', label: 'Supervisor', hint: 'Claude, on a runner' },
+  { value: 'gemini', label: 'Gemini', hint: 'Google AI Mode (Edge)' },
 ]
 
 const lsGet = (k: string, def: string) => {
@@ -201,6 +208,14 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     setModel(v)
     if (projectId) lsSet(LS.model(projectId), v)
   }
+  // The Claude model to come back to when leaving Gemini mode.
+  const lastClaudeModel = useRef('sonnet')
+  if (!isLocalModel) lastClaudeModel.current = model
+  const [modeOpen, setModeOpen] = useState(false)
+  const pickMode = (v: string) => {
+    setModeOpen(false)
+    pickModel(v === 'gemini' ? GEMINI_MODEL : lastClaudeModel.current)
+  }
   const pickAI = (id: string) => {
     setAiId(id)
     if (projectId) lsSet(LS.ai(projectId, runnerId), id)
@@ -335,7 +350,38 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     <aside className={`orch${full ? ' orch--full' : ''}`} onWheel={forwardWheel}>
       <header className="orch__header">
         <ModelIcon model={model} size={17} className="orch__model-icon" />
-        <span className="orch__title">Supervisor</span>
+        <span className="orch__title">
+          <Popover open={modeOpen} onOpenChange={setModeOpen}>
+            <PopoverTrigger asChild>
+              <button type="button" className="orch__mode-btn" disabled={running} title="Mode" aria-label="Mode">
+                {MODES.find(m => m.value === (isLocalModel ? 'gemini' : 'supervisor'))?.label}
+                <IconChevronDown size={14} />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent side="bottom" align="start" className="env-picker">
+              <div className="env-picker__section">
+                <div className="env-picker__title">Mode</div>
+                {MODES.map(m => {
+                  const active = m.value === (isLocalModel ? 'gemini' : 'supervisor')
+                  return (
+                    <button
+                      key={m.value}
+                      type="button"
+                      className={`env-picker__item${active ? ' env-picker__item--active' : ''}`}
+                      onClick={() => pickMode(m.value)}
+                    >
+                      <span className="env-picker__item-text">
+                        <span>{m.label}</span>
+                        <span className="env-picker__hint">{m.hint}</span>
+                      </span>
+                      {active && <IconCheck size={13} className="env-picker__check" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </span>
         {!isLocalModel && <CacheBadge cache={cache} />}
         {sid && !isLocalModel && <ClaudeProcess sessionId={sid} />}
         {sid && <OrchestratorEdit projectId={projectId} sessionId={sid} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
@@ -424,7 +470,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         />
         <div className="orch__controls">
           {/* "default" stands for no preconfigured AI (stored as an empty id) */}
-          <EnvPicker
+          {!isLocalModel && <EnvPicker
             runner={runnerId}
             runners={[
               ...(canRunLocally ? [{ value: 'local', label: selfName }] : []),
@@ -439,11 +485,13 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
             ]}
             onAI={v => pickAI(v === 'default' ? '' : v)}
             model={model}
-            models={MODELS}
+            models={CLAUDE_MODELS}
             onModel={pickModel}
-          />
-          <span className="orch__env-summary" title="Runner · AI · Model">
-            {runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'} · {MODELS.find(m => m.value === model)?.label ?? model}
+          />}
+          <span className="orch__env-summary" title={isLocalModel ? 'Google AI Mode (Edge)' : 'Runner · AI · Model'}>
+            {isLocalModel
+              ? 'Google AI Mode (Edge)'
+              : <>{runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'} · {MODELS.find(m => m.value === model)?.label ?? model}</>}
           </span>
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden onChange={e => { attachFile(e.target.files?.[0]); e.target.value = '' }} />
           <button className={`orch__icon-btn${image ? ' orch__icon-btn--on' : ''}`} onClick={() => fileRef.current?.click()} disabled={!sid || running} title="Attach an image (or paste one)" aria-label="Attach an image">
