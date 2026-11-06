@@ -14,6 +14,7 @@ como debe comportarse y como reconocer cada fallo. Como probar y como anadir nod
 | Motor (`internal/flows`) | Hub | Valida, decide el siguiente paso y guarda el estado en la base de datos. |
 | Git status, Merge, Run agent | Runner, por NATS | Lo que toca git o ejecuta claude. |
 | AI evaluate | Hub, por HTTP | Una peticion a la API de Anthropic. Sin claude, sin runner y sin disco. |
+| Push notification | Hub, por HTTP | Una peticion al servicio de push de cada navegador. Sin claude, sin runner. |
 | Human approval | Base de datos | Una espera que sobrevive a reinicios. |
 
 ### De un evento a una ejecucion
@@ -133,6 +134,31 @@ JSON tal cual), `event.work_dir`, `event.task` (titulo de la tarjeta, vacio si n
 en sesiones sin tarjeta; ahi `card.*` no existe y Comment, Add tag y Notify supervisor fallan, asi que
 acaban en la persona.
 
+### Push notification
+
+Avisa a todos los dispositivos que activaron "Notifications on this device" en la pestana Flows, aunque
+lucode este cerrado. El blueprint "Push when a task needs review" es un ejemplo listo para copiar.
+
+- **Activarlo es por dispositivo.** El boton esta en la barra lateral de Flows, fuera del formulario del
+  nodo, porque ese formulario es de solo lectura en un movil. "Send a test" comprueba el dispositivo sin
+  necesidad de un flujo. Cerrar sesion lo desactiva en ese dispositivo.
+- **Solo funciona en HTTPS o localhost, y con el build.** Lo exige el navegador; en
+  `http://192.168.x.x` el boton se sustituye por un aviso. Tampoco funciona en el servidor de desarrollo
+  (`:5173`), donde no se registra el service worker. En iPhone hay que anadir lucode a la pantalla de inicio.
+- **Resultado.** Con al menos un dispositivo alcanzado sigue por `next`, y `nodes.<id>.sent`, `.failed` y
+  `.removed` cuentan el resto. Sin ninguno sigue por `failed`.
+- **Limpieza.** Un dispositivo por el que el servicio contesta 404 o 410 se olvida. Otros errores lo
+  conservan.
+- **Tiempo de vida.** Un dispositivo apagado lo recibe si vuelve en menos de 24 h.
+- **Tras un reinicio se reenvia** el mismo texto con el mismo `tag` (`flow-step-<seq>`): el dispositivo
+  reemplaza el aviso en lugar de duplicarlo.
+- **Clic:** abre la ejecucion en Flows.
+- **Texto:** el servicio de push solo ve datos cifrados. Un mensaje largo se recorta para caber en 3000 bytes.
+- **Claves:** las VAPID se crean la primera vez en `~/.lucode/flows-push.json` y la privada nunca sale del
+  hub. Si se pierden, todos los dispositivos deben volver a activarlo. Un archivo danado da error y no se
+  reemplaza. `LUCODE_PUSH_CONTACT` cambia el contacto que se envia a los servicios de push.
+- **No se puede usar en un flujo Tool requested:** esos bloquean el hook y el envio puede tardar 30 s.
+
 ### Merge
 
 | Opcion | Por defecto |
@@ -200,6 +226,12 @@ El error se ve en la pestana Runs, en el paso que fallo.
 | `the model declined to evaluate this (...)` | El modelo rechazo el contenido. | Revisa el texto enviado o conecta la salida `failed`. |
 | `the model stopped without an answer (...)` | La respuesta termino sin una decision. | Conecta `failed` para tratarlo; reintenta si es puntual. |
 | `this approval is no longer waiting for a decision` | Ya se decidio, o la ejecucion termino o se cancelo. | Nada: recarga la campana. |
+| `no device has notifications on: ...` | Ningun dispositivo lo activo, o los que habia ya no existen. | Activalo en la pestana Flows de ese dispositivo. |
+| `no device could be reached: ...` | Todos los envios fallaron; el motivo va detras. | Conecta `failed` si no debe parar el flujo. |
+| `the push service rejected this hub's keys (...)` | Las claves VAPID cambiaron desde que el dispositivo se suscribio. | Desactivalo y activalo de nuevo en ese dispositivo. |
+| `the push services did not answer in time` | Sin respuesta en 2 minutos. | Comprueba la red del hub. |
+| `Push notification: the title or the message came out empty` | La plantilla dio un texto vacio. | Revisa la plantilla. |
+| `.../flows-push.json is damaged: ...` | El archivo de claves no se puede leer. | Restauralo, o borralo y reactiva cada dispositivo. |
 
 ### Sintomas sin mensaje de error
 
@@ -210,6 +242,8 @@ El error se ve en la pestana Runs, en el paso que fallo.
 | Un flujo nunca arranca | Sin publicar, desactivado, proyecto en pausa, otro flujo en cola en esa tarjeta, o el evento lo causo el propio flujo. | Punto verde en la lista, boton de pausa y pestana Runs. |
 | Ejecucion parada en `waiting` | Espera un Human approval, un turno o un evento; es lo normal. | El paso en azul y la campana. |
 | Un cambio del borrador no tiene efecto | Sin publicar: se ejecuta la version publicada. | El estado dice `Saved, not published`. |
+| El boton de notificaciones no aparece | La pagina va por HTTP, en el servidor de desarrollo o con los avisos bloqueados. | El aviso que sale en su lugar dice cual. |
+| El nodo acaba bien pero no sale el aviso | El navegador esta cerrado del todo, o el sistema silencia los avisos (Windows: "No molestar"). `sent` solo dice que el servicio de push lo acepto. | "Send a test" en ese dispositivo. |
 | Una herramienta pregunta a la persona con un flujo activo | El flujo no llego a decidir: fallo, tardo mas de 60 s o la entrada pasa de 64 KB. | Pestana Runs y linea `no decision on` en el log del hub. |
 | Un agente nunca pasa por el flujo | Una regla ya lo decide. | Reglas de permisos. |
 | Un agente en auto no deja tool log | Su runner es anterior a este cambio: lanza claude sin el hook. | Recompila y reinicia el runner. |
@@ -272,10 +306,19 @@ pestana.
   seguia solo. Un reinicio del hub con un hook esperando pierde la peticion y el hook deniega a los 4 minutos.
 - **Una evaluacion cancelada por tiempo sigue en curso** hasta que responde la API y se paga igual.
 - **El tool log no tiene el resultado de la herramienta.** Haria falta un hook `PostToolUse`.
+- **Las notificaciones llegan a todos los dispositivos del hub**, sea cual sea el usuario y el proyecto: el
+  nodo no elige destinatario. Con varias personas en un hub, cada una ve los avisos de todos los proyectos.
+- **El contacto VAPID por defecto es ficticio** (`lucode@example.com`). Con `LUCODE_PUSH_CONTACT` el servicio
+  de push podria avisarte de un problema; no hace falta para enviar.
+- **Una sesion caducada no desactiva los avisos**: solo cerrar sesion con el boton. Es a proposito, para que
+  un movil siga recibiendolos, pero un dispositivo abandonado sigue suscrito hasta desactivarlo.
 
 ## Sin probar
 
 - La API real de Anthropic: solo la falsa (`internal/fakeanthropic`).
+- Push en un movil real y con Apple o Firefox. `TestPushLive` (`LUCODE_PUSH_LIVE=1`) si lo prueba de punta a
+  punta en Edge y Chrome de escritorio con Windows Push y FCM reales. El boton de la barra lateral y el clic
+  en la notificacion solo tienen prueba con un navegador simulado.
 - Aprobar herramientas con un claude real y con un runner remoto: si se probo el binario real del hook
   contra un hub con NATS temporal, y su entrada imita la de claude. En particular, el campo
   `permission_mode` y que el silencio del hook llegue al clasificador salen de la documentacion.

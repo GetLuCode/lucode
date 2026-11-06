@@ -31,6 +31,27 @@ const (
 // gitStepTimeout covers the git calls, which have their own shorter limits on the way.
 const gitStepTimeout = 5 * time.Minute
 
+// pushStepTimeout covers one push, whose calls to the push services have a shorter limit.
+const pushStepTimeout = 2 * time.Minute
+
+// PushMessage is a notification for the devices. The run says what clicking it opens, and
+// Seq identifies it on the device: the same step sent twice shows once.
+type PushMessage struct {
+	Title     string
+	Body      string
+	ProjectID string
+	FlowID    string
+	RunID     string
+	Seq       int64
+}
+
+// PushResult counts what happened to the devices: Removed ones no longer exist.
+type PushResult struct {
+	Sent    int
+	Failed  int
+	Removed int
+}
+
 // GitState is what Git status found. State is the output to take.
 type GitState struct {
 	State         string
@@ -101,6 +122,8 @@ type Host interface {
 	// GitMergeFinished does the hub's half of a merge that is known to have happened.
 	GitMergeFinished(cardID string, o MergeOptions, cause dbpkg.EventCause) error
 	NotifySupervisor(cardID, text string) error
+	// SendPush notifies the subscribed devices. An error means no device could be reached.
+	SendPush(ctx context.Context, msg PushMessage) (PushResult, error)
 	// RunChanged tells the browsers a run changed.
 	RunChanged(run dbpkg.FlowRun)
 }
@@ -256,6 +279,36 @@ func (e *Engine) Recover() {
 			e.startMergeCheck(run, node, s)
 		}
 	}
+	// A device that already got this one just replaces it, so sending again is safe. The text is
+	// the one the step rendered, even if the card has changed since.
+	pushSteps, err := dbpkg.WaitingFlowStepsWithPrefix(e.db, pushWaitPrefix)
+	if err != nil {
+		log.Printf("[flows] recover push steps: %v", err)
+		return
+	}
+	for _, s := range pushSteps {
+		run, _, _, err := e.stepContext(s)
+		if err != nil || run.Status != dbpkg.RunRunning {
+			continue
+		}
+		var text struct {
+			Title string `json:"title"`
+			Body  string `json:"body"`
+		}
+		_ = json.Unmarshal(s.Output, &text)
+		e.startPush(run, s, text.Title, text.Body)
+	}
+}
+
+func (e *Engine) startPush(run dbpkg.FlowRun, s dbpkg.FlowStep, title, body string) {
+	msg := PushMessage{Title: title, Body: body, ProjectID: run.ProjectID, FlowID: run.FlowID, RunID: run.ID, Seq: s.Seq}
+	e.startCall(run, pushWaitKey(s.Seq), func(ctx context.Context) (string, map[string]any, error) {
+		res, err := e.host.SendPush(ctx, msg)
+		if err != nil {
+			return "", nil, err
+		}
+		return PortNext, map[string]any{"sent": res.Sent, "failed": res.Failed, "removed": res.Removed}, nil
+	})
 }
 
 // startCall runs slow work away from the engine's goroutine. Its result comes back as an
@@ -347,12 +400,14 @@ func (e *Engine) WaitForEvaluations() { e.calls.Wait() }
 const (
 	aiWaitPrefix       = "ai:"
 	gitWaitPrefix      = "git:"
+	pushWaitPrefix     = "push:"
 	approvalWaitPrefix = "approval:"
 )
 
 func aiWaitKey(seq int64) string       { return fmt.Sprintf("%s%d", aiWaitPrefix, seq) }
 func approvalWaitKey(seq int64) string { return fmt.Sprintf("%s%d", approvalWaitPrefix, seq) }
 func gitWaitKey(seq int64) string      { return fmt.Sprintf("%s%d", gitWaitPrefix, seq) }
+func pushWaitKey(seq int64) string     { return fmt.Sprintf("%s%d", pushWaitPrefix, seq) }
 
 // startEvaluation calls the model in the background. The answer comes back as an event, so it
 // is handled in order on the engine's goroutine, like everything else.
@@ -738,6 +793,9 @@ func (e *Engine) wakeDue() bool {
 		case TypeMerge:
 			port = PortFailed
 			extra = map[string]any{"error": "the runner did not answer in time: the merge may or may not have happened, check the repository"}
+		case TypePushNotification:
+			port = PortFailed
+			extra = map[string]any{"error": "the push services did not answer in time"}
 		}
 		e.resumeStep(s, port, extra)
 	}
@@ -1137,6 +1195,29 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 			return result{}, err
 		}
 		return result{port: PortNext, output: map[string]any{"text": text}}, nil
+
+	case TypePushNotification:
+		title, err := render("title")
+		if err != nil {
+			return result{}, err
+		}
+		body, err := render("body")
+		if err != nil {
+			return result{}, err
+		}
+		title, body = strings.TrimSpace(title), strings.TrimSpace(body)
+		if title == "" || body == "" {
+			return result{}, errors.New("Push notification: the title or the message came out empty")
+		}
+		// parked with its text before the call starts: a restart sends this same text again
+		text, _ := json.Marshal(map[string]any{"title": title, "body": body})
+		wake := e.now().Add(pushStepTimeout).UTC().Format("2006-01-02T15:04:05.000Z")
+		if err := dbpkg.WaitFlowStep(e.db, s.Seq, pushWaitKey(s.Seq), wake, text); err != nil {
+			return result{}, err
+		}
+		e.startPush(run, s, title, body)
+		e.host.RunChanged(run)
+		return result{parked: true}, nil
 
 	case TypeAIEvaluate:
 		if turns := e.agentTurns(run, g); turns > MaxAgentTurns {

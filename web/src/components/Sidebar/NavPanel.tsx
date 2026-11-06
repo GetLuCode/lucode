@@ -10,6 +10,7 @@ import { SettingsModal } from '../Settings/SettingsModal'
 import { TaskManagerPanel } from '../TaskManager/TaskManagerPanel'
 import { useAuthStore } from '../../store/auth'
 import * as api from '../../api'
+import { dropPushOnSignOut } from '../../lib/push'
 
 // The icon rail: projects, usage, task manager, settings and sign out.
 // Everything about the active project, and the search, live in the project header.
@@ -106,6 +107,7 @@ function LogoutButton() {
   if (!token) return null
 
   async function handleLogout() {
+    await dropPushOnSignOut() // while the session still lets it tell the hub
     try { await api.logout() } catch { /* ignore */ }
     clearAuth()
   }

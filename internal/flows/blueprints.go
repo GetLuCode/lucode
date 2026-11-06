@@ -129,6 +129,18 @@ var blueprints = []Blueprint{
 			},
 		},
 	},
+	{
+		Key: "review_push", Name: "Push when a task needs review",
+		Description: "When a task enters Review, a notification reaches your devices. If none can be reached, the card gets a comment instead.",
+		Graph: Graph{
+			Nodes: []Node{
+				bpNode(1, TypeCardMoved, 40, 120, "to_kind", "review"),
+				bpNode(2, TypePushNotification, 300, 120, "title", "Ready for review", "body", "{{card.title}}"),
+				bpNode(3, TypeComment, 600, 240, "text", "Could not send the notification: {{nodes.n2.error}}"),
+			},
+			Edges: []Edge{bpEdge(1, PortNext, 2), bpEdge(2, PortFailed, 3)},
+		},
+	},
 }
 
 // Blueprints lists the base flows.

@@ -63,6 +63,8 @@ type Handler struct {
 	startTurnFn func(sessionpkg.TurnOptions) error // overrides manager.StartTurn in tests
 
 	flows *flows.Engine // nil until StartFlows (only the hub runs it)
+
+	pushIcon string // path of the icon of a notification; empty: the browser's own
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
@@ -392,6 +394,7 @@ func recoverMiddleware(next http.Handler) http.Handler {
 func WrapWithSPA(h *Handler, spaFS fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	h.Register(mux)
+	h.pushIcon = findPushIcon(spaFS)
 	mux.Handle("/", spaHandler(spaFS))
 	return recoverMiddleware(cors(h.authMiddleware(h.remoteProxy(mux))))
 }

@@ -310,6 +310,7 @@ func (h *Handler) registerFlows(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/flow-steps/{seq}/decision", h.decideFlowApproval)
 	mux.HandleFunc("GET /api/flow-ai-settings", h.getFlowAISettings)
 	mux.HandleFunc("PUT /api/flow-ai-settings", h.putFlowAISettings)
+	h.registerFlowPush(mux)
 	mux.HandleFunc("GET /api/projects/{pid}/flows/paused", h.getFlowsPaused)
 	mux.HandleFunc("PUT /api/projects/{pid}/flows/paused", h.setFlowsPaused)
 	mux.HandleFunc("GET /api/flows/{id}", h.getFlow)
