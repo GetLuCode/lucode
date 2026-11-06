@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { IconArrowBackUp, IconDots, IconGitBranch, IconGitCherryPick, IconListDetails, IconListTree, IconLoader2, IconSearch, IconTag, IconTerminal2, IconX } from '@tabler/icons-react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import { IconArrowBackUp, IconDots, IconGitBranch, IconGitCherryPick, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconListDetails, IconListTree, IconLoader2, IconSearch, IconTag, IconTerminal2, IconX } from '@tabler/icons-react'
 import { errorText, ago, fullDate, gitCall, shortSha } from './gitApi'
 import { layoutGraph } from './gitGraph'
 import type { GraphRow, GraphSegment } from './gitGraph'
@@ -15,6 +16,23 @@ const NODE_Y = 15
 const PAGE = 150
 const INLINE_FILES = 5
 const MAX_LANES = 18
+const MIN_LIST = 180   // the graph and the start of the subject still fit
+const MIN_DETAIL = 380 // the same floor Git.css gives the commit details
+const LIST_WIDTH_KEY = 'lucode-git-list-width'
+
+function loadListWidth(): number | null {
+  try {
+    const n = Number(localStorage.getItem(LIST_WIDTH_KEY))
+    return n >= MIN_LIST ? n : null
+  } catch { return null }
+}
+
+function saveListWidth(w: number | null) {
+  try {
+    if (w === null) localStorage.removeItem(LIST_WIDTH_KEY)
+    else localStorage.setItem(LIST_WIDTH_KEY, String(Math.round(w)))
+  } catch { /* only a preference */ }
+}
 
 const laneX = (lane: number) => LANE / 2 + 3 + lane * LANE
 const laneColor = (color: number) => `var(--lane-${color % 8})`
@@ -77,7 +95,7 @@ const CommitRow = memo(function CommitRow({ c, row, width, selected, showFiles, 
           <span className="gl-meta">
             <Avatar name={c.author} size={15} />
             <span className="gl-author">{c.author}</span>
-            <span title={fullDate(c.at)}>{ago(c.at)}</span>
+            <span className="gl-time" title={fullDate(c.at)}>{ago(c.at)}</span>
             <span className="gl-sha">{shortSha(c.sha)}</span>
             {row.merge && <span className="gl-kind">merge</span>}
             {c.files_total > 0 && <span>{c.files_total} {c.files_total === 1 ? 'file' : 'files'}</span>}
@@ -97,13 +115,16 @@ const CommitRow = memo(function CommitRow({ c, row, width, selected, showFiles, 
   )
 })
 
-function CommitDetail({ ui, sha, file, onFile, onSelect, onClose }: {
+function CommitDetail({ ui, sha, file, onFile, onSelect, onClose, resizer, narrow, onToggleNarrow }: {
   ui: GitUI
   sha: string
   file: GitFileStat | null
   onFile: (f: GitFileStat) => void
   onSelect: (sha: string) => void
   onClose: () => void
+  resizer: ReactNode
+  narrow: boolean
+  onToggleNarrow: () => void
 }) {
   const [commit, setCommit] = useState<GitCommit | null>(null)
   const [error, setError] = useState('')
@@ -148,12 +169,21 @@ function CommitDetail({ ui, sha, file, onFile, onSelect, onClose }: {
 
   return (
     <aside className="git-detail" aria-label="Commit details">
+      {resizer}
       <div className="git-detail__top">
         {error && <div className="git-msg git-msg--bad">{error}</div>}
         {!commit && !error && <div className="git-skel"><span style={{ width: '70%' }} /><span style={{ width: '40%' }} /></div>}
         {commit && (
           <>
             <div className="git-detail__titlebar">
+              <button
+                className="git-icon-btn git-detail__narrow"
+                onClick={onToggleNarrow}
+                title={narrow ? 'Widen the branch graph' : 'Collapse the branch graph'}
+                aria-label={narrow ? 'Widen the branch graph' : 'Collapse the branch graph'}
+              >
+                {narrow ? <IconLayoutSidebarLeftExpand size={15} /> : <IconLayoutSidebarLeftCollapse size={15} />}
+              </button>
               <h3 className="git-detail__subject">{commit.subject}</h3>
               <button className="git-icon-btn" onClick={e => setMenu(e.currentTarget)} title="Commit actions" aria-label="Commit actions"><IconDots size={15} /></button>
               <button className="git-icon-btn" onClick={onClose} title="Close" aria-label="Close details"><IconX size={15} /></button>
@@ -212,7 +242,49 @@ export function HistoryPane({ ui, refName, sha, onRef, onSha, taskByBranch, task
   const [showFiles, setShowFiles] = useState(loadShowFiles)
   const [file, setFile] = useState<GitFileStat | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const seq = useRef(0)
+  const [listWidth, setListWidth] = useState(loadListWidth)
+
+  const clampWidth = (w: number) => Math.max(MIN_LIST, Math.min(w, (rootRef.current?.clientWidth ?? w + MIN_DETAIL) - MIN_DETAIL))
+  const applyWidth = (w: number | null) => {
+    setListWidth(w)
+    saveListWidth(w)
+  }
+  // Dragging only moves a CSS variable: nothing re-renders the commit list until it is dropped.
+  const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const handle = e.currentTarget
+    const root = rootRef.current
+    const startX = e.clientX
+    const startW = root?.querySelector('.git-history__list')?.getBoundingClientRect().width ?? MIN_LIST
+    let w = startW
+    handle.setPointerCapture(e.pointerId)
+    root?.classList.add('git-history--resizing')
+    const onMove = (ev: PointerEvent) => {
+      w = clampWidth(startW + ev.clientX - startX)
+      root?.style.setProperty('--git-list-w', `${w}px`)
+    }
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove)
+      handle.removeEventListener('pointerup', onUp)
+      handle.removeEventListener('pointercancel', onUp)
+      root?.classList.remove('git-history--resizing')
+      if (w !== startW) applyWidth(w)
+    }
+    handle.addEventListener('pointermove', onMove)
+    handle.addEventListener('pointerup', onUp)
+    handle.addEventListener('pointercancel', onUp)
+  }
+  const resizeByKey = (e: ReactKeyboardEvent) => {
+    const current = rootRef.current?.querySelector('.git-history__list')?.getBoundingClientRect().width ?? MIN_LIST
+    const next = e.key === 'ArrowLeft' ? current - 32 : e.key === 'ArrowRight' ? current + 32 : e.key === 'Home' ? MIN_LIST : null
+    if (next === null) return
+    e.preventDefault()
+    applyWidth(clampWidth(next))
+  }
+  const narrow = listWidth !== null && listWidth <= MIN_LIST + 24
 
   const load = async (skip: number) => {
     const my = ++seq.current
@@ -266,7 +338,11 @@ export function HistoryPane({ ui, refName, sha, onRef, onSha, taskByBranch, task
   }
 
   return (
-    <div className={`git-history${sha ? ' git-history--detail' : ''}`}>
+    <div
+      ref={rootRef}
+      className={`git-history${sha ? ' git-history--detail' : ''}`}
+      style={listWidth !== null ? { '--git-list-w': `${listWidth}px` } as CSSProperties : undefined}
+    >
       <section className="git-history__list" aria-label="Commit history">
         <div className="git-toolbar">
           <div className="git-search">
@@ -319,7 +395,31 @@ export function HistoryPane({ ui, refName, sha, onRef, onSha, taskByBranch, task
           )}
         </div>
       </section>
-      {sha && <CommitDetail ui={ui} sha={sha} file={file} onFile={setFile} onSelect={next => { setFile(null); onSha(next) }} onClose={() => onSha('')} />}
+      {sha && (
+        <CommitDetail
+          ui={ui}
+          sha={sha}
+          file={file}
+          onFile={setFile}
+          onSelect={next => { setFile(null); onSha(next) }}
+          onClose={() => onSha('')}
+          narrow={narrow}
+          onToggleNarrow={() => applyWidth(narrow ? null : MIN_LIST)}
+          resizer={(
+            <div
+              className="git-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the branch graph"
+              title="Drag to resize. Double-click to reset."
+              tabIndex={0}
+              onPointerDown={startResize}
+              onDoubleClick={() => applyWidth(null)}
+              onKeyDown={resizeByKey}
+            />
+          )}
+        />
+      )}
     </div>
   )
 }

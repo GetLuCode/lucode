@@ -17,6 +17,12 @@ Cliente de git de un proyecto: cambios, historial con grafo, comparar ramas, sta
 - Un merge con conflictos se queda abierto, como en la consola: la pestana lo avisa y ofrece Abort. Los conflictos se arreglan en los archivos y se marcan con stage. No hay editor de conflictos.
 - Lo que no se puede deshacer pide confirmacion (discard, borrar sin seguimiento, `git rm`, drop, borrar rama sin merge, quitar worktree). No se puede quitar el worktree de una tarea cuyo agente esta trabajando.
 
+## Ancho de los paneles
+- El menu izquierdo se colapsa a una columna de iconos con el boton de la barra superior. A ancho de telefono no aplica: ahi las listas ya se abren bajo demanda.
+- Con un commit abierto, el divisor entre el arbol y el detalle se arrastra (tambien con las flechas y Home; doble clic lo restablece), y el boton del detalle colapsa el arbol a su minimo de 180 px. El detalle nunca baja de 380 px.
+- Las filas del arbol se adaptan por container query: primero pierden chips y contadores, despues las listas de archivos. Quedan el grafo, el mensaje, el autor y la fecha.
+- Ambos anchos se guardan en `localStorage`: son preferencias de cada navegador.
+
 ## Worktree, tarea y merge
 - **Tarea:** se busca por sesion (transcripcion, lo que reporto el proceso, fila de Review) y por la nota `Merged X into Y.` que deja un merge. Solo cuentan las sesiones que corrieron en ese runner.
 - **Merge de un worktree vivo:** el commit mas antiguo de la linea de primer padre de la rama principal que desciende de la punta de la rama. Si la punta esta en esa linea, no hay commit de merge (`contained`: fast-forward o rama sin commits propios). Se mira `main` y, si no, lo que tenga sacado el checkout principal, porque las tareas se fusionan ahi.

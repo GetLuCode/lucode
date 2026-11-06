@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   IconAlertTriangle, IconArchive, IconArrowDown, IconArrowUp, IconCheck, IconChevronDown, IconChevronRight, IconCloudDownload,
-  IconDots, IconEdit, IconFolders, IconGitBranch, IconGitCompare, IconGitMerge, IconHistory, IconLoader2, IconPencilPlus, IconPlus,
+  IconDots, IconEdit, IconFolders, IconGitBranch, IconGitCompare, IconGitMerge, IconHistory, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLoader2, IconPencilPlus, IconPlus,
   IconRefresh, IconServer, IconTag, IconTrash, IconWorld, IconX,
 } from '@tabler/icons-react'
 import { useStore } from '../../store'
@@ -91,6 +91,13 @@ export function GitView() {
   const [refreshing, setRefreshing] = useState(false)
   const [branchFilter, setBranchFilter] = useState('')
   const [refsOpen, setRefsOpen] = useState(false)
+  const [sideCollapsed, setSideCollapsed] = useState(() => {
+    try { return localStorage.getItem('lucode-git-side-collapsed') === '1' } catch { return false }
+  })
+  const toggleSide = () => setSideCollapsed(on => {
+    try { localStorage.setItem('lucode-git-side-collapsed', on ? '0' : '1') } catch { /* only a preference */ }
+    return !on
+  })
   const [menu, setMenu] = useState<{ anchor: HTMLElement; items: MenuItem[]; header?: string } | null>(null)
   const [promptState, setPromptState] = useState<{ o: PromptOptions; resolve: (v: string | null) => void } | null>(null)
   const [worktrees, setWorktrees] = useState<GitWorktrees | null>(null)
@@ -315,6 +322,15 @@ export function GitView() {
   return (
     <div className="git">
       <header className="git-bar">
+        <button
+          className="git-icon-btn git-bar__side-toggle"
+          onClick={toggleSide}
+          aria-expanded={!sideCollapsed}
+          title={sideCollapsed ? 'Show the side menu' : 'Collapse the side menu'}
+          aria-label={sideCollapsed ? 'Show the side menu' : 'Collapse the side menu'}
+        >
+          {sideCollapsed ? <IconLayoutSidebarLeftExpand size={16} /> : <IconLayoutSidebarLeftCollapse size={16} />}
+        </button>
         <label className="git-bar__repo" title={target ? `${target.hostname || target.runner_id}: ${target.repo}` : ''}>
           <IconServer size={14} className="git-dim" />
           <select
@@ -438,7 +454,7 @@ export function GitView() {
       )}
 
       {overview && !overview.not_repo && ui && (
-        <div className="git-body">
+        <div className={`git-body${sideCollapsed ? ' git-body--rail' : ''}`}>
           <nav className="gside" aria-label="Repository">
             <div className="gside-nav">
               {NAV.map(n => (
@@ -446,6 +462,8 @@ export function GitView() {
                   key={n.id}
                   className={`gside-nav__item${view === n.id ? ' gside-nav__item--on' : ''}`}
                   aria-current={view === n.id ? 'page' : undefined}
+                  aria-label={n.count ? `${n.label}, ${n.count}` : n.label}
+                  title={sideCollapsed ? n.label : undefined}
                   onClick={() => go({ view: n.id, stash: '' })}
                 >
                   {n.icon}<span>{n.label}</span>
