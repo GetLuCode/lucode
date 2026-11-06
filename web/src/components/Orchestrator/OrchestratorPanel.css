@@ -203,6 +203,23 @@
 .aimode-history__link:hover { color: var(--accent); }
 .aimode-history__link { background: none; border: 0; cursor: pointer; }
 
+.aimode-history__main:disabled { cursor: default; opacity: 0.55; }
+
+/* Supervisor tab: the chat on the left, its history on the right, both under the header */
+.orch__body { flex: 1; min-height: 0; display: flex; }
+.orch__main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.orch-sidebar {
+  width: 280px; flex: none; min-height: 0; box-sizing: border-box; padding: 6px;
+  display: flex; flex-direction: column; border-left: 1px solid var(--border);
+}
+.orch-sidebar .orch-history__list { flex: 1; min-height: 0; overflow-y: auto; }
+.orch__older {
+  align-self: center; flex: none; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer;
+  background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted);
+}
+.orch__older:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.orch__older:disabled { cursor: default; opacity: 0.6; }
+
 .orch-history { width: 360px; }
 .orch-history__search { display: flex; align-items: center; gap: 6px; margin: 2px 2px 4px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted); }
 .orch-history__search input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text); font-size: 12px; }

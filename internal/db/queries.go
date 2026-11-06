@@ -179,24 +179,32 @@ type OrchestratorChat struct {
 	Session
 	ProjectName string `json:"project_name"`
 	FirstUser   string `json:"-"` // raw content of the first user message, for the preview
+	// OnlyAIMode: Google AI Mode answered it and claude never did, so claude has no
+	// conversation to resume. AI Mode reports no token usage; every claude turn does.
+	OnlyAIMode bool `json:"-"`
 }
 
 // ListOrchestratorChats lists the orchestrator conversations that have messages, the latest
 // first. projectID "" lists every project's, so an old chat can be found again by name.
 func ListOrchestratorChats(db *sql.DB, projectID string) ([]OrchestratorChat, error) {
 	rows, err := db.Query(`SELECT s.id, COALESCE(p.name,''),
-		COALESCE((SELECT content FROM messages m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.seq LIMIT 1),'')
+		COALESCE((SELECT content FROM messages m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.seq LIMIT 1),''),
+		EXISTS(SELECT 1 FROM aimode_conversations a WHERE a.session_id=s.id)
+			AND NOT EXISTS(SELECT 1 FROM turn_usage u WHERE u.session_id=s.id)
 		FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
 		WHERE s.kind=? AND (?='' OR s.project_id=?) AND s.message_count>0
 		ORDER BY s.last_active DESC`, SessionKindOrchestrator, projectID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	type row struct{ id, project, first string }
+	type row struct {
+		id, project, first string
+		onlyAIMode         bool
+	}
 	var found []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.project, &r.first); err != nil {
+		if err := rows.Scan(&r.id, &r.project, &r.first, &r.onlyAIMode); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -209,7 +217,7 @@ func ListOrchestratorChats(db *sql.DB, projectID string) ([]OrchestratorChat, er
 		if err != nil {
 			continue
 		}
-		out = append(out, OrchestratorChat{Session: s, ProjectName: r.project, FirstUser: r.first})
+		out = append(out, OrchestratorChat{Session: s, ProjectName: r.project, FirstUser: r.first, OnlyAIMode: r.onlyAIMode})
 	}
 	return out, nil
 }

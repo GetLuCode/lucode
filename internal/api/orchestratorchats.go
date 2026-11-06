@@ -49,7 +49,8 @@ func firstText(content string) string {
 }
 
 // listOrchestratorChats is the history of the orchestrator conversations, to find one again:
-// ?project=<id> narrows it to a project, ?q= filters by name, first message or project.
+// ?project=<id> narrows it to a project, ?q= filters by name, first message or project, and
+// ?mode=supervisor leaves out the chats only Google AI Mode answered (they have their own history).
 func (h *Handler) listOrchestratorChats(w http.ResponseWriter, r *http.Request) {
 	chats, err := dbpkg.ListOrchestratorChats(h.db, r.URL.Query().Get("project"))
 	if err != nil {
@@ -57,9 +58,13 @@ func (h *Handler) listOrchestratorChats(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	supervisorOnly := r.URL.Query().Get("mode") == "supervisor"
 	currents := map[string]string{}
 	out := make([]orchestratorChatView, 0, len(chats))
 	for _, c := range chats {
+		if supervisorOnly && c.OnlyAIMode {
+			continue
+		}
 		name := c.Name
 		if name == "Orchestrator" {
 			name = ""
