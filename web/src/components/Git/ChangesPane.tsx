@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { IconArchive, IconArrowBackUp, IconMinus, IconPlus, IconTrash } from '@tabler/icons-react'
-import { StatusLetter, PathLabel, Stat } from './gitParts'
+import { CopyButton, StatusLetter, PathLabel, Stat } from './gitParts'
 import { DiffView } from './DiffView'
 import type { DiffRequest, GitChange } from './gitTypes'
 import type { GitUI } from './GitView'
@@ -28,6 +28,7 @@ function ChangeRow({ c, side, active, ui, onPick }: { c: GitChange; side: Side; 
         <Stat added={added} removed={removed} />
       </button>
       <span className="gc-row__actions">
+        <CopyButton text={c.path} label={`Copy the path of ${c.path}`} title="Copy path" className="git-icon-btn git-icon-btn--small" />
         {side === 'staged' && <button className="git-icon-btn git-icon-btn--small" title="Unstage" aria-label={`Unstage ${c.path}`} onClick={() => void ui.act('unstage', { paths })}><IconMinus size={13} /></button>}
         {side === 'unstaged' && <>
           <button className="git-icon-btn git-icon-btn--small git-icon-btn--danger" title="Discard these changes" aria-label={`Discard changes in ${c.path}`} onClick={() => {

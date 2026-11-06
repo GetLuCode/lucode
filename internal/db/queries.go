@@ -1494,7 +1494,7 @@ type Agent struct {
 }
 
 // DefaultLucodeTools is every lucode tool; new agents start with all of them.
-var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete", "project_info"}
+var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete", "project_info", "git_diff"}
 
 const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, worktree, worktree_base_ref, created_at, updated_at`
 

@@ -254,6 +254,14 @@
 .orch--full { grid-row: 2; grid-column: 2; width: auto; min-width: 0; border-left: none; }
 .orch--full .orch__messages, .orch--full .orch__input { width: 100%; max-width: 960px; margin-inline: auto; box-sizing: border-box; }
 
+/* references waiting to be sent */
+.orch__refs { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: 112px; overflow-y: auto; scrollbar-width: thin; }
+.orch__ref { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 4px 3px 8px; border: 1px solid var(--border-bright); border-radius: 6px; background: var(--bg-hover); color: var(--text); }
+.orch__ref > svg { flex: none; color: var(--accent); }
+.orch__ref-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; }
+.orch__ref-remove { display: grid; place-items: center; flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--text-dim); cursor: pointer; }
+.orch__ref-remove:hover { background: var(--bg-active); color: var(--text); }
+
 /* image waiting to be sent */
 .orch__image { position: relative; align-self: flex-start; max-width: 140px; }
 .orch__image img { display: block; max-width: 100%; max-height: 110px; border-radius: 8px; border: 1px solid var(--border); }

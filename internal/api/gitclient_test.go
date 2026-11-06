@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	dbpkg "claude-orchestrator/internal/db"
+	natspkg "claude-orchestrator/internal/natsbus"
 )
 
 func gitChange(ov GitOverview, path string) *GitChange {
@@ -510,6 +511,67 @@ func TestGitTabThroughHubAndRunner(t *testing.T) {
 	}
 	if code := gitHubCall(t, h, pid, "rm-rf", target(nil), nil); code != http.StatusNotFound {
 		t.Fatalf("unknown op: %d", code)
+	}
+}
+
+// The tool the Supervisor follows a reference with: from the hub to the runner, never the hub's disk.
+func TestGitDiffToolThroughHubAndRunner(t *testing.T) {
+	h, pid, _, repo, wt, _ := gitFlowHub(t, func(r *Handler) http.Handler {
+		return NewRunnerHandler(r.db, r.bus, r.manager, "")
+	})
+	if err := dbpkg.UpdateProjectEnvDirs(h.db, pid, map[string][]string{"git-runner": {repo}}); err != nil {
+		t.Fatal(err)
+	}
+	sess := dbpkg.Session{ID: "orch", ProjectID: pid, Name: "o", Model: "haiku", Status: "idle", Kind: dbpkg.SessionKindOrchestrator}
+	if err := dbpkg.InsertSession(h.db, sess); err != nil {
+		t.Fatal(err)
+	}
+	call := func(args map[string]any) (string, error) {
+		raw, _ := json.Marshal(args)
+		return h.HandleTaskTool("orch", "mcp__lucode__git_diff", raw)
+	}
+
+	// no runner and no repo: the project's first target
+	got, err := call(map[string]any{"mode": "range", "base": "main", "head": "task/x", "path": "b.txt"})
+	if err != nil || !strings.Contains(got, "+new") {
+		t.Fatalf("range: %q %v", got, err)
+	}
+	got, err = call(map[string]any{"mode": "commit", "sha": "task/x", "runner_id": "git-runner", "repo": repo})
+	if err != nil || !strings.Contains(got, "b.txt") {
+		t.Fatalf("commit: %q %v", got, err)
+	}
+	write(t, filepath.Join(wt, "t.txt"), "fresh\n")
+	got, err = call(map[string]any{"mode": "untracked", "path": "t.txt", "worktree": wt})
+	if err != nil || !strings.Contains(got, "+fresh") {
+		t.Fatalf("a linked worktree: %q %v", got, err)
+	}
+	if got, err = call(map[string]any{"mode": "worktree"}); err != nil || got != "No differences." {
+		t.Fatalf("nothing changed: %q %v", got, err)
+	}
+
+	if _, err = call(map[string]any{"mode": "worktree", "repo": t.TempDir()}); err == nil {
+		t.Fatal("read a directory that is not the project's")
+	}
+	if _, err = call(map[string]any{"mode": "worktree", "runner_id": "someone-else"}); err == nil {
+		t.Fatal("read from a runner the project does not use")
+	}
+	if _, err = call(map[string]any{"mode": "worktree", "worktree": t.TempDir()}); err == nil {
+		t.Fatal("read a worktree of another repository")
+	}
+	if _, err = call(map[string]any{"mode": "worktree", "path": "../secret"}); err == nil {
+		t.Fatal("read a path out of the repository")
+	}
+	if _, err = call(map[string]any{"mode": "commit", "sha": "--all"}); err == nil {
+		t.Fatal("passed an option as a commit")
+	}
+}
+
+func TestGitDiffToolWithoutARunnerSaysWhy(t *testing.T) {
+	h, pid, _ := newTaskTestHandler(t)
+	h.bus = natspkg.NewBus(nil)
+	_, err := h.gitDiffTool(pid, json.RawMessage(`{"mode":"worktree"}`))
+	if err == nil || !strings.Contains(err.Error(), "runner") {
+		t.Fatalf("%v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { layoutGraph } from '../src/components/Git/gitGraph.ts'
 import { languageOf, parseDiff, toSplitRows } from '../src/components/Git/gitDiff.ts'
+import { buildReference, codeOf, rangeOf, referenceLabel } from '../src/components/Git/gitRef.ts'
 
 const c = (sha: string, ...parents: string[]) => ({ sha, parents })
 
@@ -129,4 +130,61 @@ test('the language comes from the file name', () => {
   assert.equal(languageOf('web/App.TSX'), 'typescript')
   assert.equal(languageOf('docker/Dockerfile'), 'dockerfile')
   assert.equal(languageOf('LICENSE'), '')
+})
+
+const LINES = parseDiff('@@ -10,3 +10,3 @@\n same\n-old\n+new\n+more\n').lines
+const COMMIT = { mode: 'commit' as const, sha: 'd4901539f42cbe1ab02e3b5e114da93734553aa5', path: 'internal/api/server.go' }
+const TARGET = { runner_id: 'r1', hostname: 'DESKTOP', os: 'windows', online: true, repo: 'lucode' }
+
+test('a selection is numbered by the new version when it has lines there', () => {
+  assert.deepEqual(rangeOf(LINES), { start: 10, end: 12, removed: false })
+  assert.deepEqual(rangeOf([LINES[2]]), { start: 11, end: 11, removed: true })
+  assert.equal(rangeOf([LINES[0]]), null, 'a hunk header has no number')
+  assert.equal(rangeOf([]), null)
+})
+
+test('the label says the lines and where they come from', () => {
+  assert.equal(referenceLabel(COMMIT, { start: 12, end: 15, removed: false }), 'internal/api/server.go:12-15 @ d490153')
+  assert.equal(referenceLabel(COMMIT, { start: 12, end: 12, removed: false }), 'internal/api/server.go:12 @ d490153')
+  assert.equal(referenceLabel(COMMIT, null), 'internal/api/server.go @ d490153')
+  assert.equal(referenceLabel(COMMIT, { start: 5, end: 6, removed: true }), 'internal/api/server.go:5-6 @ d490153 (removed lines)')
+  assert.equal(referenceLabel({ mode: 'worktree', path: 'a.go' }, { start: 1, end: 2, removed: false }), 'a.go:1-2', 'what is on disk needs no source')
+  assert.equal(referenceLabel({ mode: 'staged', path: 'a.go' }, null), 'a.go (staged)')
+  assert.equal(referenceLabel({ mode: 'range', base: 'main', head: 'dev', path: 'a.go' }, null), 'a.go @ main...dev')
+  assert.equal(referenceLabel({ mode: 'stash', sha: 'stash@{1}', path: 'a.go' }, null), 'a.go @ stash@{1}')
+})
+
+test('copied code is plain unless it mixes both sides', () => {
+  assert.equal(codeOf(LINES.filter(l => l.kind === 'add')), 'new\nmore')
+  assert.equal(codeOf(LINES), ' same\n-old\n+new\n+more', 'the hunk header stays out')
+})
+
+test('the block carries the lines and the exact arguments of git_diff', () => {
+  const r = buildReference(COMMIT, LINES, TARGET, '')
+  assert.equal(r.label, 'internal/api/server.go:10-12 @ d490153')
+  assert.ok(r.text.startsWith('Git reference: internal/api/server.go:10-12 @ d490153\n'))
+  assert.ok(r.text.includes('Source: commit d490153, in lucode on DESKTOP'))
+  assert.ok(r.text.includes('```diff\n@@ \n same\n-old\n+new\n+more\n```'), r.text)
+  const args = JSON.parse(/More with git_diff: (.*)/.exec(r.text)![1])
+  assert.deepEqual(args, { mode: 'commit', sha: COMMIT.sha, path: COMMIT.path, runner_id: 'r1', repo: 'lucode' })
+})
+
+test('a file without lines has no code block, and a worktree is named', () => {
+  const r = buildReference({ mode: 'worktree', path: 'a.go' }, [], TARGET, 'E:/w/one')
+  assert.ok(!r.text.includes('```'))
+  assert.ok(r.text.includes('worktree E:/w/one'))
+  assert.equal(JSON.parse(/More with git_diff: (.*)/.exec(r.text)![1]).worktree, 'E:/w/one')
+})
+
+test('code with a fence inside does not break the block', () => {
+  const r = buildReference(COMMIT, parseDiff('@@ -1 +1 @@\n+```go\n').lines, TARGET, '')
+  assert.ok(r.text.includes('````diff\n'), r.text)
+})
+
+test('a huge selection is cut and says so', () => {
+  const many = Array.from({ length: 500 }, (_, i) => ({ kind: 'add' as const, text: 'x', newNo: i + 1 }))
+  const r = buildReference(COMMIT, many, TARGET, '')
+  assert.equal(r.label, 'internal/api/server.go:1-500 @ d490153', 'the label keeps the whole range')
+  assert.equal((r.text.match(/^\+x$/gm) ?? []).length, 200)
+  assert.ok(r.text.includes('300 more selected lines left out'))
 })

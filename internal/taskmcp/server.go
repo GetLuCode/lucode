@@ -38,6 +38,9 @@ const (
 
 	// ToolProjectInfo describes the project the session belongs to.
 	ToolProjectInfo = "project_info"
+
+	// ToolGitDiff reads a diff of a repository of the project, from the runner that holds it.
+	ToolGitDiff = "git_diff"
 )
 
 // imagePrefix marks a tool result that is a picture, not text: the callback
@@ -65,14 +68,14 @@ var TaskInfoFields = []string{"title", "description", "status", "type", "tags", 
 
 // Names lists every lucode tool, in display order.
 func Names() []string {
-	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete, ToolProjectInfo}
+	return []string{ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete, ToolProjectInfo, ToolGitDiff}
 }
 
 // IsTaskTool reports whether name is one of the task tools, with or without
 // the mcp__lucode__ prefix claude adds.
 func IsTaskTool(name string) bool {
 	switch strings.TrimPrefix(name, "mcp__lucode__") {
-	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete, ToolProjectInfo:
+	case ToolComment, ToolDone, ToolBlocked, ToolAgentList, ToolSendToAgent, ToolTaskInfo, ToolGetTaskImage, ToolTaskList, ToolTaskCreate, ToolTaskUpdate, ToolAgentCreate, ToolAgentUpdate, ToolAgentDelete, ToolProjectInfo, ToolGitDiff:
 		return true
 	}
 	return false
@@ -98,6 +101,27 @@ var tools = []tool{
 		Description: "Describe the project you are working in: its name and id, work directories (and the ones on each runner), runner, AI account, default model, the tasks per board list, and its agents. " +
 			"Call it when you need to know where you are (which folders, which machine, how much is on the board) before planning or touching files.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name: ToolGitDiff,
+		Description: "Read a diff from a repository of this project. It only reads, and it works even when the repository is on another runner than you. " +
+			"When the user sends a git reference, its message carries the exact arguments to pass here. Ask for one path whenever you can: a diff is cut at about 60 KB.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"mode":      map[string]any{"type": "string", "enum": []string{"commit", "range", "worktree", "staged", "untracked", "stash"}, "description": "commit: what a commit changed. range: what head adds since it left base. worktree: unstaged changes. staged: what would be committed. untracked: a new file (path required). stash: what a stash holds."},
+				"path":      map[string]any{"type": "string", "description": "File inside the repository. Empty: every file."},
+				"orig_path": map[string]any{"type": "string", "description": "The file's previous name, if it was renamed."},
+				"sha":       map[string]any{"type": "string", "description": "commit: the commit. stash: stash@{n}."},
+				"base":      map[string]any{"type": "string", "description": "range: the branch compared against."},
+				"head":      map[string]any{"type": "string", "description": "range: the branch being compared."},
+				"untracked": map[string]any{"type": "boolean", "description": "stash: the file is in the stash's untracked part."},
+				"runner_id": map[string]any{"type": "string", "description": "Runner that holds the repository. Default: the project's runner."},
+				"repo":      map[string]any{"type": "string", "description": "Directory of the project on that runner. Default: its first one."},
+				"worktree":  map[string]any{"type": "string", "description": "A linked worktree of that repository. Default: the main checkout."},
+			},
+			"required": []string{"mode"},
+		},
 	},
 	{
 		Name:        ToolAgentList,

@@ -67,13 +67,38 @@ export function PathLabel({ path, orig }: { path: string; orig?: string }) {
   )
 }
 
+// Copies the text and says so for a moment.
+export function CopyButton({ text, label, title, className = '', children }: { text: string; label: string; title?: string; className?: string; children?: ReactNode }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      className={className}
+      title={title ?? label}
+      aria-label={label}
+      onClick={e => {
+        e.stopPropagation()
+        void copyText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1200)
+      }}
+    >
+      {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+      {children}
+    </button>
+  )
+}
+
 export function FileRow({ file, active, onClick }: { file: GitFileStat; active?: boolean; onClick: () => void }) {
   return (
-    <button className={`git-file${active ? ' git-file--active' : ''}`} onClick={onClick}>
-      <StatusLetter status={file.status} />
-      <PathLabel path={file.path} orig={file.orig_path} />
-      {file.binary ? <span className="git-file__bin">bin</span> : <Stat added={file.added} removed={file.removed} />}
-    </button>
+    <div className={`git-file${active ? ' git-file--active' : ''}`}>
+      <button className="git-file__main" onClick={onClick}>
+        <StatusLetter status={file.status} />
+        <PathLabel path={file.path} orig={file.orig_path} />
+        {file.binary ? <span className="git-file__bin">bin</span> : <Stat added={file.added} removed={file.removed} />}
+      </button>
+      <CopyButton text={file.path} label={`Copy the path of ${file.path}`} title="Copy path" className="git-icon-btn git-icon-btn--small git-file__copy" />
+    </div>
   )
 }
 

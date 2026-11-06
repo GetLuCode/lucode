@@ -142,6 +142,64 @@ func (h *Handler) projectGitCall(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(answer)
 }
 
+const gitDiffToolMax = 60 * 1024
+
+// gitDiffTool answers the git_diff tool: the hub checks the directory is the project's and asks
+// the runner that holds it, wherever the caller's own claude runs. Runner and repo default to the
+// project's first target. Going through the same check as the tab means a tool call cannot read
+// any other path of a runner.
+func (h *Handler) gitDiffTool(projectID string, args json.RawMessage) (string, error) {
+	p, err := dbpkg.GetProject(h.db, projectID)
+	if err != nil {
+		return "", fmt.Errorf("project not found: %w", err)
+	}
+	var req struct {
+		gitDiffRequest
+		RunnerID string `json:"runner_id"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return "", fmt.Errorf("bad arguments: %w", err)
+	}
+	targets := h.projectGitTargets(p)
+	var target *gitRepoTarget
+	for i := range targets.Targets {
+		t := &targets.Targets[i]
+		if (req.RunnerID == "" || req.RunnerID == t.RunnerID) && (req.Repo == "" || req.Repo == t.Repo) {
+			target = t
+			break
+		}
+	}
+	if target == nil {
+		if targets.Reason != "" {
+			return "", fmt.Errorf("no repository: %s", targets.Reason)
+		}
+		return "", fmt.Errorf("that directory is not part of this project on that runner")
+	}
+	req.Repo = target.Repo
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	var out GitDiff
+	code, err := h.runnerCall(ctx, target.RunnerID, http.MethodPost, "/api/git/diff", req.gitDiffRequest, &out)
+	if err != nil {
+		if code == http.StatusNotFound {
+			return "", fmt.Errorf("runner %s is older than this tool: it has to be rebuilt and restarted", target.RunnerID)
+		}
+		return "", err
+	}
+	text := out.Text
+	cut := out.Truncated
+	if len(text) > gitDiffToolMax {
+		text, cut = text[:strings.LastIndexByte(text[:gitDiffToolMax], '\n')+1], true
+	}
+	if strings.TrimSpace(text) == "" {
+		return "No differences.", nil
+	}
+	if cut {
+		text += "\n[The diff is longer than this and was cut here. Ask for one path to see the rest.]\n"
+	}
+	return text, nil
+}
+
 // gitTaskLink ties a branch or a worktree to the task that worked on it.
 type gitTaskLink struct {
 	CardID    string `json:"card_id"`

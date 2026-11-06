@@ -436,22 +436,34 @@
 .git-status--r, .git-status--c { color: var(--git-ren); }
 
 .git-file {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 22px;
+  border-radius: 4px;
+}
+.git-file:hover { background: var(--bg-hover); }
+.git-file--active { background: var(--bg-active); }
+.git-file__main {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  height: 22px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
   padding: 0 8px;
   border: 0;
-  border-radius: 4px;
   background: none;
   color: var(--text);
   text-align: left;
   cursor: pointer;
 }
-.git-file:hover { background: var(--bg-hover); }
-.git-file--active { background: var(--bg-active); }
 .git-file__bin { flex: none; color: var(--text-dim); font-size: 10.5px; }
+/* on hover it takes the place of the line counts */
+.git-file__copy { position: absolute; right: 2px; display: none; background: var(--bg-active); }
+.git-file:hover .git-file__copy, .git-file__copy:focus-visible { display: inline-flex; }
+.git-file:hover .git-stat { visibility: hidden; }
 
 .git-section-head {
   display: flex;
@@ -467,7 +479,7 @@
 /* ---- history ---- */
 .git-history { display: grid; grid-template-columns: minmax(0, 1fr); height: 100%; min-height: 0; }
 /* min(): a width saved on a wide window must still leave the details their room on a narrow one */
-.git-history--detail { grid-template-columns: min(var(--git-list-w, 52%), calc(100% - 380px)) minmax(0, 1fr); }
+.git-history--detail { grid-template-columns: min(var(--git-list-w, 42%), calc(100% - 380px)) minmax(0, 1fr); }
 .git-history__list { display: flex; flex-direction: column; min-width: 0; min-height: 0; container: git-list / inline-size; }
 .git-history--resizing { cursor: col-resize; user-select: none; }
 
@@ -609,7 +621,8 @@
 .gl-sha { font-family: var(--font-mono); font-size: 11px; }
 .gl-kind { padding: 0 5px; border-radius: 3px; background: var(--bg-active); font-size: 10.5px; line-height: 15px; }
 .gl-files { padding: 0 0 8px; max-width: 620px; }
-.gl-files .git-file { height: 20px; padding: 0 6px; }
+.gl-files .git-file { height: 20px; }
+.gl-files .git-file__main { padding: 0 6px; }
 .gl-more-files {
   margin-left: 26px;
   padding: 1px 0;
@@ -638,17 +651,47 @@
 .git-detail__diff { flex: 1; min-height: 0; }
 
 /* ---- diff ---- */
-.gd { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg); }
+.gd { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg); }
+.gd__path { user-select: text; }
+.gd__ref-btn { width: 24px; height: 24px; }
+
+/* picking lines by their numbers */
+.gd-no--pick { cursor: pointer; touch-action: none; }
+.gd-no--pick:hover { color: var(--text); background: var(--bg-hover); }
+.gd-row--sel td, td.gd-cell--sel { box-shadow: inset 0 0 0 100vmax rgba(0, 212, 170, 0.11); }
+.gd-row--sel .gd-no, td.gd-no.gd-cell--sel { color: var(--accent); }
+.gd-selbar {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--border-bright);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+}
+.gd-selbar__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 6px; color: var(--text-dim); font-family: var(--font-mono); font-size: 11.5px; }
+.gd-selbar .git-text-btn { flex: none; height: 24px; color: var(--text); }
+.gd-selbar .gd-selbar__send { background: var(--accent-dim); color: var(--accent); }
+.gd-selbar .gd-selbar__send:hover:not(:disabled) { background: var(--accent-glow); color: var(--accent); }
 .gd__head { display: flex; align-items: center; gap: 10px; flex: none; min-height: 34px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
 .gd__path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
 .gd__dir { color: var(--text-dim); font-weight: 400; }
 .gd__notes { flex: none; padding: 4px 12px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-family: var(--font-mono); font-size: 11px; }
 .gd__body { flex: 1; min-height: 0; overflow: auto; }
 .gd-table { border-collapse: collapse; min-width: 100%; font-family: var(--font-mono); font-size: 12px; line-height: 18px; }
-.gd-table--split { table-layout: fixed; width: 100%; }
+/* Below this each side would wrap every few words: the pane scrolls sideways instead. */
+.gd-table--split { table-layout: fixed; width: 100%; min-width: 660px; }
+.gd-col-no { width: var(--gd-no, 42px); }
 .gd-no {
-  width: 42px;
-  min-width: 42px;
+  width: var(--gd-no, 42px);
+  min-width: var(--gd-no, 42px);
   padding: 0 8px 0 4px;
   color: var(--text-muted);
   font-size: 11px;
@@ -658,8 +701,7 @@
   font-variant-numeric: tabular-nums;
 }
 .gd-text { padding: 0 12px 0 0; white-space: pre; vertical-align: top; }
-.gd-table--split .gd-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.gd-table--split .gd-no { width: 44px; }
+.gd-table--split .gd-text { padding-left: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .gd-sign { display: inline-block; width: 16px; text-align: center; color: var(--text-muted); user-select: none; }
 .gd-code { font: inherit; background: none; padding: 0; }
 .gd-row--add td { background: var(--git-add-bg); }
@@ -675,6 +717,15 @@
 .gd-side--del { background: var(--git-del-bg); }
 .gd-no.gd-side--del { background: var(--git-del-no); color: var(--git-del); }
 .gd-side--none { background: var(--bg-hover); }
+
+/* Full height: the diff takes the whole column by hiding what sits above it there. */
+.gd__full--on, .gd__full--on:hover { background: var(--accent-dim); color: var(--accent); }
+.git-detail:has(.gd--full) .git-detail__top { display: none; }
+.gcmp:has(.gd--full) .gcmp__bar { display: none; }
+/* side by side, Changes and Stash give the diff its whole column already */
+@media (min-width: 761px) {
+  .git-changes__diff .gd__full { display: none; }
+}
 
 /* ---- changes and stash ---- */
 .git-changes { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); height: 100%; min-height: 0; }
@@ -872,6 +923,9 @@
   .git-detail { border-left: 0; border-top: 1px solid var(--border); }
   /* stacked: there is no width to drag */
   .git-resizer, .git-detail__narrow { display: none; }
+  /* stacked: what sits above the diff includes the commit list */
+  .git-history--detail:has(.gd--full) { grid-template-rows: minmax(0, 1fr); }
+  .git-history--detail:has(.gd--full) .git-history__list { display: none; }
 }
 @media (max-width: 760px) {
   .git-bar__side-toggle { display: none; } /* here the lists already open on demand */
@@ -886,6 +940,8 @@
   .gside-scroll--open { display: block; }
   .git-changes, .gcmp__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 50%) minmax(0, 1fr); }
   .gc-list, .gcmp__list { border-right: 0; border-bottom: 1px solid var(--border); }
+  .git-changes:has(.gd--full), .gcmp__body:has(.gd--full) { grid-template-rows: minmax(0, 1fr); }
+  .git-changes:has(.gd--full) .gc-list, .gcmp__body:has(.gd--full) .gcmp__list { display: none; }
   .gc-commit__body { display: none; }
   .gcmp__merge { margin-left: 0; }
   .gc-row__actions { display: flex; }

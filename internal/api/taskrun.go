@@ -590,6 +590,9 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 	case taskmcp.ToolProjectInfo:
 		return h.projectInfo(sess)
 
+	case taskmcp.ToolGitDiff:
+		return h.gitDiffTool(sess.ProjectID, args)
+
 	case taskmcp.ToolTaskList:
 		return h.taskList(sess, args)
 

@@ -22,6 +22,14 @@ Cliente de git de un proyecto: cambios, historial con grafo, comparar ramas, sta
 - Con un commit abierto, el divisor entre el arbol y el detalle se arrastra (tambien con las flechas y Home; doble clic lo restablece), y el boton del detalle colapsa el arbol a su minimo de 180 px. El detalle nunca baja de 380 px.
 - Las filas del arbol se adaptan por container query: primero pierden chips y contadores, despues las listas de archivos. Quedan el grafo, el mensaje, el autor y la fecha.
 - Ambos anchos se guardan en `localStorage`: son preferencias de cada navegador.
+- El boton de altura completa del diff oculta lo que tiene encima en su panel (datos y archivos del commit, la barra de Comparar y, con los paneles apilados, la lista). `Esc` lo deshace. No se guarda: al volver a la pestana el diff esta en su altura normal. En Cambios y Stash con los paneles lado a lado no aparece, porque el diff ya ocupa toda su columna.
+
+## Referencias al Supervisor
+- En un diff, los numeros de linea se pulsan: clic elige una, Shift+clic o arrastrar eligen varias, `Esc` lo deshace. La barra flotante copia la referencia (`ruta:12-15 @ abc1234`), copia el codigo o la manda al Supervisor. Un cambio en el diff borra la seleccion: esas posiciones ya no significarian lo mismo.
+- La numeracion es la de la version nueva; solo una seleccion de lineas eliminadas usa la vieja, y lo dice (`(removed lines)`).
+- La ruta de un archivo se copia desde su fila o desde la cabecera del diff; desde esa cabecera tambien se manda el archivo entero al Supervisor.
+- Mandar no gasta tokens: abre el panel, deja un chip junto a la caja y espera a la pregunta (`orchRefs` en el store). Al enviar, cada chip se convierte en un bloque delante del mensaje (`gitRef.ts`) con las lineas elegidas (200 como mucho), asi vale tambien en modo Gemini, que no tiene tools.
+- **Tool `git_diff`** (`gitDiffTool` en `gitproject.go`): solo lectura, se aprueba sola como los demas de `Names()`. El bloque trae sus argumentos exactos. Pasa por la misma comprobacion que la pestana, asi que solo lee directorios del proyecto, y funciona aunque el Supervisor este en otro runner que el repositorio. Se corta a 60 KB. Como la lista de tools la sirve el runner, un runner anterior no lo ofrece.
 
 ## Worktree, tarea y merge
 - **Tarea:** se busca por sesion (transcripcion, lo que reporto el proceso, fila de Review) y por la nota `Merged X into Y.` que deja un merge. Solo cuentan las sesiones que corrieron en ese runner.

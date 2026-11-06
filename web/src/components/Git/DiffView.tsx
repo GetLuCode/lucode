@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
-import { IconColumns1, IconColumns2 } from '@tabler/icons-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import { IconArrowAutofitHeight, IconColumns1, IconColumns2, IconSend, IconX } from '@tabler/icons-react'
 import { highlightCode } from '../../lib/highlight'
+import { useStore } from '../../store'
 import { gitCall, errorText } from './gitApi'
 import type { GitCallContext } from './gitApi'
 import type { DiffRequest, GitDiffAnswer } from './gitTypes'
 import { languageOf, parseDiff, toSplitRows } from './gitDiff'
-import { Stat } from './gitParts'
+import { buildReference, codeOf, rangeOf, referenceLabel } from './gitRef'
+import { CopyButton, Stat } from './gitParts'
 import type { DiffLine } from './gitDiff'
 
 const MAX_HIGHLIGHTED_LINES = 4000
@@ -28,6 +31,29 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
   const [answer, setAnswer] = useState<GitDiffAnswer | null>(null)
   const [error, setError] = useState('')
   const [split, setSplit] = useState(loadSplit)
+  // Full height: Git.css hides what sits above the diff in whichever pane holds it.
+  const [fullHeight, setFullHeight] = useState(false)
+  // Lines picked by their numbers, as positions in the parsed diff: a drag or Shift+click moves `to`.
+  const [picked, setPicked] = useState<{ from: number; to: number } | null>(null)
+  const dragging = useRef(false)
+  const addRef = useStore(s => s.addOrchRef)
+  // Esc undoes the nearest thing first: the selection, then the full height.
+  useEffect(() => {
+    if (!fullHeight && !picked) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (picked) setPicked(null)
+      else setFullHeight(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fullHeight, picked])
+  useEffect(() => {
+    const stop = () => { dragging.current = false }
+    window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
+    return () => { window.removeEventListener('pointerup', stop); window.removeEventListener('pointercancel', stop) }
+  }, [])
   const key = JSON.stringify([request, ctx.target?.repo, ctx.worktree, version])
 
   useEffect(() => {
@@ -46,6 +72,37 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
   const lang = request ? languageOf(request.path) : ''
   const plain = (parsed?.lines.length ?? 0) > MAX_HIGHLIGHTED_LINES
   const rows = useMemo(() => (split && parsed ? toSplitRows(parsed.lines) : []), [split, parsed])
+  // The number columns take what the numbers need, and the code keeps the rest.
+  const tableStyle = useMemo(() => {
+    const highest = (parsed?.lines ?? []).reduce((m, l) => Math.max(m, l.oldNo ?? 0, l.newNo ?? 0), 0)
+    return { '--gd-no': `calc(${Math.max(2, String(highest).length)}ch + 14px)` } as CSSProperties
+  }, [parsed])
+  // A selection means nothing in other text: a refresh that changes the diff, or another file, drops it.
+  useEffect(() => { setPicked(null) }, [answer?.text, request?.path])
+  const positions = useMemo(() => new Map((parsed?.lines ?? []).map((l, i) => [l, i])), [parsed])
+  const low = picked ? Math.min(picked.from, picked.to) : -1
+  const high = picked ? Math.max(picked.from, picked.to) : -1
+  const pickedLines = useMemo(() => (parsed && picked ? parsed.lines.slice(low, high + 1) : []), [parsed, picked, low, high])
+  const isPicked = (l?: DiffLine) => {
+    const i = l ? positions.get(l) : undefined
+    return i !== undefined && i >= low && i <= high && picked !== null
+  }
+  const numberProps = (l?: DiffLine) => {
+    const at = l ? positions.get(l) : undefined
+    if (at === undefined) return {}
+    return {
+      title: 'Click to pick this line. Shift+click or drag for several.',
+      onPointerDown: (e: ReactPointerEvent) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        dragging.current = true
+        setPicked(prev => (e.shiftKey && prev ? { from: prev.from, to: at } : prev && prev.from === at && prev.to === at ? null : { from: at, to: at }))
+      },
+      onPointerEnter: () => {
+        if (dragging.current) setPicked(prev => (prev ? { from: prev.from, to: at } : { from: at, to: at }))
+      },
+    }
+  }
 
   if (!request) return <div className="git-empty git-empty--fill">Select a file to see what changed in it.</div>
 
@@ -56,19 +113,36 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
   const added = parsed?.lines.filter(l => l.kind === 'add').length ?? 0
   const removed = parsed?.lines.filter(l => l.kind === 'del').length ?? 0
   const slash = request.path.lastIndexOf('/')
+  const send = (lines: DiffLine[]) => addRef({ projectId: ctx.projectId, ...buildReference(request, lines, ctx.target, ctx.worktree) })
+  const pickedRange = rangeOf(pickedLines)
+  const pickedLabel = referenceLabel(request, pickedRange)
 
   return (
-    <div className="gd">
+    <div className={`gd${fullHeight ? ' gd--full' : ''}`}>
       <div className="gd__head">
         <span className="gd__path" title={request.path}>
           {slash >= 0 && <span className="gd__dir">{request.path.slice(0, slash + 1)}</span>}
           {request.path.slice(slash + 1)}
         </span>
+        <CopyButton text={request.path} label="Copy path" className="git-icon-btn gd__ref-btn" />
+        <button
+          className="git-icon-btn gd__ref-btn gd__send-file"
+          onClick={() => send([])}
+          title="Send this file to the Supervisor"
+          aria-label="Send this file to the Supervisor"
+        ><IconSend size={13} /></button>
         {parsed && <Stat added={added} removed={removed} />}
         <div className="git-seg" role="group" aria-label="Diff layout">
           <button className={`git-seg__btn${!split ? ' git-seg__btn--on' : ''}`} onClick={() => toggle(false)} title="Unified" aria-pressed={!split}><IconColumns1 size={14} /></button>
           <button className={`git-seg__btn${split ? ' git-seg__btn--on' : ''}`} onClick={() => toggle(true)} title="Side by side" aria-pressed={split}><IconColumns2 size={14} /></button>
         </div>
+        <button
+          className={`git-icon-btn gd__full${fullHeight ? ' gd__full--on' : ''}`}
+          onClick={() => setFullHeight(v => !v)}
+          aria-pressed={fullHeight}
+          aria-label="Full height"
+          title={fullHeight ? 'Back to normal height (Esc)' : 'Full height'}
+        ><IconArrowAutofitHeight size={15} /></button>
       </div>
       {parsed && parsed.notes.length > 0 && <div className="gd__notes">{parsed.notes.join(' · ')}</div>}
       <div className="gd__body">
@@ -83,15 +157,15 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
           <div className="git-empty">{parsed.notes.length ? 'The contents did not change.' : 'No differences.'}</div>
         )}
         {parsed && !split && parsed.lines.length > 0 && (
-          <table className="gd-table">
+          <table className="gd-table" style={tableStyle}>
             <tbody>
               {parsed.lines.map((l, i) => (
                 l.kind === 'hunk' || l.kind === 'note'
                   ? <tr key={i} className={`gd-row gd-row--${l.kind}`}><td colSpan={3}>{l.kind === 'hunk' ? `@@ ${l.text}` : l.text}</td></tr>
                   : (
-                    <tr key={i} className={`gd-row gd-row--${l.kind}`}>
-                      <td className="gd-no">{l.oldNo}</td>
-                      <td className="gd-no">{l.newNo}</td>
+                    <tr key={i} className={`gd-row gd-row--${l.kind}${isPicked(l) ? ' gd-row--sel' : ''}`}>
+                      <td className="gd-no gd-no--pick" {...numberProps(l)}>{l.oldNo}</td>
+                      <td className="gd-no gd-no--pick" {...numberProps(l)}>{l.newNo}</td>
                       <td className="gd-text"><span className="gd-sign" aria-hidden>{SIGN[l.kind]}</span><Code line={l} lang={lang} plain={plain} /></td>
                     </tr>
                   )
@@ -100,16 +174,24 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
           </table>
         )}
         {parsed && split && rows.length > 0 && (
-          <table className="gd-table gd-table--split">
+          <table className="gd-table gd-table--split" style={tableStyle}>
+            {/* With a fixed layout the first row sets the widths, and that row is a hunk header
+                spanning all four columns: without these, each column gets a quarter. */}
+            <colgroup>
+              <col className="gd-col-no" />
+              <col />
+              <col className="gd-col-no" />
+              <col />
+            </colgroup>
             <tbody>
               {rows.map((r, i) => r.full
                 ? <tr key={i} className={`gd-row gd-row--${r.full.kind}`}><td colSpan={4}>{r.full.kind === 'hunk' ? `@@ ${r.full.text}` : r.full.text}</td></tr>
                 : (
                   <tr key={i} className="gd-row">
-                    <td className={`gd-no gd-side--${r.left?.kind ?? 'none'}`}>{r.left?.oldNo}</td>
-                    <td className={`gd-text gd-side--${r.left?.kind ?? 'none'}`}>{r.left && <Code line={r.left} lang={lang} plain={plain} />}</td>
-                    <td className={`gd-no gd-side--${r.right?.kind ?? 'none'}`}>{r.right?.newNo}</td>
-                    <td className={`gd-text gd-side--${r.right?.kind ?? 'none'}`}>{r.right && <Code line={r.right} lang={lang} plain={plain} />}</td>
+                    <td className={`gd-no gd-side--${r.left?.kind ?? 'none'}${r.left ? ' gd-no--pick' : ''}${isPicked(r.left) ? ' gd-cell--sel' : ''}`} {...numberProps(r.left)}>{r.left?.oldNo}</td>
+                    <td className={`gd-text gd-side--${r.left?.kind ?? 'none'}${isPicked(r.left) ? ' gd-cell--sel' : ''}`}>{r.left && <Code line={r.left} lang={lang} plain={plain} />}</td>
+                    <td className={`gd-no gd-side--${r.right?.kind ?? 'none'}${r.right ? ' gd-no--pick' : ''}${isPicked(r.right) ? ' gd-cell--sel' : ''}`} {...numberProps(r.right)}>{r.right?.newNo}</td>
+                    <td className={`gd-text gd-side--${r.right?.kind ?? 'none'}${isPicked(r.right) ? ' gd-cell--sel' : ''}`}>{r.right && <Code line={r.right} lang={lang} plain={plain} />}</td>
                   </tr>
                 ))}
             </tbody>
@@ -117,6 +199,15 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
         )}
         {answer?.truncated && <div className="git-msg">This diff is too long to show whole: it stops here.</div>}
       </div>
+      {pickedRange && (
+        <div className="gd-selbar" role="toolbar" aria-label="Selected lines">
+          <span className="gd-selbar__label" title={pickedLabel}>{pickedLabel}</span>
+          <CopyButton text={pickedLabel} label="Copy reference" className="git-text-btn"><span>Reference</span></CopyButton>
+          <CopyButton text={codeOf(pickedLines)} label="Copy the code of these lines" title="Copy the code" className="git-text-btn"><span>Code</span></CopyButton>
+          <button className="git-text-btn gd-selbar__send" onClick={() => { send(pickedLines); setPicked(null) }} title="Add these lines to your next message to the Supervisor"><IconSend size={13} /><span>Supervisor</span></button>
+          <button className="git-icon-btn git-icon-btn--small" onClick={() => setPicked(null)} title="Clear the selection (Esc)" aria-label="Clear the selection"><IconX size={13} /></button>
+        </div>
+      )}
     </div>
   )
 }
