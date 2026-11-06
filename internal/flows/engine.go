@@ -119,6 +119,9 @@ type Engine struct {
 
 	mu     sync.Mutex
 	graphs map[string]Graph // flow id + version -> graph; versions never change
+
+	ToolTimeout time.Duration // how long DecideTool waits for the flows
+	tools       toolWaits
 }
 
 // NewEngine creates an engine.
@@ -126,6 +129,7 @@ func NewEngine(db *sql.DB, host Host) *Engine {
 	return &Engine{
 		db: db, host: host, wake: make(chan struct{}, 1), TurnEndGrace: defaultTurnEndGrace,
 		now: time.Now, graphs: map[string]Graph{}, ctx: context.Background(),
+		ToolTimeout: defaultToolTimeout, tools: toolWaits{m: map[string]*toolWait{}},
 	}
 }
 
@@ -155,6 +159,9 @@ func (e *Engine) Start(ctx context.Context) {
 			case <-prune.C:
 				if err := dbpkg.PruneFlowEvents(e.db, 7*24*time.Hour); err != nil {
 					log.Printf("[flows] prune: %v", err)
+				}
+				if err := dbpkg.PruneToolFlowRuns(e.db, 7*24*time.Hour); err != nil {
+					log.Printf("[flows] prune tool runs: %v", err)
 				}
 			}
 			e.Drain()
@@ -187,6 +194,16 @@ func (e *Engine) tick() bool {
 // that may have already acted (it may have posted the comment, or started the turn) is not
 // repeated blindly: it fails and says why, so a person can decide.
 func (e *Engine) Recover() {
+	// A run deciding a tool has nobody to answer now: the request died with the old hub.
+	if open, err := dbpkg.OpenToolFlowRuns(e.db); err != nil {
+		log.Printf("[flows] recover tool runs: %v", err)
+	} else {
+		for _, id := range open {
+			if _, err := dbpkg.FinishFlowRun(e.db, id, dbpkg.RunCancelled, "the hub stopped while this tool request was being decided"); err != nil {
+				log.Printf("[flows] recover tool run %s: %v", id, err)
+			}
+		}
+	}
 	steps, err := dbpkg.InterruptedFlowSteps(e.db)
 	if err != nil {
 		log.Printf("[flows] recover: %v", err)
@@ -506,6 +523,10 @@ func (e *Engine) resumeStep(s dbpkg.FlowStep, port string, extra map[string]any)
 // startRuns starts the flows of the project that have a trigger for this event.
 func (e *Engine) startRuns(ev dbpkg.FlowEvent) {
 	if ev.Type == dbpkg.EventAIEvaluated || ev.Type == dbpkg.EventApprovalDecided || ev.Type == dbpkg.EventCallDone {
+		return
+	}
+	if ev.Type == dbpkg.EventToolRequested {
+		e.startToolRuns(ev)
 		return
 	}
 	if dbpkg.FlowsPaused(e.db, ev.ProjectID) {
@@ -904,6 +925,7 @@ func (e *Engine) runClosed(runID string) {
 		return
 	}
 	e.host.RunChanged(run)
+	e.toolRunEnded(run)
 	if run.CardID == "" || dbpkg.HasActiveFlowRun(e.db, run.FlowID, run.CardID) {
 		return
 	}
@@ -1046,6 +1068,24 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 			return result{finish: dbpkg.RunFailed, reason: msg, output: map[string]any{"message": msg}}, nil
 		}
 		return result{finish: dbpkg.RunSucceeded, reason: msg, output: map[string]any{"message": msg}}, nil
+
+	case TypeMatchTool:
+		port, err := matchToolStep(run, node)
+		if err != nil {
+			return result{}, err
+		}
+		return result{port: port, output: map[string]any{"matched": port == PortMatch}}, nil
+
+	case TypeToolDecision:
+		reason, err := render("reason")
+		if err != nil {
+			return result{}, err
+		}
+		decision := node.str("decision")
+		if err := e.decideToolStep(run, decision, reason); err != nil {
+			return result{}, err
+		}
+		return result{finish: dbpkg.RunSucceeded, output: map[string]any{"decision": decision, "reason": reason}}, nil
 
 	case TypeApproval:
 		question, err := render("question")

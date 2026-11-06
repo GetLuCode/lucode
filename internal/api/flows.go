@@ -12,6 +12,7 @@ import (
 
 	dbpkg "claude-orchestrator/internal/db"
 	"claude-orchestrator/internal/flows"
+	sessionpkg "claude-orchestrator/internal/session"
 
 	"github.com/google/uuid"
 )
@@ -24,6 +25,7 @@ import (
 // StartFlows starts the engine. Only the hub calls it, and it needs no NATS of its own.
 func (h *Handler) StartFlows(ctx context.Context) {
 	h.flows = flows.NewEngine(h.db, flowHost{h})
+	h.manager.ToolGate = func(req sessionpkg.ToolRequest) (string, string) { return h.flowToolGate(ctx, req) }
 	if projects, err := dbpkg.ListProjects(h.db); err == nil {
 		for _, p := range projects {
 			if err := flows.SeedBlueprints(h.db, p.ID); err != nil {
@@ -32,6 +34,29 @@ func (h *Handler) StartFlows(ctx context.Context) {
 		}
 	}
 	h.flows.Start(ctx)
+}
+
+// flowToolGate offers a tool request to the flows of the session's project. Any session counts,
+// with or without a card. An answer other than allow or deny leaves it open.
+func (h *Handler) flowToolGate(ctx context.Context, req sessionpkg.ToolRequest) (string, string) {
+	sess, err := dbpkg.GetSession(h.db, req.SessionID)
+	if err != nil {
+		return flows.ToolAsk, ""
+	}
+	task := ""
+	if sess.CardID != "" {
+		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
+			task = card.Title
+		}
+	}
+	v := h.flows.DecideTool(ctx, flows.ToolRequest{
+		ProjectID: sess.ProjectID, CardID: sess.CardID, SessionID: req.SessionID, ToolUseID: req.ToolUseID,
+		ToolName: req.ToolName, WorkDir: req.WorkDir, Task: task, AutoMode: req.AutoMode, Input: req.Input,
+	})
+	if v.Decision == flows.ToolAsk && v.Reason != "" {
+		log.Printf("[flows] no decision on %s of session %s: %s", req.ToolName, req.SessionID, v.Reason)
+	}
+	return v.Decision, v.Reason
 }
 
 // seedProjectFlows gives a new project its base flows.

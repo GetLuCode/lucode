@@ -207,14 +207,12 @@ func shortID(id string) string {
 }
 
 // settingsArg is the value of --settings. Normally the path of the lucode hook
-// settings (not passed with --permission-mode, where claude decides by itself).
+// settings, also in auto mode: the hook runs before claude's classifier, so rules and
+// flows still apply and every call still reaches the hub's log.
 // With a worktree it is a JSON string, because --settings takes only one value:
 // the hook settings, if any, plus worktree.baseRef ("head" unless "fresh").
 func settingsArg(req TurnRequest) string {
 	path := req.ClaudeSettings
-	if req.PermissionMode != "" {
-		path = ""
-	}
 	if !req.Worktree {
 		return path
 	}

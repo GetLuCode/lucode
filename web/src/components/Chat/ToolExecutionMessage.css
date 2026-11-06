@@ -68,6 +68,10 @@
   color: #10b981;
 }
 
+.tool-execution__icon--denied {
+  color: #ff8a8a;
+}
+
 .tool-execution__icon--loading {
   color: #3b82f6;
 }

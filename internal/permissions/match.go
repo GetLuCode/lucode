@@ -17,12 +17,48 @@ type compiledRule struct {
 	Source   RuleSource
 	Path     string // file path or session id, for diagnostics
 	regex    map[string]*regexp.Regexp
+	tool     *regexp.Regexp // nil: any tool
+}
+
+// compileTool compiles a rule's tool: "*" for any tool, or a regex that has to match the whole
+// name. A plain name therefore means exactly that tool, and Read|Grep or mcp__github__.* work too.
+func compileTool(r Rule) (*regexp.Regexp, error) {
+	if r.Tool == "*" {
+		return nil, nil
+	}
+	re, err := regexp.Compile("^(?:" + r.Tool + ")$")
+	if err != nil {
+		return nil, fmt.Errorf("rule %q: invalid tool regex: %w", r.Tool, err)
+	}
+	return re, nil
+}
+
+// Matcher tests tool calls against one rule. The Tool requested flows use it, so a Match tool
+// node and a permission rule mean exactly the same thing.
+type Matcher struct{ rule compiledRule }
+
+// NewMatcher compiles a rule.
+func NewMatcher(r Rule) (*Matcher, error) {
+	tool, err := compileTool(r)
+	if err != nil {
+		return nil, err
+	}
+	regex, err := compileRegexes(r)
+	if err != nil {
+		return nil, err
+	}
+	return &Matcher{rule: compiledRule{Rule: r, tool: tool, regex: regex}}, nil
+}
+
+// Matches reports whether a tool call matches the rule.
+func (m *Matcher) Matches(toolName string, input json.RawMessage) (bool, error) {
+	return m.rule.matches(toolName, input)
 }
 
 // ruleMatches returns true if the rule's regexes all match the given
 // input. A rule with no InputRegex matches any input of the named tool.
 func (c *compiledRule) matches(toolName string, input json.RawMessage) (bool, error) {
-	if c.Tool != toolName && c.Tool != "*" {
+	if c.tool != nil && !c.tool.MatchString(toolName) {
 		return false, nil
 	}
 	if c.regex == nil && len(c.InputRegex) == 0 {

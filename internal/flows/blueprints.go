@@ -43,6 +43,10 @@ func bpEdge(from int, port string, to int) Edge {
 // BlueprintTaskFinished is the key of the flow that decides where a finished task goes.
 const BlueprintTaskFinished = "task_finished"
 
+// BlueprintToolApproval is the key of the flow that answers tool approvals with regexes. It is
+// not seeded: it lets tools run with nobody watching, so a project has to choose it.
+const BlueprintToolApproval = "tool_approval"
+
 var blueprints = []Blueprint{
 	{
 		Key: BlueprintTaskFinished, Name: "Task finished", Seeded: true,
@@ -103,6 +107,26 @@ var blueprints = []Blueprint{
 				bpNode(3, TypeRunAgent, 600, 120, "prompt", "Your branch {{nodes.n2.branch}} cannot be merged into {{nodes.n2.base}}. Merge {{nodes.n2.base}} into your branch, resolve what conflicts, commit everything, run the project's checks and call task_done again."),
 			},
 			Edges: []Edge{bpEdge(1, PortNext, 2), bpEdge(2, PortConflicts, 3), bpEdge(2, PortDirty, 3)},
+		},
+	},
+	{
+		Key: BlueprintToolApproval, Name: "Approve tools with rules",
+		Description: "When an agent asks for a tool no rule covers: Read, Glob and Grep pass, Bash commands that match a dangerous pattern are denied, and the rest asks you as usual. Change the regexes to fit your project.",
+		Graph: Graph{
+			Nodes: []Node{
+				bpNode(1, TypeToolRequest, 40, 200),
+				bpNode(2, TypeMatchTool, 300, 200, "tool", "Read|Glob|Grep"),
+				bpNode(3, TypeToolDecision, 600, 40, "decision", ToolAllow, "reason", "{{event.tool_name}} only reads"),
+				bpNode(4, TypeMatchTool, 600, 240, "tool", "Bash",
+					"input_regex", `command: (?i)\brm\s+-[a-z]*r|git\s+push\s.*--force|git\s+reset\s+--hard|curl[^|]*\|\s*(ba)?sh`),
+				bpNode(5, TypeToolDecision, 900, 120, "decision", ToolDeny, "reason", "this command matches a dangerous pattern of the project's flow"),
+				bpNode(6, TypeToolDecision, 900, 360, "decision", ToolAsk),
+			},
+			Edges: []Edge{
+				bpEdge(1, PortNext, 2),
+				bpEdge(2, PortMatch, 3), bpEdge(2, PortNoMatch, 4),
+				bpEdge(4, PortMatch, 5), bpEdge(4, PortNoMatch, 6),
+			},
 		},
 	},
 }

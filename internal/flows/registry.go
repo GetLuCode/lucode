@@ -17,6 +17,7 @@ const (
 	FieldAgent    = "agent" // the name of an agent of the project
 	FieldList     = "list"  // the id of a list of the project
 	FieldBool     = "bool"
+	FieldLines    = "lines" // several lines of literal text, such as regexes
 
 	TypeCardMoved   = "trigger.card_moved"
 	TypeCardCreated = "trigger.card_created"
@@ -25,6 +26,7 @@ const (
 	TypeTaskDone    = "trigger.task_done"
 	TypeManual      = "trigger.manual"
 	TypeSchedule    = "trigger.schedule"
+	TypeToolRequest = "trigger.tool_requested"
 
 	TypeIf        = "control.if"
 	TypeSwitch    = "control.switch"
@@ -35,6 +37,7 @@ const (
 	TypeRetry     = "control.retry"
 	TypeStop      = "control.stop"
 	TypeApproval  = "control.human_approval"
+	TypeMatchTool = "control.match_tool"
 
 	TypeRunAgent   = "action.run_agent"
 	TypeMoveCard   = "action.move_card"
@@ -46,8 +49,9 @@ const (
 	TypeMerge      = "action.merge"
 
 	TypeNotifySupervisor = "action.notify_supervisor"
+	TypeToolDecision     = "action.tool_decision"
 
-	PortNext      = "next"
+	PortNext     = "next"
 	PortTrue      = "true"
 	PortFalse     = "false"
 	PortAgain     = "again"
@@ -66,6 +70,8 @@ const (
 	PortOutcome1  = "outcome1"
 	PortOutcome2  = "outcome2"
 	PortOutcome3  = "outcome3"
+	PortMatch     = "match"
+	PortNoMatch   = "no_match"
 )
 
 // Field is an input of a node.
@@ -148,6 +154,12 @@ var nodeTypes = []NodeType{
 		Description: "Every so many minutes. It has no card.",
 		Ports:       []string{PortNext},
 		Fields:      []Field{{Name: "minutes", Label: "Every (minutes)", Kind: FieldNumber, Required: true, Default: 60, Min: minOf(1)}},
+		Repeatable:  true,
+	},
+	{
+		Type: TypeToolRequest, Title: "Tool requested", Category: CategoryTrigger,
+		Description: "An agent wants to use a tool and no permission rule decided it. The flow has a minute to reach a Tool decision. Without one, a person is asked, or Claude's auto mode decides if the agent runs in it. Reads event.tool_name, event.tool_input, event.tool_input_text, event.work_dir, event.task, event.auto_mode.",
+		Ports:       []string{PortNext},
 		Repeatable:  true,
 	},
 
@@ -257,6 +269,25 @@ var nodeTypes = []NodeType{
 			{Name: "delete_branch", Label: "Delete the branch", Kind: FieldBool, Default: true, Help: "Needs the worktree deleted too: git keeps a branch a worktree is using."},
 			{Name: "move_to_done", Label: "Move the card to Done", Kind: FieldBool, Default: true, Help: "This also releases the tasks that depend on it."},
 			{Name: "unattended", Label: "Merge without a person", Kind: FieldBool, Default: false, Help: "Off: publishing requires the \"approved\" output of a Human approval on every path to this node."},
+		},
+	},
+	{
+		Type: TypeMatchTool, Title: "Match tool", Category: CategoryControl,
+		Description: "Tests the requested tool with regexes, the same way permission rules do. Takes \"match\" if the tool and every parameter line match. Only for Tool requested flows.",
+		Ports:       []string{PortMatch, PortNoMatch},
+		Fields: []Field{
+			{Name: "tool", Label: "Tool", Kind: FieldText, Default: "*", Help: "A regex for the whole name: Read|Glob|Grep or mcp__github__.*. * is any tool."},
+			{Name: "input_regex", Label: "Parameters", Kind: FieldLines, Help: "One per line, parameter: regex. For example command: ^go test ./[^;&|]*$ . The regex may match part of the text, so without ^ and $, or if it allows ; & |, go test also matches go test && rm -rf /."},
+		},
+		Repeatable: true,
+	},
+	{
+		Type: TypeToolDecision, Title: "Tool decision", Category: CategoryAction,
+		Description: "Answers the Tool requested trigger and ends the run. \"ask\" shows the usual approval to a person, or leaves it to Claude's auto mode if the agent runs in it. A deny also stops the agent's other tools for the rest of the turn.",
+		Ports:       []string{},
+		Fields: []Field{
+			{Name: "decision", Label: "Decision", Kind: FieldSelect, Options: []string{ToolAllow, ToolDeny, ToolAsk}, Required: true, Default: ToolAsk},
+			{Name: "reason", Label: "Reason", Kind: FieldTemplate, Help: "The agent reads it, and it stays in the session's history."},
 		},
 	},
 	{

@@ -63,6 +63,75 @@ deja la tarea en Review sin consultar git, porque Done podria esconder trabajo s
 Siguen en Go: arrancar el agente al entrar en In Progress, liberar dependencias y el boton de merge
 de Review.
 
+### Aprobar herramientas: Tool requested y Tool decision
+
+Un flujo puede contestar al hook `PreToolUse`. Solo sustituye el paso de preguntar a una persona:
+
+```
+hook del runner -> NATS -> hub:
+  herramientas de tarea y ToolSearch -> se permiten
+  ya se denego algo en este turno    -> se deniega
+  reglas de permisos                 -> allow y deny deciden; ask va directo a la persona
+  flujos con Tool requested          -> allow, deny o ask
+  ask, o ningun flujo                -> agente en auto: decide el clasificador de claude
+                                        los demas: la persona, como siempre
+```
+
+**Modo auto.** Un agente con `auto_mode` lanza claude con `--permission-mode=auto` y tambien con el
+hook, asi que pasa por el mismo camino. Los docs de Claude Code dicen que un `allow` del hook cuenta
+como una regla y se resuelve antes del clasificador; si el hook no contesta, decide el clasificador.
+Nunca te pregunta, salvo una regla `ask` explicita. Un flujo puede distinguirlo con `event.auto_mode`.
+
+**Tool log.** Cada llamada queda en el chat de la sesion con sus parametros, su decision y quien la
+tomo (regla, flujo o `Claude auto mode`), tambien en agentes sin auto. Solo se registra la peticion:
+no el resultado, ni lo que el clasificador decidio al final. Las que contesta una persona siguen
+saliendo como su aprobacion de siempre.
+
+**Match tool** es el mismo test que una regla de permisos, con el mismo codigo (`permissions.Matcher`):
+
+| Campo | Ejemplo | Significado |
+|---|---|---|
+| Tool | `Read\|Glob\|Grep`, `mcp__github__.*`, `*` | Regex sobre el nombre completo. `*` es cualquiera. |
+| Parameters | `command: ^go test ./[^;&\|]*$` | Una por linea, `parametro: regex`. Tienen que cumplirse todas. |
+
+Las reglas de permisos ganan lo mismo: su `tool` tambien admite regex. Un nombre normal sigue
+significando exactamente esa herramienta.
+
+**Cuidado con Bash.** La regex de un parametro puede coincidir con solo una parte del texto, y un comando
+puede encadenar otros: `^go test` tambien coincide con `go test && rm -rf /`. Para un allow, cierra con
+`$` y excluye `;`, `&`, `|`. Una lista de patrones prohibidos tampoco es una barrera: siempre hay otra
+forma de escribir el mismo comando.
+
+El blueprint **Approve tools with rules** no se siembra: deja correr herramientas sin nadie delante, asi
+que cada proyecto decide. Se crea desde el editor. No usa la API.
+
+| Situacion | Resultado |
+|---|---|
+| `Read`, `Glob`, `Grep` | Allow |
+| `Bash` con `rm -r`, `git push --force`, `git reset --hard` o `curl \| sh` | Deny; se paran las demas herramientas del turno |
+| Lo demas | La persona, o el clasificador si el agente esta en auto |
+
+**AI evaluate es opcional:** se puede anadir como cualquier nodo, gasta tokens de API en cada llamada que
+llegue a el, y si falla se puede conectar su salida `failed` a un Tool decision `ask`.
+
+**Reglas, porque el hook esta esperando:**
+
+- Cualquier fallo queda sin decidir, nunca en un allow: error de expresion, flujo que termina sin
+  decidir, ejecucion cancelada, proyecto en pausa, hub parandose o 60 s sin respuesta. Eso significa la
+  persona, o el clasificador si el agente esta en auto.
+- Si hay varios flujos, gana el mas estricto (`deny`, luego `ask`, luego `allow`). Un `deny` no espera
+  a los demas y los cancela.
+- Una entrada de mas de 64 KB va directa a la persona: cortarla haria que el modelo juzgue solo una
+  parte de lo que se va a ejecutar.
+- Los 60 s salen de los 4 minutos del hook, y la cuenta atras de la pagina ya los descuenta.
+- Las ejecuciones no hacen cola entre ellas ni heredan la profundidad de la tarjeta. Se borran a los 7
+  dias, porque hay una por herramienta y guardan su entrada.
+
+Lee `event.tool_name`, `event.tool_input` (`event.tool_input.command`), `event.tool_input_text` (el
+JSON tal cual), `event.work_dir` y `event.task` (titulo de la tarjeta, vacio si no hay). Tambien corre
+en sesiones sin tarjeta; ahi `card.*` no existe y Comment, Add tag y Notify supervisor fallan, asi que
+acaban en la persona.
+
 ### Merge
 
 | Opcion | Por defecto |
@@ -90,6 +159,10 @@ El nodo afectado se marca en rojo y el mensaje sale en la pestana Node.
 
 | Mensaje | Causa y arreglo |
 |---|---|
+| `Match tool matches everything: ...` | Sin herramienta ni parametros: escribe alguno. |
+| `Match tool: the line "..." is not parameter: regex` | Falta el `parametro:` delante de la regex. |
+| `Match tool: rule "...": invalid tool regex` o `invalid regex` | La regex no compila (sintaxis RE2 de Go). |
+| `Match tool only works in a flow started by Tool requested: ...` | Sin ese disparador no hay herramienta que leer. |
 | `the flow is empty` | No hay nodos. |
 | `the flow needs a trigger: nothing would ever start it` | Falta un disparador. Si el flujo tenia uno, mira primero "El editor perdio nodos". |
 | `unknown node type "..."` | El hub no conoce ese tipo: suele ser un hub mas viejo que el flujo. Reinicialo. |
@@ -101,6 +174,11 @@ El nodo afectado se marca en rojo y el mensaje sale en la pestana Node.
 | `Merge: to delete the branch the worktree has to be deleted too, ...` | Conserva los dos o borra los dos. |
 | `AI evaluate: the third output is connected but Answer 3 is empty` | Rellena Answer 3 o quita la conexion. |
 | `AI evaluate: the answer "..." is there twice` | Dos respuestas iguales: cambia una. |
+| `Tool decision only works in a flow started by Tool requested: ...` | Ningun otro disparador espera su respuesta. |
+| `... cannot share a flow with Tool requested: ...` | Otro disparador en el mismo flujo: separalos. |
+| `... cannot be used with Tool requested: ...` | Nodo lento o que arranca un turno (Run agent, Human approval, Delay, Merge...). Para preguntar a una persona usa Tool decision con `ask`. |
+| `this flow has no Tool decision, ...` | Solo podria acabar preguntando a la persona. |
+| `this allows every tool without checking anything: ...` | Allow sin nada antes: pon un Match tool o una condicion. Para no preguntar, usa el modo auto del agente. |
 
 ### Durante una ejecucion
 
@@ -131,6 +209,9 @@ El error se ve en la pestana Runs, en el paso que fallo.
 | Un flujo nunca arranca | Sin publicar, desactivado, proyecto en pausa, otro flujo en cola en esa tarjeta, o el evento lo causo el propio flujo. | Punto verde en la lista, boton de pausa y pestana Runs. |
 | Ejecucion parada en `waiting` | Espera un Human approval, un turno o un evento; es lo normal. | El paso en azul y la campana. |
 | Un cambio del borrador no tiene efecto | Sin publicar: se ejecuta la version publicada. | El estado dice `Saved, not published`. |
+| Una herramienta pregunta a la persona con un flujo activo | El flujo no llego a decidir: fallo, tardo mas de 60 s o la entrada pasa de 64 KB. | Pestana Runs y linea `no decision on` en el log del hub. |
+| Un agente nunca pasa por el flujo | Una regla ya lo decide. | Reglas de permisos. |
+| Un agente en auto no deja tool log | Su runner es anterior a este cambio: lanza claude sin el hook. | Recompila y reinicia el runner. |
 
 ### El editor perdio nodos (caso real, 2026-11-06)
 
@@ -180,9 +261,24 @@ pestana.
 - **Un Task finished ya sembrado no se actualiza.** Un cambio en `blueprints.go` solo llega a proyectos
   nuevos; `flow_seeds` impide volver a sembrar.
 
+- **Con AI evaluate, el modelo lee texto que puede venir de fuera.** Una entrada manipulada podria
+  convencerlo de aprobar. Las reglas `deny` van antes y el modelo no las ve.
+- **`Read`, `Glob` y `Grep` pasan sin mirar la ruta** en el blueprint, asi que leen tambien fuera del
+  proyecto. Para evitarlo, anade `file_path: ^/tu/proyecto/` al nodo o quitalos de `Tool`.
+- **Un allow del hook se salta el clasificador** en un agente en auto, salvo los casos que claude protege
+  siempre: lo que un flujo aprueba ya no lo revisa nadie mas.
+- **Agentes en auto dependen del hub.** Con el hub caido, el hook reintenta 30 s y deniega; antes el agente
+  seguia solo. Un reinicio del hub con un hook esperando pierde la peticion y el hook deniega a los 4 minutos.
+- **Una evaluacion cancelada por tiempo sigue en curso** hasta que responde la API y se paga igual.
+- **El tool log no tiene el resultado de la herramienta.** Haria falta un hook `PostToolUse`.
+
 ## Sin probar
 
 - La API real de Anthropic: solo la falsa (`internal/fakeanthropic`).
+- Aprobar herramientas con un claude real y con un runner remoto: si se probo el binario real del hook
+  contra un hub con NATS temporal, y su entrada imita la de claude. En particular, el campo
+  `permission_mode` y que el silencio del hook llegue al clasificador salen de la documentacion.
+- En navegador: los nodos Tool requested, Match tool y Tool decision, y el tool log en vivo.
 - Task finished completo con un runner remoto. Git status y Merge si se probaron con runner real por
   NATS, cada uno por separado del blueprint.
 - La app completa con WebSocket real, y el editor en movil.

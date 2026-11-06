@@ -361,7 +361,7 @@ function AgentForm({
                   disabled={form.executor !== 'claude'}
                   onChange={e => setField('auto_mode', e.target.checked)}
                 />
-                Auto mode (no approval requests)
+                Auto mode (Claude decides what rules and flows leave open; no approval requests)
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 6, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
                 <input
@@ -516,7 +516,7 @@ function AgentCard({
           <span className="agent-card__model">{modelLabel}</span>
           <span className="agent-card__model">{agent.executor === 'claude' ? 'claude -p' : 'aiapi'}</span>
           {agent.scope === 'global' && <span className="agent-card__model" title="Available in every project">global</span>}
-          {agent.auto_mode && <span className="agent-card__model" title="claude decides on its own which tools are safe; no approval requests">auto</span>}
+          {agent.auto_mode && <span className="agent-card__model" title="claude decides what rules and flows leave open; no approval requests">auto</span>}
           {agent.worktree && <span className="agent-card__model" title={`works in its own git worktree (baseRef=${agent.worktree_base_ref})`}>worktree</span>}
           {agent.persistent && <span className="agent-card__model" title="Process stays alive between messages">live</span>}
           {supervisor && <span className="agent-card__model" title="Reports to">→ {supervisor}</span>}

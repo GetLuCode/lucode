@@ -26,6 +26,8 @@ const (
 	EventApprovalDecided = "approval.decided"
 	EventCallDone        = "flow.call_done"
 	EventTaskDone        = "task.done"
+	// An agent wants to use a tool and no rule decided it. Someone is waiting for the answer.
+	EventToolRequested = "tool.requested"
 )
 
 // Run and step statuses.
@@ -186,6 +188,50 @@ func insertFlowEvent(x dbExec, projectID, typ, cardID, sessionID string, payload
 func RecordFlowEvent(db *sql.DB, projectID, typ, cardID, sessionID string, payload map[string]any) error {
 	cause := EventCause{Source: "system"}
 	return insertFlowEvent(db, projectID, typ, cardID, sessionID, payload, cause, inheritedDepth(db, cardID, cause))
+}
+
+// RecordToolRequest logs a tool request. It starts its own chain: it changes nothing on the
+// card, and a card deep in a chain of flows must not lose its approvals to the loop limit.
+func RecordToolRequest(db *sql.DB, projectID, cardID, sessionID string, payload map[string]any) error {
+	return insertFlowEvent(db, projectID, EventToolRequested, cardID, sessionID, payload, EventCause{Source: "agent"}, 0)
+}
+
+// OpenToolFlowRuns are the runs still deciding a tool request. Their answer has nowhere to go
+// after a hub restart, because the request it answers was lost with the restart.
+func OpenToolFlowRuns(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT id FROM flow_runs WHERE status IN (?,?) AND json_extract(event,'$.type')=?`, RunRunning, RunQueued, EventToolRequested)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// PruneToolFlowRuns drops old finished runs of tool requests. There is one per tool call, and
+// each one keeps the tool's input.
+func PruneToolFlowRuns(db *sql.DB, age time.Duration) error {
+	cut := time.Now().UTC().Add(-age).Format("2006-01-02T15:04:05.000Z")
+	const old = `SELECT id FROM flow_runs WHERE status NOT IN (?,?) AND finished_at<? AND json_extract(event,'$.type')=?`
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM flow_steps WHERE run_id IN (`+old+`)`, RunRunning, RunQueued, cut, EventToolRequested); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM flow_runs WHERE id IN (`+old+`)`, RunRunning, RunQueued, cut, EventToolRequested); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // RecordFlowChain leaves a mark that a flow acted on a card without changing its list, such

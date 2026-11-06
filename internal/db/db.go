@@ -586,7 +586,7 @@ CREATE TABLE IF NOT EXISTS card_reviews (
 	// agents.runner_id / ai_profile_id: environment and preconfigured AI that override the project's (empty = inherit)
 	db.Exec(`ALTER TABLE agents ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE agents ADD COLUMN ai_profile_id TEXT NOT NULL DEFAULT ''`)
-	// agents.auto_mode — run claude with --permission-mode auto instead of asking through the PreToolUse hook
+	// agents.auto_mode — run claude with --permission-mode auto: what rules and flows leave open goes to its classifier, not to a person
 	db.Exec(`ALTER TABLE agents ADD COLUMN auto_mode INTEGER NOT NULL DEFAULT 0`)
 	// agents.worktree / worktree_base_ref — run claude in its own git worktree (--worktree) and the worktree.baseRef setting ("head" | "fresh")
 	db.Exec(`ALTER TABLE agents ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0`)

@@ -35,6 +35,7 @@ type fakeHost struct {
 	evals     []AIRequest
 	aiOutcome string
 	aiErr     error
+	aiHold    chan struct{} // when set, a call waits for it: an API that does not answer
 }
 
 func (f *fakeHost) CardScope(string) (map[string]any, error) { return f.card, nil }
@@ -82,6 +83,9 @@ func (f *fakeHost) NotifySupervisor(_, text string) error {
 }
 func (f *fakeHost) AIEvaluate(_ context.Context, req AIRequest) (AIResult, error) {
 	f.evals = append(f.evals, req)
+	if f.aiHold != nil {
+		<-f.aiHold
+	}
 	if f.aiErr != nil {
 		return AIResult{}, f.aiErr
 	}

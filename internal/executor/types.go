@@ -31,8 +31,8 @@ type TurnRequest struct {
 	NATSSettings    string `json:"nats_settings,omitempty"`   // injected as LUCODE_NATS_URL
 	NATSCreds       string `json:"nats_creds,omitempty"`      // injected as LUCODE_NATS_CREDS
 
-	// PermissionMode is claude's --permission-mode (e.g. "auto"). When set, the
-	// lucode approval hook (ClaudeSettings) is not passed: claude decides by itself.
+	// PermissionMode is claude's --permission-mode (e.g. "auto"). The lucode hook
+	// (ClaudeSettings) still runs: claude only decides what the hub leaves to it.
 	PermissionMode string `json:"permission_mode,omitempty"`
 
 	// Worktree runs claude in its own git worktree (--worktree=<name>, stable per
