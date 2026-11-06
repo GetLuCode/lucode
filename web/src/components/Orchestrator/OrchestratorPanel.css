@@ -99,6 +99,7 @@
 .orch__mic--loading { color: var(--warning); border-color: var(--warning); animation: orch-pulse 1.2s ease-in-out infinite; }
 .orch__mic--armed { color: var(--accent); border-color: var(--accent); }
 .orch__mic--awake { color: var(--error); border-color: var(--error); animation: orch-pulse 0.9s ease-in-out infinite; }
+.orch__mic--processing { color: var(--warning); border-color: var(--warning); animation: orch-pulse 0.9s ease-in-out infinite; }
 .orch__mic--listening { color: var(--error); border-color: var(--error); animation: orch-pulse 1.6s ease-in-out infinite; }
 @keyframes orch-pulse { 50% { opacity: 0.55; } }
 
@@ -228,6 +229,9 @@
    (--text-muted alone was about 3.4:1 on this background); the final line then shows in full colour */
 .stt-test__line--live { color: color-mix(in srgb, var(--text) 60%, transparent); }
 .stt-test__time { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex-shrink: 0; min-width: 9ch; }
+.stt-test__ms { margin-left: auto; padding-left: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+.stt-test__avg { font-size: 12px; color: var(--text-muted); }
+.stt-test__avg strong { color: var(--text); font-weight: 600; }
 .stt-test__tag { font-size: 10px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--text-muted); flex-shrink: 0; }
 
 /* phrase-end rules in the voice settings */

@@ -14,12 +14,12 @@ import { AIModeHistory } from './AIModeHistory'
 import { OrchestratorEdit } from './OrchestratorEdit'
 import { ModelIcon } from './ModelIcon'
 import { EnvPicker } from './EnvPicker'
-import { useWorkerMic } from '@/hooks/useWorkerMic'
+import { useMic } from '@/hooks/useMic'
 import { playListenCue, playSendCue } from '@/lib/cues'
 import { useWorkerTTS } from '@/hooks/useWorkerTTS'
 import { markSpoken, wasSpoken } from '@/lib/spokenLog'
 import { VoiceSettingsDialog } from './VoiceSettingsDialog'
-import { getAutoSend, getHotword } from '@/lib/audioDevices'
+import { getAutoSend, getHotword, getSttEngine } from '@/lib/audioDevices'
 import type { AIProfile, Message, Runner, Session } from '../../types'
 import './OrchestratorPanel.css'
 
@@ -85,7 +85,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   // Dictation: what was typed before is kept; the phrase being spoken follows it.
   const dictBase = useRef('')
   const joinText = (a: string, b: string) => (a && b ? `${a.replace(/\s+$/, '')} ${b}` : a || b)
-  const mic = useWorkerMic({
+  const mic = useMic({
     onRealtime: text => setInput(joinText(dictBase.current, text)),
     onFinal: (text, viaHotword) => {
       if (!text.trim()) return
@@ -124,12 +124,14 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     prevMicState.current = mic.state
   }, [mic.state])
   const hotword = getHotword()
+  const pushToTalk = getSttEngine() === 'orchard'
   const micTitle = {
-    off: hotword.enabled ? `Listen for the hotword${hotword.backend === 'vosk' ? ` “${hotword.phrase}”` : ' “hey jarvis”'}` : 'Dictate (Parakeet, local)',
+    off: pushToTalk ? 'Dictate (Orchard): click, speak, click again' : hotword.enabled ? `Listen for the hotword${hotword.backend === 'vosk' ? ` “${hotword.phrase}”` : ' “hey jarvis”'}` : 'Dictate (Parakeet, local)',
     loading: 'Loading the voice model…',
-    listening: 'Stop dictating',
+    listening: mic.engine === 'orchard' ? 'Recording: click to stop and transcribe' : 'Stop dictating',
     armed: 'Waiting for the hotword (click to stop)',
     awake: 'Listening for your command…',
+    processing: 'Transcribing…',
   }[mic.state]
   const toggleMic = () => {
     if (mic.state === 'off') { dictBase.current = input; void mic.start() } else mic.stop()

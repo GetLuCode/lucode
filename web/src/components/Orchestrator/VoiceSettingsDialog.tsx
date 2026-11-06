@@ -4,7 +4,8 @@ import * as api from '../../api'
 import { SttTester } from './SttTester'
 import { TtsTester } from './TtsTester'
 import { VoiceModelPicker } from './VoiceModelPicker'
-import { canChooseOutput, DEFAULT_TUNING, getAutoSend, getDeviceId, getHotword, getSttTuning, listAudioDevices, setAutoSend, setDeviceId, setHotword, setSttTuning, type AudioDevices, type SttTuning } from '../../lib/audioDevices'
+import { OrchardSettings } from './OrchardSettings'
+import { canChooseOutput, DEFAULT_TUNING, getAutoSend, getDeviceId, getHotword, getSttEngine, getSttTuning, listAudioDevices, setAutoSend, setDeviceId, setHotword, setSttEngine, setSttTuning, type AudioDevices, type SttEngine, type SttTuning } from '../../lib/audioDevices'
 
 // Voice settings, in tabs. Everything applies on its own (it is kept in this browser) except the
 // Fish Audio settings, which are saved on the server with the Save button of their tab. The Fish
@@ -63,6 +64,7 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
   const [devices, setDevices] = useState<AudioDevices>({ inputs: [], outputs: [], canChooseOutput: canChooseOutput() })
   const [micId, setMicId] = useState(() => getDeviceId('input'))
   const [spkId, setSpkId] = useState(() => getDeviceId('output'))
+  const [engine, setEngine] = useState<SttEngine>(getSttEngine)
   const [hw, setHw] = useState(getHotword)
   const [autoSend, setAutoSendState] = useState(getAutoSend)
   const [testing, setTesting] = useState(false)
@@ -183,7 +185,20 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
                 <p className="orch-dialog__note">The microphone and the speaker are remembered by this browser.</p>
               </>
             )}
-            {tab === 'recognition' && <VoiceModelPicker onTest={() => setTesting(true)} />}
+            {tab === 'recognition' && (
+              <>
+                <label className="orch-dialog__field">
+                  <span>Engine</span>
+                  <select value={engine} onChange={e => { const v = e.target.value === 'orchard' ? 'orchard' : 'worker'; setEngine(v); setSttEngine(v) }}>
+                    <option value="worker">Local worker (Parakeet, streaming)</option>
+                    <option value="orchard">Orchard Run (cloud, push to talk)</option>
+                  </select>
+                </label>
+                {engine === 'orchard'
+                  ? <OrchardSettings onTest={() => setTesting(true)} />
+                  : <VoiceModelPicker onTest={() => setTesting(true)} />}
+              </>
+            )}
             {tab === 'phrase' && (
               <>
                 <p className="orch-dialog__note">

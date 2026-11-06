@@ -3,8 +3,9 @@ import { getSttWSUrl } from './useWSConnection'
 import { getDeviceId, getHotword, getSttTuning, setDeviceId, tuningMessage } from '../lib/audioDevices'
 import type { WakeDetector } from '../lib/voskWake'
 
-export type MicState = 'off' | 'loading' | 'listening' | 'armed' | 'awake'
-// armed = waiting for the hotword; awake = hotword heard, the next phrase is the command
+export type MicState = 'off' | 'loading' | 'listening' | 'armed' | 'awake' | 'processing'
+// armed = waiting for the hotword; awake = hotword heard, the next phrase is the command;
+// processing = push to talk ended, the recording is being transcribed
 
 // Hotword with the "vosk" detector runs in this browser (lib/voskWake.ts): while armed the audio
 // never leaves the page. Vosk closes its result after about a second of silence, so when the phrase
@@ -63,7 +64,8 @@ registerProcessor('pcm', Pcm)
 
 interface Handlers {
   onRealtime: (text: string) => void // partial text of the phrase being spoken
-  onFinal: (text: string, viaHotword: boolean) => void // a finished phrase
+  // a finished phrase; `ms` is how long the transcription call took (only engines that transcribe a recording)
+  onFinal: (text: string, viaHotword: boolean, ms?: number) => void
   onLevel?: (level: number) => void // microphone level 0..1, about 15 times a second (for a meter)
 }
 

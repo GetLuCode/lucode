@@ -113,6 +113,24 @@ export interface TTSSettings { configured: boolean; model: string; voice_id: str
 export const getTTSSettings = () => req<TTSSettings>('GET', '/api/tts/settings')
 export const saveTTSSettings = (data: { api_key?: string; clear_key?: boolean; model: string; voice_id: string; speed: number }) =>
   req<TTSSettings>('PUT', '/api/tts/settings', data)
+// Orchard Run, the second speech recognition engine (cloud, push to talk). The key is write-only.
+export interface OrchardSettings { configured: boolean; language: string; prompt: string }
+export const getOrchardSettings = () => req<OrchardSettings>('GET', '/api/stt/orchard/settings')
+export const saveOrchardSettings = (data: { api_key?: string; clear_key?: boolean; language: string; prompt: string }) =>
+  req<OrchardSettings>('PUT', '/api/stt/orchard/settings', data)
+// Sends one recording (WAV) and gets its text.
+export async function orchardTranscribe(wav: Blob, signal?: AbortSignal): Promise<string> {
+  const headers: Record<string, string> = { 'Content-Type': 'audio/wav' }
+  const token = getAuthToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  if (activeRemoteId) headers['X-Lucode-Remote'] = activeRemoteId
+  const res = await fetch(`${BASE}/api/stt/orchard/transcribe`, { method: 'POST', headers, body: wav, signal })
+  if (!res.ok) {
+    if (res.status === 401) useAuthStore.getState().clearAuth()
+    throw new Error((await res.text()).trim() || `Orchard failed (${res.status})`)
+  }
+  return ((await res.json()) as { text: string }).text
+}
 // Speech recognition model of the shared voice worker. `selected` is the choice kept by lucode;
 // `worker` is what runs right now (null: nothing answers, it starts when somebody needs it).
 export interface SttModel { id: string; label: string; device: 'gpu' | 'cpu'; memory: string; recommended?: boolean }

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { IconX } from '@tabler/icons-react'
-import { useWorkerMic, type MicState } from '../../hooks/useWorkerMic'
-import { getHotword } from '../../lib/audioDevices'
+import type { MicState } from '../../hooks/useWorkerMic'
+import { useMic } from '../../hooks/useMic'
+import { getHotword, getSttEngine } from '../../lib/audioDevices'
 
 const LABEL: Record<MicState, string> = {
   off: 'Microphone off',
@@ -9,22 +10,25 @@ const LABEL: Record<MicState, string> = {
   listening: 'Listening',
   armed: 'Waiting for the hotword',
   awake: 'Hotword heard: say the phrase',
+  processing: 'Transcribing…',
 }
+
+const secs = (ms: number) => `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`
 
 // Tries the speech recognition on its own: the same microphone, worker and hotword settings as
 // the orchestrator chat, but what it hears is only listed here. Nothing reaches the model.
 export function SttTester({ onClose }: { onClose: () => void }) {
   const [live, setLive] = useState('')
-  const [lines, setLines] = useState<{ id: number; text: string; hotword: boolean; at: string }[]>([])
+  const [lines, setLines] = useState<{ id: number; text: string; hotword: boolean; at: string; ms?: number }[]>([])
   const [level, setLevel] = useState(0)
   const next = useRef(1)
   const list = useRef<HTMLDivElement>(null)
-  const mic = useWorkerMic({
+  const mic = useMic({
     onRealtime: setLive,
-    onFinal: (text, hotword) => {
+    onFinal: (text, hotword, ms) => {
       setLive('')
       if (!text) return
-      setLines(l => [...l, { id: next.current++, text, hotword, at: new Date().toLocaleTimeString() }])
+      setLines(l => [...l, { id: next.current++, text, hotword, at: new Date().toLocaleTimeString(), ms }])
     },
     onLevel: setLevel,
   })
@@ -44,6 +48,8 @@ export function SttTester({ onClose }: { onClose: () => void }) {
 
   const hw = getHotword()
   const on = mic.state !== 'off'
+  const timed = lines.filter(l => l.ms !== undefined)
+  const avgMs = timed.length ? timed.reduce((a, l) => a + (l.ms ?? 0), 0) / timed.length : null
   return (
     <div className="orch-dialog__backdrop" onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}>
       <div className="orch-dialog stt-test" role="dialog" aria-label="Speech recognition test">
@@ -52,8 +58,10 @@ export function SttTester({ onClose }: { onClose: () => void }) {
           <button className="orch__icon-btn" onClick={onClose} aria-label="Close"><IconX size={16} /></button>
         </div>
         <p className="orch-dialog__note">
-          Nothing you say here is sent to the model. Uses the microphone and hotword chosen in Voice
-          {hw.enabled ? ` (hotword on: ${hw.backend === 'vosk' ? `“${hw.phrase}”` : '“hey jarvis”'})` : ' (hotword off)'}.
+          {getSttEngine() === 'orchard'
+            ? 'Nothing you say here is sent to the model. Orchard (push to talk): turn the microphone on, speak, turn it off and the text appears.'
+            : <>Nothing you say here is sent to the model. Uses the microphone and hotword chosen in Voice
+              {hw.enabled ? ` (hotword on: ${hw.backend === 'vosk' ? `“${hw.phrase}”` : '“hey jarvis”'})` : ' (hotword off)'}.</>}
         </p>
         <div className="stt-test__bar">
           <button
@@ -67,6 +75,11 @@ export function SttTester({ onClose }: { onClose: () => void }) {
           </div>
           <span className={`stt-test__state stt-test__state--${mic.state}`}>{LABEL[mic.state]}</span>
         </div>
+        {avgMs !== null && (
+          <div className="stt-test__avg">
+            Average transcription: <strong>{secs(avgMs)}</strong> over {timed.length} {timed.length === 1 ? 'recording' : 'recordings'}
+          </div>
+        )}
         <div className="stt-test__list" ref={list} aria-live="polite">
           {lines.length === 0 && !live.trim() && <div className="stt-test__empty">What the worker hears shows up here.</div>}
           {lines.map(l => (
@@ -74,6 +87,7 @@ export function SttTester({ onClose }: { onClose: () => void }) {
               <span className="stt-test__time">{l.at}</span>
               {l.hotword && <span className="stt-test__tag">hotword</span>}
               <span>{l.text}</span>
+              {l.ms !== undefined && <span className="stt-test__ms" title="Time the transcription took">{secs(l.ms)}</span>}
             </div>
           ))}
           {live.trim() && (
