@@ -47,12 +47,22 @@ interface Handlers {
   onLevel?: (level: number) => void
 }
 
+interface Recording {
+  ctx?: AudioContext
+  stream?: MediaStream
+  node?: AudioWorkletNode
+  chunks: Float32Array[]
+  rate: number
+  meter?: ReturnType<typeof setInterval>
+  limit?: ReturnType<typeof setTimeout>
+}
+
 export function usePushToTalkMic(handlers: Handlers) {
   const [state, setState] = useState<MicState>('off')
   const [error, setError] = useState('')
   const h = useRef(handlers)
   h.current = handlers
-  const res = useRef<{ ctx?: AudioContext; stream?: MediaStream; node?: AudioWorkletNode; chunks: Float32Array[]; rate: number; meter?: ReturnType<typeof setInterval>; limit?: ReturnType<typeof setTimeout> } | null>(null)
+  const res = useRef<Recording | null>(null)
   const abort = useRef<AbortController | null>(null)
   const mounted = useRef(true)
 
@@ -120,7 +130,7 @@ export function usePushToTalkMic(handlers: Handlers) {
       const node = new AudioWorkletNode(ctx, 'rec')
       const source = ctx.createMediaStreamSource(stream)
       source.connect(node)
-      const r = { ctx, stream, node, chunks: [] as Float32Array[], rate: ctx.sampleRate } as NonNullable<typeof res.current>
+      const r: Recording = { ctx, stream, node, chunks: [], rate: ctx.sampleRate }
       node.port.onmessage = e => { r.chunks.push(e.data as Float32Array) }
       if (h.current.onLevel) {
         const an = ctx.createAnalyser()

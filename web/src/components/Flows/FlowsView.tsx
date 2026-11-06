@@ -600,7 +600,7 @@ function NodeForm({ type, config, disabled, agents, lists, nodeId, step, onChang
           {step.error && <p className="flows-run__error">{step.error}</p>}
           {deciding ? (
             <DecisionForm seq={step.seq} question={String((step.output as { question?: unknown })?.question ?? '')} onDecided={onDecided} />
-          ) : step.output && step.output !== '{}' && <pre>{JSON.stringify(step.output, null, 2)}</pre>}
+          ) : !!step.output && step.output !== '{}' && <pre>{JSON.stringify(step.output, null, 2)}</pre>}
         </div>
       )}
     </div>

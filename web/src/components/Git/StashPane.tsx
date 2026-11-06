@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ago, errorText, fullDate, gitCall } from './gitApi'
-import { FileRow, Sha } from './gitParts'
+import { Avatar, FileRow, Sha } from './gitParts'
 import { DiffView } from './DiffView'
 import type { DiffRequest, GitFileStat, GitStash, GitStashFiles } from './gitTypes'
 import type { GitUI } from './GitView'

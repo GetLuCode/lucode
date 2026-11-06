@@ -255,8 +255,8 @@ export interface ModelUsageEntry {
 
 export type UsageRange = '7d' | '30d' | '90d' | 'all'
 // An exact window (ISO instants, `to` excluded) instead of a preset range.
-export interface UsageWindow { from: string; to: string }
-const windowQS = (w: UsageRange | UsageWindow) =>
+export interface UsageSpan { from: string; to: string }
+const windowQS = (w: UsageRange | UsageSpan) =>
   typeof w === 'string' ? `range=${w}` : `from=${encodeURIComponent(w.from)}&to=${encodeURIComponent(w.to)}`
 
 export interface DailyUsageRow {
@@ -296,13 +296,13 @@ export interface SessionUsageRow {
 }
 
 // hourly: one row per (UTC) hour, `date` being "YYYY-MM-DDTHH", instead of per day
-export const getUsageDaily = (range: UsageRange | UsageWindow, hourly = false) =>
+export const getUsageDaily = (range: UsageRange | UsageSpan, hourly = false) =>
   req<DailyUsageRow[]>('GET', `/api/usage/daily?${windowQS(range)}${hourly ? '&granularity=hour' : ''}`)
 
-export const getUsageModels = (range: UsageRange | UsageWindow) =>
+export const getUsageModels = (range: UsageRange | UsageSpan) =>
   req<ModelUsageRow[]>('GET', `/api/usage/models?${windowQS(range)}`)
 
-export const getUsageSessions = (range: UsageRange | UsageWindow, projectId?: string) =>
+export const getUsageSessions = (range: UsageRange | UsageSpan, projectId?: string) =>
   req<SessionUsageRow[]>('GET', `/api/usage/sessions?${windowQS(range)}${projectId ? `&project_id=${projectId}` : ''}`)
 
 // The tokens of a session's first turn (what its initial context really wrote to / read from
@@ -335,7 +335,7 @@ export interface ToolCostRow {
   uncached: number
   carried_read: number   // result tokens x the later calls that re-read them
 }
-export const getUsageTools = (range: UsageRange | UsageWindow, projectId?: string) =>
+export const getUsageTools = (range: UsageRange | UsageSpan, projectId?: string) =>
   req<ToolCostRow[]>('GET', `/api/usage/tools?${windowQS(range)}${projectId ? `&project_id=${projectId}` : ''}`)
 
 // What each tool cost in one session (empty until the session has reported its calls).
