@@ -271,6 +271,57 @@ func TestToolFlowWithTheOptionalAINode(t *testing.T) {
 	}
 }
 
+// A flow can treat each agent differently, whether the session names it or only its card does.
+func TestToolFlowSeesTheAgent(t *testing.T) {
+	r := newToolGateRig(t)
+	for _, a := range []string{"reviewer", "dev"} {
+		if err := dbpkg.InsertAgent(r.h.db, dbpkg.Agent{ID: a, ProjectID: "p1", Name: a, Model: "haiku", Executor: "claude", Tools: []string{"Read"}, LucodeTools: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := dbpkg.EnsureDefaultKanbanLists(r.h.db, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	todo, err := dbpkg.FindKanbanListByKind(r.h.db, "p1", dbpkg.KanbanTodo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dbpkg.InsertKanbanCard(r.h.db, dbpkg.KanbanCard{ID: "c1", ProjectID: "p1", ListID: todo.ID, Title: "the task", CardType: "task", Tags: []string{}, DependsOn: []string{}, AgentID: "reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	r.publish("by agent", flows.Graph{
+		Nodes: []flows.Node{
+			{ID: "t", Type: flows.TypeToolRequest},
+			{ID: "if", Type: flows.TypeIf, Config: map[string]any{"condition": `event.agent == "reviewer"`}},
+			{ID: "yes", Type: flows.TypeToolDecision, Config: map[string]any{"decision": "allow", "reason": "for {{event.agent}}"}},
+			{ID: "no", Type: flows.TypeToolDecision, Config: map[string]any{"decision": "deny", "reason": "not for [{{event.agent}}]"}},
+		},
+		Edges: []flows.Edge{{From: "t", Port: "next", To: "if"}, {From: "if", Port: "true", To: "yes"}, {From: "if", Port: "false", To: "no"}},
+	})
+
+	for _, c := range []struct {
+		name         string
+		sess         dbpkg.Session
+		want, reason string
+	}{
+		{"the session's agent", dbpkg.Session{ID: "s-reviewer", AgentID: "reviewer"}, "allow", "for reviewer"},
+		{"another agent", dbpkg.Session{ID: "s-dev", AgentID: "dev"}, "deny", "not for [dev]"},
+		{"the card's agent", dbpkg.Session{ID: "s-card", CardID: "c1"}, "allow", "for reviewer"},
+		{"no agent at all", dbpkg.Session{ID: "s-none"}, "deny", "not for []"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			c.sess.ProjectID, c.sess.Name, c.sess.Model, c.sess.Status = "p1", c.sess.ID, "haiku", "running"
+			if err := dbpkg.InsertSession(r.h.db, c.sess); err != nil {
+				t.Fatal(err)
+			}
+			got := r.runHook(c.sess.ID, "t-"+c.sess.ID, "Bash", `{"command":"ls"}`)
+			if got.Decision != c.want || !strings.Contains(got.Reason, c.reason) {
+				t.Errorf("got %+v, want %s with %q", got, c.want, c.reason)
+			}
+		})
+	}
+}
+
 // An agent in auto mode goes through the same road: rules and flows decide first, nobody is
 // asked, and what stays open is left to claude. Every call stays in the log.
 func TestAutoModeGoesThroughTheHook(t *testing.T) {

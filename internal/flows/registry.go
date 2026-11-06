@@ -158,7 +158,7 @@ var nodeTypes = []NodeType{
 	},
 	{
 		Type: TypeToolRequest, Title: "Tool requested", Category: CategoryTrigger,
-		Description: "An agent wants to use a tool and no permission rule decided it. The flow has a minute to reach a Tool decision. Without one, a person is asked, or Claude's auto mode decides if the agent runs in it. Reads event.tool_name, event.tool_input, event.tool_input_text, event.work_dir, event.task, event.auto_mode.",
+		Description: "An agent wants to use a tool and no permission rule decided it. The flow has a minute to reach a Tool decision. Without one, a person is asked, or Claude's auto mode decides if the agent runs in it. Reads event.tool_name, event.tool_input, event.tool_input_text, event.work_dir, event.task, event.agent, event.auto_mode.",
 		Ports:       []string{PortNext},
 		Repeatable:  true,
 	},

@@ -110,6 +110,7 @@ type ToolRequest struct {
 	ToolName  string
 	WorkDir   string
 	Task      string // the card's title, empty without a card
+	Agent     string // the agent's name, empty in a session that has none
 	AutoMode  bool   // claude runs in auto mode: without a clear answer, it decides
 	Input     json.RawMessage
 }
@@ -224,7 +225,7 @@ func (e *Engine) DecideTool(ctx context.Context, req ToolRequest) ToolVerdict {
 
 	err := dbpkg.RecordToolRequest(e.db, req.ProjectID, req.CardID, req.SessionID, map[string]any{
 		"request_id": id, "tool_name": req.ToolName, "tool_use_id": req.ToolUseID, "tool_input": input,
-		"tool_input_text": string(req.Input), "work_dir": req.WorkDir, "task": req.Task, "auto_mode": req.AutoMode,
+		"tool_input_text": string(req.Input), "work_dir": req.WorkDir, "task": req.Task, "agent": req.Agent, "auto_mode": req.AutoMode,
 	})
 	verdict := ToolVerdict{Decision: ToolAsk, Reason: "the flow could not start"}
 	stopReason := "another flow already denied this tool"

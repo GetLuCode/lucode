@@ -43,15 +43,24 @@ func (h *Handler) flowToolGate(ctx context.Context, req sessionpkg.ToolRequest) 
 	if err != nil {
 		return flows.ToolAsk, ""
 	}
-	task := ""
+	task, agentID := "", sess.AgentID
 	if sess.CardID != "" {
 		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
 			task = card.Title
+			if agentID == "" {
+				agentID = card.AgentID
+			}
+		}
+	}
+	agent := ""
+	if agentID != "" {
+		if a, err := dbpkg.GetAgent(h.db, agentID); err == nil {
+			agent = a.Name
 		}
 	}
 	v := h.flows.DecideTool(ctx, flows.ToolRequest{
 		ProjectID: sess.ProjectID, CardID: sess.CardID, SessionID: req.SessionID, ToolUseID: req.ToolUseID,
-		ToolName: req.ToolName, WorkDir: req.WorkDir, Task: task, AutoMode: req.AutoMode, Input: req.Input,
+		ToolName: req.ToolName, WorkDir: req.WorkDir, Task: task, Agent: agent, AutoMode: req.AutoMode, Input: req.Input,
 	})
 	if v.Decision == flows.ToolAsk && v.Reason != "" {
 		log.Printf("[flows] no decision on %s of session %s: %s", req.ToolName, req.SessionID, v.Reason)
