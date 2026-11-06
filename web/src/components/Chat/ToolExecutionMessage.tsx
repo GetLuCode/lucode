@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
-import { IconHourglass, IconCheck, IconChevronDown, IconBan, IconRobot } from '@tabler/icons-react'
-import { toolDecisionLabel } from './toolDecision'
+import { IconHourglass, IconCheck, IconChevronDown } from '@tabler/icons-react'
 import './ToolExecutionMessage.css'
 
 interface ToolUsage {
@@ -17,9 +16,6 @@ interface ToolExecutionData {
   tool_use_id: string
   timestamp: string
   usage?: ToolUsage
-  decision?: string
-  decided_by?: string
-  reason?: string
 }
 
 export function ToolExecutionMessage({ content }: { content: string }) {
@@ -50,11 +46,7 @@ export function ToolExecutionMessage({ content }: { content: string }) {
         type="button"
       >
         <div className="tool-execution__icon-wrapper">
-          {toolData.decision === 'deny' ? (
-            <IconBan size={18} className="tool-execution__icon tool-execution__icon--denied" />
-          ) : toolData.decision === 'auto' ? (
-            <IconRobot size={18} className="tool-execution__icon tool-execution__icon--complete" />
-          ) : isComplete || toolData.decision ? (
+          {isComplete ? (
             <IconCheck size={18} className="tool-execution__icon tool-execution__icon--complete" />
           ) : (
             <div className="tool-execution__loading">
@@ -63,9 +55,7 @@ export function ToolExecutionMessage({ content }: { content: string }) {
           )}
         </div>
         <div className="tool-execution__tool-name">{toolName}</div>
-        {toolData.decision
-          ? <span className="tool-execution__status">{toolDecisionLabel(toolData.decision, toolData.decided_by)}</span>
-          : isComplete && <span className="tool-execution__status">Done</span>}
+        {isComplete && <span className="tool-execution__status">Done</span>}
         <IconChevronDown
           size={16}
           className={`tool-execution__chevron ${isExpanded ? 'tool-execution__chevron--expanded' : ''}`}
@@ -74,7 +64,6 @@ export function ToolExecutionMessage({ content }: { content: string }) {
 
       {isExpanded && (
         <>
-          {toolData.reason && <div className="tool-input__description">{toolData.reason}</div>}
           <ToolInputDisplay toolName={toolName} input={toolData.tool_input} />
 
           {isComplete && toolData.tool_response && (
