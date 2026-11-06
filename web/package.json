@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test tests/pendingHooks.test.ts tests/highlight.test.ts"
+    "test": "node --test tests/pendingHooks.test.ts tests/highlight.test.ts tests/hookSummary.test.ts"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",
