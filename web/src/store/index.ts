@@ -49,6 +49,7 @@ interface AppState {
   // Bumped when an agent changes a task (done/blocked/comment) so open boards refresh.
   boardVersion: number
   flowVersion: number // bumped when a flow run changes, so the views refetch
+  flowDraftChange: { flow_id: string; version: number } // an agent changed a draft, so the editor reloads it
   activeProjectId: string | null
   activeSessionId: string | null
   pendingSession: { projectId: string; model: string } | null
@@ -299,6 +300,7 @@ export const useStore = create<AppState>((set, get) => ({
   sessions: [],
   boardVersion: 0,
   flowVersion: 0,
+  flowDraftChange: { flow_id: '', version: 0 },
   activeProjectId: null,
   activeSessionId: null,
   pendingSession: null,
@@ -973,6 +975,11 @@ export const useStore = create<AppState>((set, get) => ({
             streamingThinking: { ...s.streamingThinking, [sessId]: '' },
           }))
         }
+        break
+      }
+
+      case 'flow_draft_updated': {
+        set(s => ({ flowDraftChange: { flow_id: event.flow_id, version: s.flowDraftChange.version + 1 } }))
         break
       }
 

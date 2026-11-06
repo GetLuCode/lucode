@@ -71,6 +71,15 @@ const LUCODE_TOOLS = [
   { name: 'git_diff',      desc: 'Read a diff of a repository of the project, from any runner' },
 ]
 
+// Preparing automations with the user. Stored in lucode_tools like the rest, but never on by default.
+const FLOW_TOOLS = [
+  { name: 'flow_list',    desc: 'List the flows of the project' },
+  { name: 'flow_get',     desc: 'Read the draft of a flow' },
+  { name: 'flow_catalog', desc: 'See the node types and blueprints' },
+  { name: 'flow_create',  desc: 'Create a flow as an unpublished draft' },
+  { name: 'flow_update',  desc: 'Change the draft of a flow' },
+]
+
 // Control of Microsoft Edge (CDP). Stored in lucode_tools like the rest, but never on by default.
 const BROWSER_TOOLS = [
   { name: 'browser_launch',        desc: 'Start Edge in a window or headless' },
@@ -456,6 +465,13 @@ function AgentForm({
             title="Lucode tools"
             hint="Provided by lucode so the agent can report on its task and work with other agents. Switch off what this agent should not do, for example send_to_agent to keep it from messaging others."
             tools={LUCODE_TOOLS}
+            enabled={form.lucode_tools}
+            onToggle={toggleLucodeTool}
+          />
+          <ToolGroup
+            title="Flow tools (Automate)"
+            hint="Off by default. Lets the agent read flows and change their drafts, live in the editor and without asking for approval. Only a person can publish, enable or delete a flow."
+            tools={FLOW_TOOLS}
             enabled={form.lucode_tools}
             onToggle={toggleLucodeTool}
           />

@@ -798,6 +798,11 @@ func (m *Manager) decideTool(req natspkg.PermissionRequest) (string, string, str
 	if taskmcp.IsTaskTool(toolName) {
 		return "allow", "lucode task tool", decidedByLucode
 	}
+	// The flow tools only read flows and write drafts, which run nothing until a person publishes
+	// them; asking on each edit would rule out working on a flow together, live.
+	if taskmcp.IsFlowTool(toolName) {
+		return "allow", "only writes unpublished drafts", decidedByLucode
+	}
 	// ToolSearch only loads the schemas of deferred tools (how claude finds the task tools).
 	if toolName == "ToolSearch" {
 		return "allow", "loads tool schemas only", decidedByLucode

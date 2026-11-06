@@ -133,6 +133,24 @@ JSON tal cual), `event.work_dir`, `event.task` (titulo de la tarjeta, vacio si n
 en sesiones sin tarjeta; ahi `card.*` no existe y Comment, Add tag y Notify supervisor fallan, asi que
 acaban en la persona.
 
+### Agentes que preparan flujos
+
+Las tools `flow_list`, `flow_get`, `flow_catalog`, `flow_create` y `flow_update` dejan a un agente leer
+flujos y escribir borradores de su proyecto. El Supervisor las tiene; a otro agente hay que dárselas en
+su pestana Tools, y `agent_create` no las hereda.
+
+- **Solo una persona publica.** No hay tool para publicar, activar, desactivar, borrar ni pausar, porque
+  un flujo publicado puede aprobar herramientas o fusionar ramas. Un borrador no ejecuta nada, y por eso
+  estas tools se aprueban solas y no pasan por reglas ni flujos.
+- **En vivo.** Un cambio del agente aparece en el editor abierto, sin mover la vista.
+- **Gana el ultimo que guarda (decision del usuario).** Lo que escribe el agente sustituye lo que hay en
+  el canvas, con ediciones sin guardar; y un guardado tuyo en curso puede pisar lo del agente.
+- **Aviso antes de publicar.** El estado dice `Changed by <agente>: review it before publishing` hasta
+  publicar. Tu guardado no lo quita, porque ese guardado tambien lleva el cambio del agente. No muestra
+  las diferencias con la version publicada.
+- `flow_update` rechaza nodos que el hub no conoce y grafos sin `nodes`. Lo demas puede estar a medias: el
+  agente recibe la lista de problemas que impedirian publicar.
+
 ### Merge
 
 | Opcion | Por defecto |
@@ -279,7 +297,9 @@ pestana.
 - Aprobar herramientas con un claude real y con un runner remoto: si se probo el binario real del hook
   contra un hub con NATS temporal, y su entrada imita la de claude. En particular, el campo
   `permission_mode` y que el silencio del hook llegue al clasificador salen de la documentacion.
-- En navegador: los nodos Tool requested, Match tool y Tool decision, y el tool log en vivo.
+- En navegador: los nodos Tool requested, Match tool y Tool decision, el tool log en vivo y la recarga
+  del editor cuando un agente cambia un borrador.
+- Las tools de flujos con un claude real por MCP: solo se llamo al handler del hub y se probo el hook.
 - Task finished completo con un runner remoto. Git status y Merge si se probaron con runner real por
   NATS, cada uno por separado del blueprint.
 - La app completa con WebSocket real, y el editor en movil.

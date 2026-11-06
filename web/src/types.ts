@@ -180,6 +180,7 @@ export type WSEvent =
   | { type: 'tool_execution_complete'; session_id: string; tool_use_id: string; tool_response: unknown; message_id: string }
   | { type: 'task_updated'; session_id: string; project_id: string; card_id: string }
   | { type: 'flow_updated'; project_id: string; flow_id: string; run_id: string; status: string }
+  | { type: 'flow_draft_updated'; project_id: string; flow_id: string; agent: string }
   | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown; tool_input_schema?: ToolInputField[] | null; created_at: string }
   | { type: 'hook_resolved'; session_id: string; tool_use_id: string; decision: string }
   | { type: 'turn_complete'; session_id: string; result_subtype: string; result_text: string }
@@ -454,9 +455,9 @@ export interface Alert {
 export interface FlowNode { id: string; type: string; x: number; y: number; config?: Record<string, unknown> }
 export interface FlowEdge { from: string; port: string; to: string }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[] }
-export interface FlowNodeField { name: string; label: string; kind: 'text' | 'template' | 'expr' | 'number' | 'select' | 'agent' | 'list' | 'bool'; required?: boolean; options?: string[]; default?: unknown; help?: string; min?: number; port_label?: string }
+export interface FlowNodeField { name: string; label: string; kind: 'text' | 'template' | 'expr' | 'number' | 'select' | 'agent' | 'list' | 'bool' | 'lines'; required?: boolean; options?: string[]; default?: unknown; help?: string; min?: number; port_label?: string }
 export interface FlowNodeType { type: string; title: string; category: 'trigger' | 'control' | 'action'; description: string; ports: string[] | null; fields: FlowNodeField[] | null }
-export interface Flow { id: string; project_id: string; name: string; draft: FlowGraph; published_version: number; enabled: boolean; created_at: string; updated_at: string }
+export interface Flow { id: string; project_id: string; name: string; draft: FlowGraph; published_version: number; enabled: boolean; created_at: string; updated_at: string; draft_agent?: string }
 export interface FlowProblem { node_id?: string; message: string }
 export interface FlowRun { id: string; flow_id: string; version: number; project_id: string; card_id: string; event_id: number; event: unknown; depth: number; status: string; error: string; started_at: string; finished_at: string }
 export interface FlowStep { seq: number; run_id: string; node_id: string; from_node: string; status: string; port: string; output: unknown; error: string; wait_key: string; wake_at: string; started_at: string; finished_at: string }

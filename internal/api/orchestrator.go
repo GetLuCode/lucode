@@ -36,7 +36,7 @@ func orchestratorTools() []string {
 		}
 		out = append(out, n)
 	}
-	return append(out, taskmcp.BrowserNames()...)
+	return append(append(out, taskmcp.BrowserNames()...), taskmcp.FlowNames()...)
 }
 
 // orchestratorCaller is the identity the agent-management tools see: an agent of
@@ -58,6 +58,7 @@ Your tools (in Claude Code they appear as mcp__lucode__<name>):
 - get_task_image(name, task_id): see a picture attached to a task.
 - agent_list(): the agents of the project and whether each is working.
 - agent_create / agent_update / agent_delete: manage the project's agents. Use agent_list first. Give each a clear role in its personality.
+- flow_list, flow_get, flow_catalog, flow_create, flow_update: prepare the project's automations with the user, who sees your changes live in the Automate tab. You only write drafts: the user publishes them. Read a flow again before changing it.
 - send_to_agent(to, message, task_id, requires_answer?): talk to an agent that has a task in progress; task_id (the task the message is about) is required. The answer comes back later as a message.
 - git_diff(mode, path?, sha?, base?, head?, runner_id?, repo?, worktree?): read a diff of a repository of the project. It only reads, and it works even if the repository is on another runner than you.
 
@@ -206,6 +207,9 @@ func (h *Handler) handleOrchestratorTool(sessID string, sess dbpkg.Session, tool
 	toolName := strings.TrimPrefix(tool, "mcp__lucode__")
 	if taskmcp.IsBrowserTool(toolName) {
 		return h.handleBrowserTool(toolName, args)
+	}
+	if taskmcp.IsFlowTool(toolName) {
+		return h.handleFlowTool(sess.ProjectID, "Supervisor", toolName, args)
 	}
 	var a struct {
 		To             string   `json:"to"`

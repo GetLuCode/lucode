@@ -20,7 +20,7 @@ const CATEGORY_COLOR: Record<string, [string, string]> = {
 }
 
 export interface FlowCanvasHandle {
-  load(graph: FlowGraph, readOnly: boolean): void
+  load(graph: FlowGraph, readOnly: boolean, keepView?: boolean): void
   serialize(): FlowGraph
   addNode(type: string): void
   setConfig(flowId: string, config: Record<string, unknown>): void
@@ -212,10 +212,12 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
   const byFlowId = (id: string) => (graph.current?._nodes ?? []).find((n: any) => n.properties.flowId === id)
 
   useImperativeHandle(ref, () => ({
-    load(data, readOnly) {
+    load(data, readOnly, keepView) {
       const g = graph.current
       const c = canvas.current
       if (!g || !c) return
+      // a live reload leaves the view where the person has it, unless there was nothing to see
+      const holdView = keepView && (g._nodes?.length ?? 0) > 0
       loading.current = true
       try {
         g.clear()
@@ -248,8 +250,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
       c.read_only = readOnly
       c.allow_reconnect_links = !readOnly
       c.deselectAllNodes()
-      c.ds.reset()
-      if (data.nodes.length) {
+      if (!holdView) c.ds.reset()
+      if (!holdView && data.nodes.length) {
         // the whole flow fits on opening: nothing is hidden past the edge
         const minX = Math.min(...data.nodes.map(n => n.x))
         const minY = Math.min(...data.nodes.map(n => n.y))

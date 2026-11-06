@@ -151,6 +151,8 @@ CREATE TABLE IF NOT EXISTS flow_settings (
 	if err != nil {
 		return fmt.Errorf("create flow tables: %w", err)
 	}
+	// flows.draft_agent — the agent that changed the draft since it was last published
+	db.Exec(`ALTER TABLE flows ADD COLUMN draft_agent TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -311,15 +313,18 @@ type Flow struct {
 	Enabled          bool            `json:"enabled"`
 	CreatedAt        string          `json:"created_at"`
 	UpdatedAt        string          `json:"updated_at"`
+	// DraftAgent is who to review before publishing: the agent that last changed the draft.
+	// A person's later edit does not clear it, because their save holds the agent's change too.
+	DraftAgent string `json:"draft_agent"`
 }
 
-const flowCols = `id, project_id, name, draft, published_version, enabled, created_at, updated_at`
+const flowCols = `id, project_id, name, draft, published_version, enabled, created_at, updated_at, draft_agent`
 
 func scanFlow(row interface{ Scan(...any) error }) (Flow, error) {
 	var f Flow
 	var draft string
 	var enabled int
-	err := row.Scan(&f.ID, &f.ProjectID, &f.Name, &draft, &f.PublishedVersion, &enabled, &f.CreatedAt, &f.UpdatedAt)
+	err := row.Scan(&f.ID, &f.ProjectID, &f.Name, &draft, &f.PublishedVersion, &enabled, &f.CreatedAt, &f.UpdatedAt, &f.DraftAgent)
 	f.Draft = json.RawMessage(draft)
 	f.Enabled = enabled != 0
 	return f, err
@@ -378,6 +383,12 @@ func UpdateFlowDraft(db *sql.DB, id, name string, draft json.RawMessage) error {
 	return err
 }
 
+// SaveFlowDraftByAgent stores a draft an agent wrote, and remembers who until it is published.
+func SaveFlowDraftByAgent(db *sql.DB, id, name string, draft json.RawMessage, agent string) error {
+	_, err := db.Exec(`UPDATE flows SET name=?, draft=?, draft_agent=?, updated_at=? WHERE id=?`, name, string(draft), agent, FlowNow(), id)
+	return err
+}
+
 func SetFlowEnabled(db *sql.DB, id string, enabled bool) error {
 	_, err := db.Exec(`UPDATE flows SET enabled=?, updated_at=? WHERE id=?`, boolToInt(enabled), FlowNow(), id)
 	return err
@@ -397,7 +408,7 @@ func PublishFlow(db *sql.DB, id string, graph json.RawMessage) (int, error) {
 	if _, err := tx.Exec(`INSERT INTO flow_versions (flow_id, version, graph) VALUES (?,?,?)`, id, v, string(graph)); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`UPDATE flows SET published_version=?, enabled=1, updated_at=? WHERE id=?`, v, FlowNow(), id); err != nil {
+	if _, err := tx.Exec(`UPDATE flows SET published_version=?, enabled=1, draft_agent='', updated_at=? WHERE id=?`, v, FlowNow(), id); err != nil {
 		return 0, err
 	}
 	return v, tx.Commit()

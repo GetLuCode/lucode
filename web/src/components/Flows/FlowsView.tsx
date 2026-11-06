@@ -22,6 +22,7 @@ const CATEGORIES: [string, string][] = [['trigger', 'Triggers'], ['control', 'Co
 export function FlowsView() {
   const projectId = useStore(s => s.activeProjectId)
   const flowVersion = useStore(s => s.flowVersion)
+  const flowDraftChange = useStore(s => s.flowDraftChange)
   const isMobile = useIsMobile()
   const [params, setParams] = useSearchParams()
 
@@ -44,7 +45,7 @@ export function FlowsView() {
   const canvas = useRef<FlowCanvasHandle>(null)
   // The canvas loads late (and is rebuilt if remounted), so what it should show is kept here.
   const canvasLive = useRef(false)
-  const showing = useRef<{ graph: FlowGraph; readOnly: boolean; statuses: Map<string, string> } | null>(null)
+  const showing = useRef<{ graph: FlowGraph; readOnly: boolean; statuses: Map<string, string>; keepView?: boolean } | null>(null)
   const flowRef = useRef<Flow | null>(null)
   const nameRef = useRef('')
   const nodeTypesRef = useRef(nodeTypes)
@@ -119,7 +120,7 @@ export function FlowsView() {
   const paint = useCallback(() => {
     const view = showing.current
     if (!canvasLive.current || !view) return
-    canvas.current?.load(view.graph, view.readOnly || unknownNodeTypes(view.graph, nodeTypesRef.current).length > 0)
+    canvas.current?.load(view.graph, view.readOnly || unknownNodeTypes(view.graph, nodeTypesRef.current).length > 0, view.keepView)
     canvas.current?.setStatuses(view.statuses)
   }, [])
 
@@ -196,6 +197,27 @@ export function FlowsView() {
     }, 200) // a run changes in bursts
     return () => { stale = true; clearTimeout(t) }
   }, [flowId, viewedId, flowVersion, tab]) // opening Runs refetches too, in case the socket missed an event
+
+  // Live: an agent changed a draft. The last save wins, so what it wrote replaces what is on the
+  // canvas, unsaved edits included. A run on screen stays: going back to the draft reads it again.
+  useEffect(() => {
+    if (flowDraftChange.version === 0) return
+    let stale = false
+    reloadFlows().catch(console.error)
+    if (flowRef.current?.id !== flowDraftChange.flow_id) return
+    api.getFlow(flowDraftChange.flow_id).then(fresh => {
+      if (stale || flowRef.current?.id !== fresh.id) return
+      setFlow(fresh)
+      if (stateRef.current.matches('viewingRun')) return
+      setName(fresh.name)
+      showing.current = { graph: parseFlowGraph(fresh.draft), readOnly: isMobile, statuses: new Map(), keepView: true }
+      paint()
+      canvas.current?.setProblems([])
+      send({ type: 'OPEN' })
+    }).catch(e => setNotice(String(e)))
+    return () => { stale = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowDraftChange.version])
 
   useEffect(() => {
     canvas.current?.setProblems(state.context.problems.flatMap(p => (p.node_id ? [p.node_id] : [])))
@@ -274,6 +296,7 @@ export function FlowsView() {
     : state.matches('publishing') ? 'Publishing…'
     : state.matches('dirty') ? 'Unsaved'
     : state.matches('saveFailed') ? 'Not saved'
+    : flow?.draft_agent ? `Changed by ${flow.draft_agent}: review it before publishing`
     : state.context.unpublished ? 'Saved, not published'
     : 'Saved'
 
