@@ -128,7 +128,8 @@ llegue a el, y si falla se puede conectar su salida `failed` a un Tool decision 
   dias, porque hay una por herramienta y guardan su entrada.
 
 Lee `event.tool_name`, `event.tool_input` (`event.tool_input.command`), `event.tool_input_text` (el
-JSON tal cual), `event.work_dir` y `event.task` (titulo de la tarjeta, vacio si no hay). Tambien corre
+JSON tal cual), `event.work_dir`, `event.task` (titulo de la tarjeta, vacio si no hay) y `event.agent`
+(nombre del agente, vacio si la sesion no tiene; por ejemplo `event.agent == "reviewer"` en un If). Tambien corre
 en sesiones sin tarjeta; ahi `card.*` no existe y Comment, Add tag y Notify supervisor fallan, asi que
 acaban en la persona.
 
