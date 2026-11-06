@@ -209,7 +209,7 @@ func (h *Handler) taskCreate(sessID string, caller dbpkg.Session, args json.RawM
 	}
 	card.ListID = list.ID
 	card.Position = h.endOf(card, list.ID)
-	if err := dbpkg.InsertKanbanCard(h.db, card); err != nil {
+	if err := dbpkg.InsertKanbanCardCause(h.db, card, dbpkg.EventCause{Source: "agent"}); err != nil {
 		return "", err
 	}
 	card, _ = dbpkg.GetKanbanCard(h.db, id)
@@ -318,7 +318,7 @@ func (h *Handler) taskUpdate(sessID string, caller dbpkg.Session, args json.RawM
 	if len(changed) == 0 {
 		return "", errors.New("nothing to change: give at least one field to update")
 	}
-	if err := dbpkg.UpdateKanbanCard(h.db, card); err != nil {
+	if err := dbpkg.UpdateKanbanCardCause(h.db, card, dbpkg.EventCause{Source: "agent"}); err != nil {
 		return "", err
 	}
 	card, _ = dbpkg.GetKanbanCard(h.db, card.ID)

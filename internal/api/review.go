@@ -176,23 +176,12 @@ func (h *Handler) mergeCardReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), code)
 		return
 	}
-	warnings := res.Warnings
-	if res.WorktreeRemoved {
-		// the agent's directory is gone: its chat can no longer start claude there
-		_ = dbpkg.MarkCardSessionsWorktreeRemoved(h.db, card.ID)
-	}
-	_ = dbpkg.DeleteCardReview(h.db, card.ID)
-	_ = dbpkg.InsertCardComment(h.db, dbpkg.CardComment{
-		ID: uuid.New().String(), CardID: card.ID, Author: "lucode", Kind: "comment",
-		Body: fmt.Sprintf("Merged %s into %s.", rv.Branch, res.Base),
-	})
-	moved, err := h.moveCardToKind(card, dbpkg.KanbanDone)
+	moved, err := h.finishMerge(card, rv, res, true, dbpkg.EventCause{Source: "user"})
 	if err != nil {
 		http.Error(w, "merged, but could not move the task to Done: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.releaseDependents(moved)
-	jsonResp(w, http.StatusOK, map[string]any{"card": moved, "warnings": warnings})
+	jsonResp(w, http.StatusOK, map[string]any{"card": moved, "warnings": res.Warnings})
 }
 
 // resolveCardReview sends the task back to its agent, in the same session, to
@@ -241,21 +230,3 @@ func (h *Handler) resolveCardReview(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]any{"card": moved})
 }
 
-// reviewOnDone decides where a task that calls task_done goes. It returns true, and
-// remembers the branch, when the agent left unmerged work in a git worktree.
-func (h *Handler) reviewOnDone(sessID string, card dbpkg.KanbanCard) bool {
-	rv, ok := h.resolveReview(sessID, card.ID)
-	if !ok {
-		return false
-	}
-	if st := h.reviewStatusOf(rv); st.Error != "" || st.Merged {
-		return false
-	}
-	if err := dbpkg.EnsureReviewList(h.db, card.ProjectID); err != nil {
-		return false
-	}
-	if _, err := dbpkg.FindKanbanListByKind(h.db, card.ProjectID, dbpkg.KanbanReview); err != nil {
-		return false
-	}
-	return dbpkg.SaveCardReview(h.db, rv) == nil
-}

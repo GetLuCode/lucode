@@ -324,6 +324,7 @@ func (h *Handler) notifySupervisor(agent dbpkg.Agent, card dbpkg.KanbanCard, tex
 // (today: a session that cannot be resumed) is recorded on the task, which moves
 // to Blocked, and the supervising agent is told. There is no automatic retry.
 func (h *Handler) HandleTurnFailed(sessID, code, message string) {
+	h.recordTurnEvent(sessID, dbpkg.EventTurnFailed, map[string]any{"code": code, "message": message})
 	sess, err := dbpkg.GetSession(h.db, sessID)
 	if err != nil || sess.CardID == "" {
 		return

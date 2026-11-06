@@ -1836,6 +1836,11 @@ func scanKanbanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
 const kanbanCardCols = `id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, started_at, finished_at, position, archived, parent_id, created_at, updated_at`
 
 func InsertKanbanCard(db *sql.DB, c KanbanCard) error {
+	return InsertKanbanCardCause(db, c, EventCause{Source: "system"})
+}
+
+// InsertKanbanCardCause creates a card and logs card.created in the same transaction.
+func InsertKanbanCardCause(db *sql.DB, c KanbanCard, cause EventCause) error {
 	tags, _ := json.Marshal(c.Tags)
 	depends, _ := json.Marshal(c.DependsOn)
 	// New cards go on top of their list (most recent first): one before the
@@ -1846,13 +1851,26 @@ func InsertKanbanCard(db *sql.DB, c KanbanCard) error {
 	} else {
 		c.Position = 0
 	}
-	_, err := db.Exec(
+	var kind string
+	db.QueryRow(`SELECT kind FROM kanban_lists WHERE id=?`, c.ListID).Scan(&kind)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
 		`INSERT INTO kanban_cards (id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, position, archived, parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.ListID, c.ProjectID, c.Title, c.Description, c.CardType,
 		string(tags), c.AgentID, string(depends),
 		c.StartDate, c.EndDate, c.Position, boolToInt(c.Archived), c.ParentID,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	payload := map[string]any{"to_list": c.ListID, "to_kind": kind}
+	if err := insertFlowEvent(tx, c.ProjectID, EventCardCreated, c.ID, "", payload, cause, cause.Depth); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func ListKanbanCards(db *sql.DB, projectID string, includeArchived bool) ([]KanbanCard, error) {
@@ -1883,10 +1901,30 @@ func GetKanbanCard(db *sql.DB, id string) (KanbanCard, error) {
 }
 
 func UpdateKanbanCard(db *sql.DB, c KanbanCard) error {
+	return UpdateKanbanCardCause(db, c, EventCause{Source: "system"})
+}
+
+// UpdateKanbanCardCause saves a card. A change of list is logged as card.moved in the
+// same transaction: this is the one place every move of a card goes through.
+func UpdateKanbanCardCause(db *sql.DB, c KanbanCard, cause EventCause) error {
 	tags, _ := json.Marshal(c.Tags)
 	depends, _ := json.Marshal(c.DependsOn)
+	var oldList, projectID, fromKind, toKind string
+	db.QueryRow(`SELECT list_id, project_id FROM kanban_cards WHERE id=?`, c.ID).Scan(&oldList, &projectID)
+	moved := oldList != "" && oldList != c.ListID
+	depth := cause.Depth
+	if moved {
+		db.QueryRow(`SELECT kind FROM kanban_lists WHERE id=?`, oldList).Scan(&fromKind)
+		db.QueryRow(`SELECT kind FROM kanban_lists WHERE id=?`, c.ListID).Scan(&toKind)
+		depth = inheritedDepth(db, c.ID, cause)
+	}
 	stampKanbanCardDates(db, &c)
-	_, err := db.Exec(`UPDATE kanban_cards SET
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE kanban_cards SET
 		list_id=?, title=?, description=?, card_type=?, tags=?, agent_id=?,
 		depends_on=?, start_date=?, end_date=?, started_at=?, finished_at=?, position=?, archived=?, parent_id=?,
 		updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -1894,8 +1932,16 @@ func UpdateKanbanCard(db *sql.DB, c KanbanCard) error {
 		c.ListID, c.Title, c.Description, c.CardType, string(tags), c.AgentID,
 		string(depends), c.StartDate, c.EndDate, c.StartedAt, c.FinishedAt, c.Position, boolToInt(c.Archived),
 		c.ParentID, c.ID,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	if moved {
+		payload := map[string]any{"from_list": oldList, "from_kind": fromKind, "to_list": c.ListID, "to_kind": toKind}
+		if err := insertFlowEvent(tx, projectID, EventCardMoved, c.ID, "", payload, cause, depth); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // stampKanbanCardDates keeps the real dates: entering an In Progress list starts the

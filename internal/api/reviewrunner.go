@@ -22,6 +22,7 @@ import (
 //
 //	POST /api/review/status   body reviewRef            -> ReviewStatus
 //	POST /api/review/merge    body mergeRequest         -> mergeResult (or an error text + status)
+//	POST /api/review/merge-options body mergeOptionsRequest -> the same, with a Merge node's choices
 //	POST /api/review/repo     body {"path": "<dir>"}    -> {"repo": "<main checkout>"}
 //
 // The hub only keeps the state (the card, its Review row, the comments, the closed
@@ -53,10 +54,57 @@ type mergeResult struct {
 	WorktreeRemoved bool     `json:"worktree_removed"` // the agent's directory is gone
 }
 
+// mergeOptions are what a Merge node can choose. The zero value is what the Review button does.
+// It has its own route so a runner that predates it answers 404, instead of merging and
+// ignoring the options, which would delete a worktree someone asked to keep.
+type mergeOptions struct {
+	KeepWorktree bool   `json:"keep_worktree,omitempty"`
+	KeepBranch   bool   `json:"keep_branch,omitempty"`
+	Strategy     string `json:"strategy,omitempty"` // "" (a merge commit), "squash" or "ff-only"
+	Message      string `json:"message,omitempty"`  // "" = Merge task: <title>
+}
+
+type mergeOptionsRequest struct {
+	reviewRef
+	Title   string       `json:"title"`
+	Options mergeOptions `json:"options"`
+}
+
 // mergeReviewBranch merges the task's branch into the main checkout's branch and
 // removes the worktree and the branch. It refuses (409) when git sees conflicts or the
 // worktree has uncommitted work. It runs where the repository is.
 func mergeReviewBranch(rv dbpkg.CardReview, title string) (mergeResult, int, error) {
+	return mergeWithOptions(rv, title, mergeOptions{})
+}
+
+// runMerge does the git merge itself. Anything it refuses leaves the checkout as it was.
+func runMerge(rv dbpkg.CardReview, message, strategy string) error {
+	switch strategy {
+	case "":
+		if _, err := gitIn(rv.RepoPath, "merge", "--no-ff", "-m", message, rv.Branch); err != nil {
+			_, _ = gitIn(rv.RepoPath, "merge", "--abort")
+			return errors.New("git merge failed: " + err.Error())
+		}
+	case "squash":
+		if _, err := gitIn(rv.RepoPath, "merge", "--squash", rv.Branch); err != nil {
+			_, _ = gitIn(rv.RepoPath, "reset", "--merge") // a squash leaves no merge to abort
+			return errors.New("git merge --squash failed: " + err.Error())
+		}
+		if _, err := gitIn(rv.RepoPath, "-c", "user.useConfigOnly=false", "commit", "-m", message); err != nil {
+			_, _ = gitIn(rv.RepoPath, "reset", "--merge")
+			return errors.New("could not commit the squash: " + err.Error())
+		}
+	case "ff-only":
+		if _, err := gitIn(rv.RepoPath, "merge", "--ff-only", rv.Branch); err != nil {
+			return errors.New("cannot fast-forward: the base branch moved. " + err.Error())
+		}
+	default:
+		return errors.New("unknown merge strategy " + strategy)
+	}
+	return nil
+}
+
+func mergeWithOptions(rv dbpkg.CardReview, title string, opts mergeOptions) (mergeResult, int, error) {
 	st := reviewStatus(rv)
 	switch {
 	case st.Error != "":
@@ -68,12 +116,15 @@ func mergeReviewBranch(rv dbpkg.CardReview, title string) (mergeResult, int, err
 	}
 	res := mergeResult{Base: st.Base, Warnings: []string{}}
 	if st.Ahead > 0 {
-		if _, err := gitIn(rv.RepoPath, "merge", "--no-ff", "-m", "Merge task: "+title, rv.Branch); err != nil {
-			_, _ = gitIn(rv.RepoPath, "merge", "--abort")
-			return mergeResult{}, http.StatusConflict, errors.New("git merge failed: " + err.Error())
+		message := opts.Message
+		if strings.TrimSpace(message) == "" {
+			message = "Merge task: " + title
+		}
+		if err := runMerge(rv, message, opts.Strategy); err != nil {
+			return mergeResult{}, http.StatusConflict, err
 		}
 	}
-	if _, err := os.Stat(rv.WorktreePath); err == nil {
+	if _, err := os.Stat(rv.WorktreePath); err == nil && !opts.KeepWorktree {
 		// claude locks the worktrees of its sessions and never unlocks them, and git
 		// will not remove a locked worktree with a single --force. The work is merged
 		// by now, so the lock has nothing left to protect. Not being locked is an
@@ -86,8 +137,15 @@ func mergeReviewBranch(rv dbpkg.CardReview, title string) (mergeResult, int, err
 	if _, err := os.Stat(rv.WorktreePath); os.IsNotExist(err) {
 		res.WorktreeRemoved = true
 	}
-	if _, err := gitIn(rv.RepoPath, "branch", "-d", rv.Branch); err != nil {
-		res.Warnings = append(res.Warnings, "could not delete the branch: "+err.Error())
+	if !opts.KeepBranch {
+		// after a squash git cannot see the branch as merged, though its work is in
+		deleteFlag := "-d"
+		if opts.Strategy == "squash" {
+			deleteFlag = "-D"
+		}
+		if _, err := gitIn(rv.RepoPath, "branch", deleteFlag, rv.Branch); err != nil {
+			res.Warnings = append(res.Warnings, "could not delete the branch: "+err.Error())
+		}
 	}
 	return res, http.StatusOK, nil
 }
@@ -119,6 +177,20 @@ func (h *Handler) reviewMergeRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, code, err := mergeReviewBranch(req.review(), req.Title)
+	if err != nil {
+		http.Error(w, err.Error(), code)
+		return
+	}
+	jsonResp(w, http.StatusOK, res)
+}
+
+func (h *Handler) reviewMergeOptionsRPC(w http.ResponseWriter, r *http.Request) {
+	var req mergeOptionsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res, code, err := mergeWithOptions(req.review(), req.Title, req.Options)
 	if err != nil {
 		http.Error(w, err.Error(), code)
 		return

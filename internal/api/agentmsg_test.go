@@ -175,7 +175,7 @@ func TestSupervisorIsToldWhenSubordinateIsDoneOrBlocked(t *testing.T) {
 	if _, err := h.HandleTaskTool(dev.sess.ID, "task_done", []byte(`{"summary":"shipped it"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.opts) != 1 || c.opts[0].SessionID != lead.sess.ID || !strings.Contains(c.opts[0].Message, "is done: shipped it") {
+	if len(c.opts) != 1 || c.opts[0].SessionID != lead.sess.ID || !strings.Contains(c.opts[0].Message, "is done and waits in Review: shipped it") {
 		t.Fatalf("the supervisor should hear about the completion, got %+v", c.opts)
 	}
 

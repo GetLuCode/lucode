@@ -20,6 +20,7 @@ export function AppRoutes() {
         <Route path="/projects/:projectId/agents" element={<App />} />
         <Route path="/projects/:projectId/kanban" element={<App />} />
         <Route path="/projects/:projectId/running" element={<App />} />
+        <Route path="/projects/:projectId/flows" element={<App />} />
         <Route path="/projects/:projectId/runners" element={<App />} />
         <Route path="/projects/:projectId/runners/:runnerId" element={<App />} />
         <Route path="/projects/:projectId/agent" element={<App />} />

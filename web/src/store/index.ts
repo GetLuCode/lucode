@@ -38,6 +38,7 @@ interface AppState {
   sessions: Session[]
   // Bumped when an agent changes a task (done/blocked/comment) so open boards refresh.
   boardVersion: number
+  flowVersion: number // bumped when a flow run changes, so the views refetch
   activeProjectId: string | null
   activeSessionId: string | null
   pendingSession: { projectId: string; model: string } | null
@@ -282,6 +283,7 @@ export const useStore = create<AppState>((set, get) => ({
   projects: [],
   sessions: [],
   boardVersion: 0,
+  flowVersion: 0,
   activeProjectId: null,
   activeSessionId: null,
   pendingSession: null,
@@ -943,6 +945,11 @@ export const useStore = create<AppState>((set, get) => ({
             streamingThinking: { ...s.streamingThinking, [sessId]: '' },
           }))
         }
+        break
+      }
+
+      case 'flow_updated': {
+        set(s => ({ flowVersion: s.flowVersion + 1 }))
         break
       }
 

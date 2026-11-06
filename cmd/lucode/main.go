@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	_ "embed"
 	"flag"
 	"fmt"
@@ -47,8 +48,8 @@ func main() {
 	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "External NATS server: host, host:port or a full URL")
 	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
 	natsCreds := flag.String("nats-creds", "", "Path to NATS credentials file (.creds)")
-	aiAPIURL  := flag.String("aiapi-url", "http://localhost:8091", "URL of the aiapi service (Claude CLI + Ollama + Anthropic executor)")
-	authURL   := flag.String("auth-url", "http://localhost:8092", "URL of the centralized auth service")
+	aiAPIURL := flag.String("aiapi-url", "http://localhost:8091", "URL of the aiapi service (Claude CLI + Ollama + Anthropic executor)")
+	authURL := flag.String("auth-url", "http://localhost:8092", "URL of the centralized auth service")
 	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
@@ -136,8 +137,12 @@ func main() {
 	handler.SetHubOnly(*hubOnly)
 	bus.OnTaskTool = handler.HandleTaskTool
 	bus.OwnsSession = func(id string) bool { _, err := dbpkg.GetSession(db, id); return err == nil }
-	manager.OnTurnEnd = handler.DrainInbox         // deliver messages other agents queued
+	manager.OnTurnEnd = func(sessID string) {
+		handler.DrainInbox(sessID) // deliver messages other agents queued
+		handler.FlowTurnEnded(sessID)
+	}
 	manager.OnTurnFailed = handler.HandleTurnFailed // unresumable sessions etc.
+	handler.StartFlows(context.Background())
 	handler.SetAuthURL(*authURL)
 	handler.SetAIAPIURL(*aiAPIURL)
 	if *minimaxSubKey != "" {

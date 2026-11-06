@@ -550,6 +550,10 @@ CREATE TABLE IF NOT EXISTS card_reviews (
 		return fmt.Errorf("create card_reviews: %w", err)
 	}
 
+	if err := migrateFlows(db); err != nil {
+		return err
+	}
+
 	// Column additions for tables created above (idempotent).
 	// card_reviews.runner_id — the runner whose disk holds the repository and worktree;
 	// git runs there, never on the hub. "" = this instance (legacy rows)

@@ -1,3 +1,4 @@
+import { buildCardMachine, canMoveCard, cardState, type CardMachine } from '../../lib/cardMachine'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -813,6 +814,10 @@ export function KanbanView() {
   const navigate = useNavigate()
 
   const [lists, setLists] = useState<KanbanList[]>([])
+  const cardMachine = useRef<CardMachine | null>(null)
+  useEffect(() => {
+    api.getCardMachine().then(m => { cardMachine.current = buildCardMachine(m) }).catch(console.error)
+  }, [])
   const [cards, setCards] = useState<KanbanCard[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [showArchived, setShowArchived] = useState(false)
@@ -984,6 +989,18 @@ export function KanbanView() {
     if (!cid) return
     dragCardId.current = null
     dragFromListId.current = null
+
+    // A move the card's lifecycle already refuses never leaves the browser. What only the hub
+    // knows (dependencies, an unanswered blocker) counts as fine here: the hub still decides.
+    const dragged = cards.find(c => c.id === cid)
+    if (dragged && dragged.list_id !== toListId && cardMachine.current) {
+      const from = cardState(lists.find(l => l.id === dragged.list_id)?.kind)
+      const to = cardState(lists.find(l => l.id === toListId)?.kind)
+      if (!canMoveCard(cardMachine.current, from, to, { hasAgent: !!dragged.agent_id, depsDone: true, blockerAnswered: true })) {
+        window.alert('Assign an agent to this task before moving it to In Progress.')
+        return
+      }
+    }
 
     // reorder locally first for snappy feel
     setCards(prev => {
