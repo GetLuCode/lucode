@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-11-05T09:02:10.535Z",
         "reason": "assistant: pre-existing .kf-search width transition (32px icon expanding to a 280px field), a single small element, not part of this change; user did not confirm"
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "src/components/Settings/SettingsModal.css"
+        ],
+        "createdAt": "2026-11-06T10:53:49.821Z",
+        "reason": "Claude triage: only match in the file is the account usage meter fill, a determinate 6px bar in an overflow-hidden track; animating width is the literal meaning of the meter. Pre-existing, not part of the approval card work; user did not confirm"
       }
     ]
   }

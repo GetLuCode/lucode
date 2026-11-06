@@ -1,5 +1,7 @@
 // Shared tool input renderers for hook approval modals and messages
+import { IconEye, IconGitCompare } from '@tabler/icons-react'
 import { useStore } from '../../store'
+import { splitPath } from './hookSummary'
 
 export function ToolInputRenderer({ toolName, input }: { toolName: string; input: unknown }) {
   const data = input as Record<string, unknown>
@@ -65,6 +67,7 @@ function WriteInput({ data }: { data: Record<string, unknown> }) {
         type="button"
         onClick={() => openFilePreview({ filePath, lang: detectLanguage(filePath), mode: 'content', content })}
       >
+        <IconEye size={13} aria-hidden="true" />
         View content
       </button>
     </div>
@@ -91,6 +94,7 @@ function EditInput({ data }: { data: Record<string, unknown> }) {
     <div className="hook-input__fields">
       <FilePath path={filePath} />
       <button className="hook-input__preview-btn" type="button" onClick={handleOpen}>
+        <IconGitCompare size={13} aria-hidden="true" />
         View modifications
       </button>
     </div>
@@ -114,10 +118,7 @@ function SkillInput({ data }: { data: Record<string, unknown> }) {
   const args  = String(data.args  ?? '')
   return (
     <div className="hook-input__skill">
-      <div className="hook-input__skill-header">
-        <span className="hook-input__skill-glyph">◈</span>
-        <span className="hook-input__skill-name">{skill}</span>
-      </div>
+      <span className="hook-input__skill-name">{skill}</span>
       {args && <p className="hook-input__skill-args">{args}</p>}
     </div>
   )
@@ -128,12 +129,10 @@ function JsonFallback({ input }: { input: unknown }) {
 }
 
 export function FilePath({ path }: { path: string }) {
-  const parts = path.split('/')
-  const file  = parts.pop() ?? ''
-  const dir   = parts.join('/') || '/'
+  const { dir, file } = splitPath(path)
   return (
     <div className="hook-input__filepath">
-      <span className="hook-input__filepath-dir">{dir}/</span>
+      <span className="hook-input__filepath-dir">{dir}</span>
       <span className="hook-input__filepath-file">{file}</span>
     </div>
   )
