@@ -112,6 +112,9 @@ func TestLogHasParentsRefsAndFiles(t *testing.T) {
 	if head.Subject != "rename it" || head.FilesTotal != 1 || head.Files[0].Status != "R" || head.Files[0].Path != "c.txt" || head.Files[0].OrigPath != "a.txt" {
 		t.Fatalf("head: %+v", head)
 	}
+	if !strings.Contains(head.Email, "@") || !strings.Contains(head.CommitterEmail, "@") {
+		t.Fatalf("the addresses the avatars come from: %+v", head)
+	}
 	if len(head.Refs) == 0 || head.Refs[0].Name != "main" || !head.Refs[0].Head || head.Refs[0].Kind != "branch" {
 		t.Fatalf("refs: %+v", head.Refs)
 	}
@@ -281,7 +284,7 @@ func TestStashRoundTrip(t *testing.T) {
 	mustAction(t, repo, gitActionRequest{Action: "stash_push", Message: "wip", Include: true})
 
 	ov := mustOverview(t, repo)
-	if len(ov.Changes) != 0 || len(ov.Stashes) != 1 || !strings.Contains(ov.Stashes[0].Message, "wip") {
+	if len(ov.Changes) != 0 || len(ov.Stashes) != 1 || !strings.Contains(ov.Stashes[0].Message, "wip") || ov.Stashes[0].Email != "t@t" {
 		t.Fatalf("%+v %+v", ov.Changes, ov.Stashes)
 	}
 	files, err := gitStashShow(repo, "stash@{0}")
@@ -377,6 +380,9 @@ func TestWorktreesSayWhereTheirWorkLanded(t *testing.T) {
 	w = res.Worktrees[1]
 	if w.Merge == nil || w.Merge.Kind != "merge" || w.Merge.Subject != "Merge task: Add b" || w.Merge.Into != "main" {
 		t.Fatalf("the merge commit, not the commits after it: %+v", w.Merge)
+	}
+	if !strings.Contains(w.Email, "@") || !strings.Contains(w.Merge.Email, "@") {
+		t.Fatalf("the addresses the avatars come from: %+v %+v", w, w.Merge)
 	}
 	if w.Dirty != 1 || w.Ahead != 0 {
 		t.Fatalf("%+v", w)

@@ -37,7 +37,8 @@ export function StashPane({ ui, stash }: { ui: GitUI; stash: GitStash }) {
           <div className="gs-meta">
             <span className="git-mono">{stash.ref}</span>
             <Sha sha={stash.sha} />
-            <span className="git-dim" title={fullDate(stash.at)}>{ago(stash.at)} ago, by {stash.author}</span>
+            <span className="git-dim" title={fullDate(stash.at)}>{ago(stash.at)} ago, by</span>
+            <span className="git-dim git-byline"><Avatar name={stash.author} email={stash.email} size={15} />{stash.author}</span>
           </div>
           <div className="gs-actions">
             <button className="git-btn git-btn--primary" disabled={!!ui.busy} title="Apply it and delete the stash" onClick={() => void ui.act('stash_pop', { stash: stash.ref })}>Pop</button>

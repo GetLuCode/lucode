@@ -197,6 +197,7 @@ type GitStash struct {
 	Message string `json:"message"`
 	At      int64  `json:"at"`
 	Author  string `json:"author"`
+	Email   string `json:"email,omitempty"`
 }
 
 type GitWorktreeBrief struct {
@@ -448,17 +449,17 @@ func parseTrack(s string, b *GitBranch) {
 
 func gitStashes(dir string) []GitStash {
 	res := []GitStash{}
-	out, err := gitRead(dir, "stash", "list", "--format=%gd%x1f%H%x1f%gs%x1f%at%x1f%an")
+	out, err := gitRead(dir, "stash", "list", "--format=%gd%x1f%H%x1f%gs%x1f%at%x1f%an%x1f%ae")
 	if err != nil {
 		return res
 	}
 	for _, l := range strings.Split(out, "\n") {
 		f := strings.Split(strings.TrimRight(l, "\r"), "\x1f")
-		if len(f) < 5 {
+		if len(f) < 6 {
 			continue
 		}
 		at, _ := strconv.ParseInt(f[3], 10, 64)
-		res = append(res, GitStash{Ref: f[0], SHA: f[1], Message: f[2], At: at, Author: f[4]})
+		res = append(res, GitStash{Ref: f[0], SHA: f[1], Message: f[2], At: at, Author: f[4], Email: f[5]})
 	}
 	return res
 }
@@ -527,23 +528,25 @@ type GitFileStat struct {
 }
 
 type GitCommit struct {
-	SHA        string        `json:"sha"`
-	Parents    []string      `json:"parents"`
-	Author     string        `json:"author"`
-	Email      string        `json:"email"`
-	At         int64         `json:"at"`
-	Committer  string        `json:"committer"`
-	CommitAt   int64         `json:"commit_at"`
-	Refs       []GitRef      `json:"refs"`
-	Subject    string        `json:"subject"`
-	Body       string        `json:"body,omitempty"`
-	Files      []GitFileStat `json:"files"`
-	FilesTotal int           `json:"files_total"`
-	Added      int           `json:"added"`
-	Removed    int           `json:"removed"`
+	SHA       string   `json:"sha"`
+	Parents   []string `json:"parents"`
+	Author    string   `json:"author"`
+	Email     string   `json:"email"`
+	At        int64    `json:"at"`
+	Committer string   `json:"committer"`
+	// CommitterEmail is the address that goes with Committer.
+	CommitterEmail string        `json:"committer_email,omitempty"`
+	CommitAt       int64         `json:"commit_at"`
+	Refs           []GitRef      `json:"refs"`
+	Subject        string        `json:"subject"`
+	Body           string        `json:"body,omitempty"`
+	Files          []GitFileStat `json:"files"`
+	FilesTotal     int           `json:"files_total"`
+	Added          int           `json:"added"`
+	Removed        int           `json:"removed"`
 }
 
-const gitLogFormat = "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%s%x1f%b%x1f"
+const gitLogFormat = "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%s%x1f%b%x1f%ce%x1f"
 
 // parseDecoration reads %D with --decorate=full.
 func parseDecoration(d string) []GitRef {
@@ -634,8 +637,8 @@ func parseStats(text string, fileCap int) (files []GitFileStat, total, added, re
 func parseLog(out string, fileCap int) []GitCommit {
 	commits := []GitCommit{}
 	for _, rec := range strings.Split(out, "\x1e") {
-		f := strings.SplitN(rec, "\x1f", 11)
-		if len(f) < 11 {
+		f := strings.SplitN(rec, "\x1f", 12)
+		if len(f) < 12 {
 			continue
 		}
 		at, _ := strconv.ParseInt(f[4], 10, 64)
@@ -643,9 +646,9 @@ func parseLog(out string, fileCap int) []GitCommit {
 		c := GitCommit{
 			SHA: f[0], Parents: strings.Fields(f[1]), Author: f[2], Email: f[3], At: at,
 			Committer: f[5], CommitAt: cat, Refs: parseDecoration(f[7]), Subject: f[8],
-			Body: strings.TrimSpace(f[9]),
+			Body: strings.TrimSpace(f[9]), CommitterEmail: f[10],
 		}
-		c.Files, c.FilesTotal, c.Added, c.Removed = parseStats(f[10], fileCap)
+		c.Files, c.FilesTotal, c.Added, c.Removed = parseStats(f[11], fileCap)
 		commits = append(commits, c)
 	}
 	return commits
@@ -928,6 +931,7 @@ type GitMergeRef struct {
 	SHA     string `json:"sha,omitempty"`
 	Subject string `json:"subject,omitempty"`
 	Author  string `json:"author,omitempty"`
+	Email   string `json:"email,omitempty"`
 	At      int64  `json:"at,omitempty"`
 	// merge: a merge commit brought it in. contained: the tip is on the main line itself (a
 	// fast-forward, or a branch with no commits of its own). squash: found by its message only.
@@ -949,6 +953,7 @@ type GitWorktree struct {
 	Behind     int          `json:"behind"`            // commits of the main branch it lacks
 	Subject    string       `json:"subject,omitempty"`
 	Author     string       `json:"author,omitempty"`
+	Email      string       `json:"email,omitempty"`
 	At         int64        `json:"at,omitempty"`
 	Merge      *GitMergeRef `json:"merge,omitempty"`
 	Task       *gitTaskLink `json:"task,omitempty"` // only the hub knows this
@@ -960,6 +965,7 @@ type GitMainCommit struct {
 	SHA     string `json:"sha"`
 	Subject string `json:"subject"`
 	Author  string `json:"author"`
+	Email   string `json:"email,omitempty"`
 	At      int64  `json:"at"`
 	Merge   bool   `json:"merge"` // has two parents
 }
@@ -1002,10 +1008,10 @@ func findMerge(repo, base, tip string) *GitMergeRef {
 		return nil
 	}
 	ref := &GitMergeRef{Into: base, SHA: found, Kind: kind}
-	if s, err := gitRead(repo, "show", "-s", "--format=%s%x1f%an%x1f%at", found); err == nil {
-		if f := strings.Split(strings.TrimSpace(s), "\x1f"); len(f) == 3 {
-			ref.Subject, ref.Author = f[0], f[1]
-			ref.At, _ = strconv.ParseInt(f[2], 10, 64)
+	if s, err := gitRead(repo, "show", "-s", "--format=%s%x1f%an%x1f%ae%x1f%at", found); err == nil {
+		if f := strings.Split(strings.TrimSpace(s), "\x1f"); len(f) == 4 {
+			ref.Subject, ref.Author, ref.Email = f[0], f[1], f[2]
+			ref.At, _ = strconv.ParseInt(f[3], 10, 64)
 		}
 	}
 	return ref
@@ -1031,10 +1037,10 @@ func gitWorktrees(repo string) (GitWorktrees, error) {
 			}
 		}
 		if wt.head != "" {
-			if s, err := gitRead(repo, "show", "-s", "--format=%s%x1f%an%x1f%at", wt.head); err == nil {
-				if f := strings.Split(strings.TrimSpace(s), "\x1f"); len(f) == 3 {
-					w.Subject, w.Author = f[0], f[1]
-					w.At, _ = strconv.ParseInt(f[2], 10, 64)
+			if s, err := gitRead(repo, "show", "-s", "--format=%s%x1f%an%x1f%ae%x1f%at", wt.head); err == nil {
+				if f := strings.Split(strings.TrimSpace(s), "\x1f"); len(f) == 4 {
+					w.Subject, w.Author, w.Email = f[0], f[1], f[2]
+					w.At, _ = strconv.ParseInt(f[3], 10, 64)
 				}
 			}
 			if res.Main != "" && !w.Main {
@@ -1066,22 +1072,22 @@ func gitMainMerges(repo string, refs ...string) []GitMainCommit {
 			continue
 		}
 		seen[ref] = true
-		out, err := gitRead(repo, "log", "--first-parent", "-n", "1000", "--format=%H%x1f%P%x1f%an%x1f%at%x1f%s", ref, "--")
+		out, err := gitRead(repo, "log", "--first-parent", "-n", "1000", "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s", ref, "--")
 		if err != nil {
 			continue
 		}
 		for _, l := range strings.Split(out, "\n") {
-			f := strings.SplitN(strings.TrimRight(l, "\r"), "\x1f", 5)
-			if len(f) < 5 || seen[f[0]] {
+			f := strings.SplitN(strings.TrimRight(l, "\r"), "\x1f", 6)
+			if len(f) < 6 || seen[f[0]] {
 				continue
 			}
 			merge := len(strings.Fields(f[1])) > 1
-			if !merge && !strings.HasPrefix(f[4], "Merge ") {
+			if !merge && !strings.HasPrefix(f[5], "Merge ") {
 				continue // a squash from a task keeps "Merge task:" unless a flow renamed it
 			}
 			seen[f[0]] = true
-			at, _ := strconv.ParseInt(f[3], 10, 64)
-			res = append(res, GitMainCommit{SHA: f[0], Subject: f[4], Author: f[2], At: at, Merge: merge})
+			at, _ := strconv.ParseInt(f[4], 10, 64)
+			res = append(res, GitMainCommit{SHA: f[0], Subject: f[5], Author: f[2], Email: f[3], At: at, Merge: merge})
 		}
 	}
 	sort.SliceStable(res, func(i, j int) bool { return res[i].At > res[j].At })
