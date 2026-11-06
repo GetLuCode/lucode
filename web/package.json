@@ -13,7 +13,7 @@
     "dev": "node -e \"require('fs').rmSync('.parcel-cache',{recursive:true,force:true})\" && node --no-warnings --unhandled-rejections=warn ./node_modules/parcel/lib/bin.js index.html --port 5173",
     "build": "tsc -b && parcel build index.html --dist-dir dist",
     "lint": "eslint .",
-    "test": "node --test tests/pendingHooks.test.ts tests/highlight.test.ts tests/commandLine.test.ts tests/tokenPricing.test.ts tests/toolCosts.test.ts"
+    "test": "node --test tests/pendingHooks.test.ts tests/highlight.test.ts tests/commandLine.test.ts tests/tokenPricing.test.ts tests/toolCosts.test.ts tests/flows.test.ts tests/git.test.ts"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",
@@ -22,12 +22,14 @@
     "@radix-ui/react-select": "^2.4.1",
     "@tabler/icons-react": "^3.41.1",
     "@tanstack/react-virtual": "^3.13.23",
+    "@xstate/react": "6.1.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "dexie": "^4.4.2",
     "dompurify": "3.4.17",
     "framer-motion": "^12.38.0",
     "highlight.js": "^11.12.0",
+    "litegraph.js": "0.7.18",
     "marked": "^17.0.5",
     "mermaid": "^11.12.0",
     "monaco-editor": "^0.57.0",
@@ -41,6 +43,7 @@
     "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.3.4",
     "vosk-browser": "0.0.8",
+    "xstate": "5.33.3",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

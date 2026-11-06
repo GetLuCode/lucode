@@ -4,9 +4,10 @@ import { IconDownload, IconEdit, IconTrash } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { AgentAvatar } from '../Agents/AgentAvatar'
+import '../Flows/Flows.css'
 import { ContextDetailModal } from '../Chat/ContextBar'
 import { estimateUsageCost, formatCost, formatTokens } from '../../lib/tokenPricing'
-import type { Agent, ContextUsage, KanbanCard, Session } from '../../types'
+import type { ActiveFlowRun, Agent, ContextUsage, KanbanCard, Session } from '../../types'
 
 // Tokens a session has used, added up over all its turns and models.
 interface TokenTotals { input: number; output: number; cacheRead: number; cacheWrite: number; cacheWrite1h: number }
@@ -20,6 +21,34 @@ function lastContext(s: Session, live?: ContextUsage): ContextUsage | null {
     const c = JSON.parse(s.context_usage)
     return typeof c.totalTokens === 'number' && c.totalTokens > 0 ? { ...c, session_id: s.id } : null
   } catch { return null }
+}
+
+// The flows in progress and where each one is. The detail, node by node, is in the Flows tab.
+function ActiveFlows({ projectId }: { projectId: string }) {
+  const navigate = useNavigate()
+  const flowVersion = useStore(s => s.flowVersion)
+  const [runs, setRuns] = useState<ActiveFlowRun[]>([])
+  useEffect(() => {
+    let cancelled = false
+    api.listActiveFlowRuns(projectId).then(r => { if (!cancelled) setRuns(r) }).catch(console.error)
+    return () => { cancelled = true }
+  }, [projectId, flowVersion])
+  if (runs.length === 0) return null
+  return (
+    <div className="running-flows">
+      {runs.map(r => (
+        <button
+          key={r.run.id}
+          className="running-flows__item"
+          onClick={() => navigate(`/projects/${projectId}/flows?flow=${r.run.flow_id}&run=${r.run.id}`)}
+        >
+          <strong>{r.flow_name}</strong>
+          <span>{r.open_names.join(', ') || 'Starting'}</span>
+          {r.card_title && <span>{r.card_title}</span>}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 // Running: the project's current sessions (the chats of its tasks), live ones first.
@@ -163,6 +192,7 @@ export function RunningView() {
 
   return (
     <div className="running-view">
+      {activeProjectId && <ActiveFlows projectId={activeProjectId} />}
       <div className="agent-form__tabs">
         <button className={`agent-form__tab${tab === 'current' ? ' agent-form__tab--active' : ''}`} onClick={() => setTab('current')}>
           Current <span className="agent-form__tab-badge">{taskSessions.length - nFinished}</span>

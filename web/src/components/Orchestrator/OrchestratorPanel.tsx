@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX } from '@tabler/icons-react'
+import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX, IconCode } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
@@ -82,6 +82,13 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const [image, setImage] = useState<{ base64: string; mediaType: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [input, setInput] = useState('')
+  // References sent from other tabs wait here for the question that goes with them.
+  const allRefs = useStore(s => s.orchRefs)
+  const refs = allRefs.filter(r => r.projectId === projectId)
+  const removeRef = useStore(s => s.removeOrchRef)
+  const clearRefs = useStore(s => s.clearOrchRefs)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => { if (refs.length > 0) textareaRef.current?.focus() }, [refs.length, storedOpen])
   // Dictation: what was typed before is kept; the phrase being spoken follows it.
   const dictBase = useRef('')
   const joinText = (a: string, b: string) => (a && b ? `${a.replace(/\s+$/, '')} ${b}` : a || b)
@@ -283,12 +290,15 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     reader.onload = () => setImage({ base64: String(reader.result).split(',')[1] ?? '', mediaType: file.type })
     reader.readAsDataURL(file)
   }
-  const sendText = (text: string) => {
+  const sendText = (typed: string) => {
     const img = imageRef.current
-    // an image alone is a message too
-    if ((!text && !img) || !sid || running || (runnerOffline && !isLocalModel)) return
+    const pending = useStore.getState().orchRefs.filter(r => r.projectId === projectId)
+    // an image or a reference alone is a message too
+    if ((!typed && !img && pending.length === 0) || !sid || running || (runnerOffline && !isLocalModel)) return
+    const text = [...pending.map(r => r.text), typed].filter(Boolean).join('\n\n')
     setInput('')
     setImage(null)
+    if (projectId) clearRefs(projectId)
     dictBase.current = ''
     useStore.setState(s => ({ pendingSend: { ...s.pendingSend, [sid]: true } }))
     api.sendOrchestratorTurn(sid, text || '(see the attached image)', { runnerId, aiProfileId: effectiveAi, model }, img).catch(e => {
@@ -300,7 +310,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     })
   }
   const send = () => sendText(input.trim())
-  const canSend = !!(input.trim() || image)
+  const canSend = !!(input.trim() || image || refs.length > 0)
 
   const cancel = () => { if (sid) api.cancelTurn(sid).catch(console.error) }
 
@@ -457,11 +467,23 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
             <button type="button" className="orch__image-remove" onClick={() => setImage(null)} title="Remove image" aria-label="Remove image"><IconX size={12} /></button>
           </div>
         )}
+        {refs.length > 0 && (
+          <ul className="orch__refs" aria-label="References to send">
+            {refs.map(r => (
+              <li key={r.id} className="orch__ref" title={`${r.label}\n${r.detail}`}>
+                <IconCode size={13} aria-hidden />
+                <span className="orch__ref-label">{r.label}</span>
+                <button type="button" className="orch__ref-remove" onClick={() => removeRef(r.id)} aria-label={`Remove the reference ${r.label}`}><IconX size={12} /></button>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
+          ref={textareaRef}
           className="orch__textarea"
           rows={3}
           value={input}
-          placeholder={sid ? 'Message the orchestrator…' : 'Loading…'}
+          placeholder={!sid ? 'Loading…' : refs.length > 0 ? 'What do you want to know about this?' : 'Message the orchestrator…'}
           disabled={!sid}
           onChange={e => {
             setInput(e.target.value)

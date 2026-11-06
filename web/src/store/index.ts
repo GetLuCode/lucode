@@ -33,11 +33,22 @@ export interface FilePreview {
   modified?: string     // mode === 'diff'
 }
 
+// Something another tab wants to tell the Supervisor about: shown as a chip by its input, and sent
+// as `text` ahead of the message.
+export interface ChatReference {
+  id: string
+  projectId: string
+  label: string
+  detail: string
+  text: string
+}
+
 interface AppState {
   projects: Project[]
   sessions: Session[]
   // Bumped when an agent changes a task (done/blocked/comment) so open boards refresh.
   boardVersion: number
+  flowVersion: number // bumped when a flow run changes, so the views refetch
   activeProjectId: string | null
   activeSessionId: string | null
   pendingSession: { projectId: string; model: string } | null
@@ -64,6 +75,11 @@ interface AppState {
   setOrchOpen: (open: boolean) => void
   orchCache: CacheCountdown | null
   setOrchCache: (c: CacheCountdown) => void
+  // References waiting to go with the next Supervisor message, per project. Adding one opens the panel.
+  orchRefs: ChatReference[]
+  addOrchRef: (ref: Omit<ChatReference, 'id'>) => void
+  removeOrchRef: (id: string) => void
+  clearOrchRefs: (projectId: string) => void
   jumpToMessageId: string | null
   userTools: UserTool[]
   // Context window usage per session (updated after each turn via WS)
@@ -282,6 +298,7 @@ export const useStore = create<AppState>((set, get) => ({
   projects: [],
   sessions: [],
   boardVersion: 0,
+  flowVersion: 0,
   activeProjectId: null,
   activeSessionId: null,
   pendingSession: null,
@@ -305,6 +322,19 @@ export const useStore = create<AppState>((set, get) => ({
   },
   orchCache: null,
   setOrchCache: (c) => set(s => (s.orchCache && s.orchCache.label === c.label && s.orchCache.state === c.state ? s : { orchCache: c })),
+  orchRefs: [],
+  addOrchRef: (ref) => {
+    try { localStorage.setItem('orch_open', '1') } catch { /* private mode */ }
+    set(s => ({
+      orchOpen: true,
+      // the same reference twice is one reference
+      orchRefs: s.orchRefs.some(r => r.projectId === ref.projectId && r.text === ref.text)
+        ? s.orchRefs
+        : [...s.orchRefs, { ...ref, id: `${Date.now()}-${s.orchRefs.length}` }],
+    }))
+  },
+  removeOrchRef: (id) => set(s => ({ orchRefs: s.orchRefs.filter(r => r.id !== id) })),
+  clearOrchRefs: (projectId) => set(s => ({ orchRefs: s.orchRefs.filter(r => r.projectId !== projectId) })),
   jumpToMessageId: null,
   userTools: [],
   contextUsage: {},
@@ -943,6 +973,11 @@ export const useStore = create<AppState>((set, get) => ({
             streamingThinking: { ...s.streamingThinking, [sessId]: '' },
           }))
         }
+        break
+      }
+
+      case 'flow_updated': {
+        set(s => ({ flowVersion: s.flowVersion + 1 }))
         break
       }
 

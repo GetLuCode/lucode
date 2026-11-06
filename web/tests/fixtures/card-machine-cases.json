@@ -1,0 +1,12 @@
+[
+  { "from": "todo", "to": "inprogress", "context": { "hasAgent": false, "depsDone": true, "blockerAnswered": true }, "allowed": false },
+  { "from": "todo", "to": "inprogress", "context": { "hasAgent": true, "depsDone": false, "blockerAnswered": false }, "allowed": true },
+  { "from": "custom", "to": "inprogress", "context": { "hasAgent": true, "depsDone": true, "blockerAnswered": true }, "allowed": true },
+  { "from": "blocked", "to": "inprogress", "context": { "hasAgent": false, "depsDone": true, "blockerAnswered": true }, "allowed": false },
+  { "from": "blocked", "to": "inprogress", "context": { "hasAgent": true, "depsDone": false, "blockerAnswered": true }, "allowed": false },
+  { "from": "blocked", "to": "inprogress", "context": { "hasAgent": true, "depsDone": true, "blockerAnswered": false }, "allowed": false },
+  { "from": "blocked", "to": "inprogress", "context": { "hasAgent": true, "depsDone": true, "blockerAnswered": true }, "allowed": true },
+  { "from": "blocked", "to": "todo", "context": { "hasAgent": false, "depsDone": false, "blockerAnswered": false }, "allowed": true },
+  { "from": "review", "to": "done", "context": { "hasAgent": false, "depsDone": false, "blockerAnswered": false }, "allowed": true },
+  { "from": "done", "to": "backlog", "context": { "hasAgent": false, "depsDone": false, "blockerAnswered": false }, "allowed": true }
+]

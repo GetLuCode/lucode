@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	dbpkg "claude-orchestrator/internal/db"
+	"claude-orchestrator/internal/flows"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
 
@@ -74,14 +75,21 @@ func (h *Handler) moveBlocker(card dbpkg.KanbanCard, oldListID string) string {
 		return ""
 	}
 	to, err := dbpkg.GetKanbanList(h.db, card.ListID)
-	if err != nil || to.Kind != dbpkg.KanbanInProgress {
+	if err != nil {
+		return ""
+	}
+	fromKind := ""
+	if from, err := dbpkg.GetKanbanList(h.db, oldListID); err == nil {
+		fromKind = from.Kind
+	}
+	guard := flows.CardGuard(flows.CardState(fromKind), flows.CardState(to.Kind))
+	if guard == "" {
 		return ""
 	}
 	if card.AgentID == "" {
 		return "Assign an agent to this task before moving it to In Progress."
 	}
-	from, err := dbpkg.GetKanbanList(h.db, oldListID)
-	if err != nil || from.Kind != dbpkg.KanbanBlocked {
+	if guard != flows.GuardCanRestart {
 		return ""
 	}
 	if unmet := h.unmetDependencies(card); len(unmet) > 0 {
@@ -185,6 +193,11 @@ func contains(ids []string, id string) bool {
 
 // moveCardToKind moves a card to the end of the project's list with that role.
 func (h *Handler) moveCardToKind(card dbpkg.KanbanCard, kind string) (dbpkg.KanbanCard, error) {
+	return h.moveCardToKindCause(card, kind, dbpkg.EventCause{Source: "system"})
+}
+
+// moveCardToKindCause is moveCardToKind saying who asked for the move.
+func (h *Handler) moveCardToKindCause(card dbpkg.KanbanCard, kind string, cause dbpkg.EventCause) (dbpkg.KanbanCard, error) {
 	target, err := dbpkg.FindKanbanListByKind(h.db, card.ProjectID, kind)
 	if err != nil {
 		return card, fmt.Errorf("no %q list: %w", kind, err)
@@ -199,7 +212,7 @@ func (h *Handler) moveCardToKind(card dbpkg.KanbanCard, kind string) (dbpkg.Kanb
 		}
 	}
 	card.ListID, card.Position = target.ID, pos
-	if err := dbpkg.UpdateKanbanCard(h.db, card); err != nil {
+	if err := dbpkg.UpdateKanbanCardCause(h.db, card, cause); err != nil {
 		return card, err
 	}
 	return dbpkg.GetKanbanCard(h.db, card.ID)
@@ -520,28 +533,29 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		if err := comment("done", a.Summary); err != nil {
 			return "", err
 		}
-		// work left in a git worktree is reviewed (and merged) by the user before it is done
-		if h.reviewOnDone(sessID, card) {
-			moved, err := h.moveCardToKind(card, dbpkg.KanbanReview)
-			if err != nil {
-				return "", fmt.Errorf("could not move the task to Review: %w", err)
+		// Where a finished task goes is decided by a flow (the "Task finished" blueprint).
+		if h.flows != nil && h.flows.Handles(card.ProjectID, flows.TypeTaskDone) {
+			if err := dbpkg.RecordFlowEvent(h.db, card.ProjectID, dbpkg.EventTaskDone, card.ID, sessID, map[string]any{"summary": a.Summary, "agent": author}); err != nil {
+				return "", fmt.Errorf("could not report the task as finished: %w", err)
 			}
-			h.notifyTaskUpdated(sessID, moved)
-			if agentErr == nil {
-				h.notifySupervisor(agent, moved, fmt.Sprintf("Task %q is ready for review (its branch waits to be merged): %s", moved.Title, a.Summary))
-			}
-			return "Task sent to Review: the user will merge your branch, or send it back to you if it conflicts. End your turn now with a short closing message.", nil
+			h.notifyFlows()
+			return "Task reported as finished. lucode now moves it: to Review if your branch waits to be merged, otherwise to Done. End your turn now with a short closing message.", nil
 		}
-		moved, err := h.moveCardToKind(card, dbpkg.KanbanDone)
+		// No flow would look at it (removed, disabled or paused): a person does. Review is the
+		// safe place, because Done could bury work that was never merged.
+		if err := dbpkg.EnsureReviewList(h.db, card.ProjectID); err != nil {
+			return "", fmt.Errorf("could not move the task to Review: %w", err)
+		}
+		h.reviewRowFor(card)
+		moved, err := h.moveCardToKind(card, dbpkg.KanbanReview)
 		if err != nil {
-			return "", fmt.Errorf("could not move the task to Done: %w", err)
+			return "", fmt.Errorf("could not move the task to Review: %w", err)
 		}
-		h.releaseDependents(moved)
 		h.notifyTaskUpdated(sessID, moved)
 		if agentErr == nil {
-			h.notifySupervisor(agent, moved, fmt.Sprintf("Task %q is done: %s", moved.Title, a.Summary))
+			h.notifySupervisor(agent, moved, fmt.Sprintf("Task %q is done and waits in Review: %s", moved.Title, a.Summary))
 		}
-		return "Task marked as done. Dependent tasks were released. End your turn now with a short closing message.", nil
+		return "Task sent to Review for the user to look at. End your turn now with a short closing message.", nil
 
 	case taskmcp.ToolAgentList:
 		if agentErr != nil {
@@ -575,6 +589,9 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 
 	case taskmcp.ToolProjectInfo:
 		return h.projectInfo(sess)
+
+	case taskmcp.ToolGitDiff:
+		return h.gitDiffTool(sess.ProjectID, args)
 
 	case taskmcp.ToolTaskList:
 		return h.taskList(sess, args)

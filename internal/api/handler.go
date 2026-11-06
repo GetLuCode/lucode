@@ -21,6 +21,7 @@ import (
 	"claude-orchestrator/internal/aimode"
 	authclient "claude-orchestrator/internal/authclient"
 	dbpkg "claude-orchestrator/internal/db"
+	"claude-orchestrator/internal/flows"
 	natspkg "claude-orchestrator/internal/natsbus"
 	"claude-orchestrator/internal/permissions"
 	sessionpkg "claude-orchestrator/internal/session"
@@ -60,6 +61,8 @@ type Handler struct {
 	inbox       map[string][]string  // session id -> messages waiting for its turn to end
 	sent        map[string][]time.Time // session id -> recent send_to_agent sends (rate limit)
 	startTurnFn func(sessionpkg.TurnOptions) error // overrides manager.StartTurn in tests
+
+	flows *flows.Engine // nil until StartFlows (only the hub runs it)
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
@@ -95,6 +98,8 @@ func (h *Handler) SetMinimaxSubscriptionKey(key string) {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/health", h.health)
 	mux.HandleFunc("GET /api/version", h.version("hub"))
+	h.registerFlows(mux)
+	h.registerGit(mux)
 
 	mux.HandleFunc("POST /api/projects", h.createProject)
 	mux.HandleFunc("GET /api/projects", h.listProjects)
@@ -468,6 +473,7 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.seedProjectFlows(p.ID)
 	jsonResp(w, http.StatusCreated, p)
 }
 
@@ -2837,11 +2843,16 @@ func (h *Handler) createKanbanCard(w http.ResponseWriter, r *http.Request) {
 	if c.DependsOn == nil {
 		c.DependsOn = []string{}
 	}
-	if err := dbpkg.InsertKanbanCard(h.db, c); err != nil {
+	if err := dbpkg.InsertKanbanCardCause(h.db, c, dbpkg.EventCause{Source: "user"}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	c, _ = dbpkg.GetKanbanCard(h.db, c.ID)
+	// A card created directly in a workflow list behaves like one moved there, the same
+	// as task_create: In Progress runs it, Done releases its dependents.
+	if l, err := dbpkg.GetKanbanList(h.db, c.ListID); err == nil && (l.Kind == dbpkg.KanbanInProgress || l.Kind == dbpkg.KanbanDone) {
+		c = h.afterCardSaved(c)
+	}
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(c)
 }
@@ -2888,7 +2899,7 @@ func (h *Handler) updateKanbanCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, reason, http.StatusConflict)
 		return
 	}
-	if err := dbpkg.UpdateKanbanCard(h.db, c); err != nil {
+	if err := dbpkg.UpdateKanbanCardCause(h.db, c, dbpkg.EventCause{Source: "user"}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

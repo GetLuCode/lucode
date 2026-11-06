@@ -1,4 +1,4 @@
-import type { Alert, AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { ActiveFlowRun, Flow, FlowApproval, FlowBlueprint, FlowGraph, FlowNodeType, FlowProblem, FlowRun, FlowStep, Alert, AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
 const BASE = process.env.VITE_API_BASE ?? ''
@@ -449,6 +449,11 @@ export interface ReviewStatus {
   error?: string
 }
 export const getCardReview = (id: string) => req<ReviewStatus>('GET', `/api/kanban/cards/${id}/review`)
+
+// Git tab: the runner that holds the repository answers, the hub relays (see components/Git).
+export const getGitTargets = <T,>(projectId: string) => req<T>('GET', `/api/projects/${projectId}/git/targets`)
+export const projectGit = <T,>(projectId: string, op: string, body: Record<string, unknown>) =>
+  req<T>('POST', `/api/projects/${projectId}/git/${op}`, body)
 export const mergeCardReview = (id: string) =>
   req<{ card: KanbanCard; warnings: string[] }>('POST', `/api/kanban/cards/${id}/review/merge`)
 export const resolveCardReview = (id: string) =>
@@ -505,3 +510,28 @@ export const getPermissionFiles = (workdir: string) =>
 
 // Things to clean up by hand in the project's repositories (merged worktrees left behind).
 export const listProjectAlerts = (projectId: string) => req<Alert[]>('GET', `/api/projects/${projectId}/alerts`)
+
+// Flows
+export const listFlowNodeTypes = () => req<FlowNodeType[]>('GET', '/api/flow-node-types')
+export const getCardMachine = () => req<Record<string, unknown>>('GET', '/api/card-machine')
+export const listFlows = (projectId: string) => req<Flow[]>('GET', `/api/projects/${projectId}/flows`)
+export const createFlow = (projectId: string, name: string, blueprint?: string) => req<Flow>('POST', `/api/projects/${projectId}/flows`, { name, blueprint })
+export const listFlowBlueprints = () => req<FlowBlueprint[]>('GET', '/api/flow-blueprints')
+export const getFlow = (id: string) => req<Flow>('GET', `/api/flows/${id}`)
+export const saveFlow = (id: string, data: { name: string; draft: FlowGraph }) => req<Flow>('PUT', `/api/flows/${id}`, data)
+export const deleteFlow = (id: string) => req<void>('DELETE', `/api/flows/${id}`)
+export const validateFlow = (id: string) => req<{ problems: FlowProblem[] }>('POST', `/api/flows/${id}/validate`)
+export const publishFlow = (id: string) => req<Flow>('POST', `/api/flows/${id}/publish`)
+export const setFlowEnabled = (id: string, enabled: boolean) => req<Flow>('PUT', `/api/flows/${id}/enabled`, { enabled })
+export const runFlow = (id: string, cardId?: string) => req<FlowRun>('POST', `/api/flows/${id}/run`, { card_id: cardId ?? '' })
+export const listFlowRuns = (id: string) => req<FlowRun[]>('GET', `/api/flows/${id}/runs`)
+export const getFlowRun = (id: string) => req<{ run: FlowRun; steps: FlowStep[]; graph: FlowGraph }>('GET', `/api/flow-runs/${id}`)
+export const cancelFlowRun = (id: string) => req<void>('POST', `/api/flow-runs/${id}/cancel`)
+export const listActiveFlowRuns = (projectId: string) => req<ActiveFlowRun[]>('GET', `/api/projects/${projectId}/flow-runs/active`)
+export const getFlowsPaused = (projectId: string) => req<{ paused: boolean }>('GET', `/api/projects/${projectId}/flows/paused`)
+export const setFlowsPaused = (projectId: string, paused: boolean) => req<{ paused: boolean }>('PUT', `/api/projects/${projectId}/flows/paused`, { paused })
+export const listFlowApprovals = (projectId: string) => req<FlowApproval[]>('GET', `/api/projects/${projectId}/flow-approvals`)
+export const decideFlowApproval = (seq: number, decision: 'approved' | 'rejected', note = '') => req<void>('POST', `/api/flow-steps/${seq}/decision`, { decision, note })
+export const getFlowAISettings = () => req<{ configured: boolean; source: string }>('GET', '/api/flow-ai-settings')
+export const saveFlowAIKey = (apiKey: string) => req<{ configured: boolean; source: string }>('PUT', '/api/flow-ai-settings', { api_key: apiKey })
+export const clearFlowAIKey = () => req<{ configured: boolean; source: string }>('PUT', '/api/flow-ai-settings', { clear: true })

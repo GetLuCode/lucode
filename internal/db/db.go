@@ -550,6 +550,10 @@ CREATE TABLE IF NOT EXISTS card_reviews (
 		return fmt.Errorf("create card_reviews: %w", err)
 	}
 
+	if err := migrateFlows(db); err != nil {
+		return err
+	}
+
 	// Column additions for tables created above (idempotent).
 	// card_reviews.runner_id — the runner whose disk holds the repository and worktree;
 	// git runs there, never on the hub. "" = this instance (legacy rows)
@@ -574,7 +578,7 @@ CREATE TABLE IF NOT EXISTS card_reviews (
 		return err
 	}
 	// agents.lucode_tools — which lucode tools (task_*, agent_list, send_to_agent, task_info) the agent has
-	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info","get_task_image","task_list","task_create","task_update","agent_create","agent_update","agent_delete","project_info"]'`)
+	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info","get_task_image","task_list","task_create","task_update","agent_create","agent_update","agent_delete","project_info","git_diff"]'`)
 	// get_task_image came after task_info: agents that already look tasks up get it too.
 	db.Exec(`UPDATE agents SET lucode_tools = REPLACE(lucode_tools, '"task_info"', '"task_info","get_task_image"') WHERE lucode_tools LIKE '%"task_info"%' AND lucode_tools NOT LIKE '%get_task_image%'`)
 

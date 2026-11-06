@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	dbpkg "claude-orchestrator/internal/db"
+	"claude-orchestrator/internal/flows"
+	natspkg "claude-orchestrator/internal/natsbus"
 
 	"github.com/google/uuid"
 )
@@ -33,7 +35,7 @@ func newTaskTestHandler(t *testing.T) (*Handler, string, map[string]dbpkg.Kanban
 	for _, l := range all {
 		lists[l.Kind] = l
 	}
-	return &Handler{db: db}, proj.ID, lists
+	return &Handler{db: db, bus: natspkg.NewBus(nil)}, proj.ID, lists
 }
 
 func newCard(t *testing.T, h *Handler, pid string, list dbpkg.KanbanList, title string, deps ...string) dbpkg.KanbanCard {
@@ -135,10 +137,16 @@ func TestTaskDoneMovesCardPostsSummaryAndReleasesDependents(t *testing.T) {
 	}
 	sess := taskSession(t, h, dep)
 
+	// where a finished task goes is the "Task finished" blueprint's call
+	h.flows = flows.NewEngine(h.db, flowHost{h})
+	if err := flows.SeedBlueprints(h.db, pid); err != nil {
+		t.Fatal(err)
+	}
 	msg, err := h.HandleTaskTool(sess.ID, "task_done", []byte(`{"summary":"built it"}`))
 	if err != nil || msg == "" {
 		t.Fatalf("task_done failed: %q %v", msg, err)
 	}
+	settle(h)
 
 	got, _ := dbpkg.GetKanbanCard(h.db, dep.ID)
 	if got.ListID != lists["done"].ID {

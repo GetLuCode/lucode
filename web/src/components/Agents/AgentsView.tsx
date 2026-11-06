@@ -68,6 +68,7 @@ const LUCODE_TOOLS = [
   { name: 'agent_update',  desc: 'Edit another agent of the project' },
   { name: 'agent_delete',  desc: 'Delete an idle agent of the project' },
   { name: 'project_info',  desc: 'See the project: folders, runner, AI, board counts, agents' },
+  { name: 'git_diff',      desc: 'Read a diff of a repository of the project, from any runner' },
 ]
 
 // Control of Microsoft Edge (CDP). Stored in lucode_tools like the rest, but never on by default.
