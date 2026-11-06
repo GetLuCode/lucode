@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
-import { IconArrowAutofitHeight, IconColumns1, IconColumns2, IconSend, IconX } from '@tabler/icons-react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { IconArrowAutofitHeight, IconCode, IconColumns1, IconColumns2, IconCopy, IconSend, IconX } from '@tabler/icons-react'
+import { copyText } from '../../lib/copyText'
 import { highlightCode } from '../../lib/highlight'
 import { useStore } from '../../store'
 import { gitCall, errorText } from './gitApi'
@@ -8,7 +9,7 @@ import type { GitCallContext } from './gitApi'
 import type { DiffRequest, GitDiffAnswer } from './gitTypes'
 import { languageOf, parseDiff, toSplitRows } from './gitDiff'
 import { buildReference, codeOf, rangeOf, referenceLabel } from './gitRef'
-import { CopyButton, Stat } from './gitParts'
+import { CopyButton, GitMenu, Stat } from './gitParts'
 import type { DiffLine } from './gitDiff'
 
 const MAX_HIGHLIGHTED_LINES = 4000
@@ -36,10 +37,12 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
   // Lines picked by their numbers, as positions in the parsed diff: a drag or Shift+click moves `to`.
   const [picked, setPicked] = useState<{ from: number; to: number } | null>(null)
   const dragging = useRef(false)
+  // The context menu of the picked lines.
+  const [menu, setMenu] = useState<{ x: number; y: number; lines: DiffLine[] } | null>(null)
   const addRef = useStore(s => s.addOrchRef)
-  // Esc undoes the nearest thing first: the selection, then the full height.
+  // Esc undoes the nearest thing first: the menu (it closes itself), the selection, the full height.
   useEffect(() => {
-    if (!fullHeight && !picked) return
+    if ((!fullHeight && !picked) || menu) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (picked) setPicked(null)
@@ -47,7 +50,7 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [fullHeight, picked])
+  }, [fullHeight, picked, menu])
   useEffect(() => {
     const stop = () => { dragging.current = false }
     window.addEventListener('pointerup', stop)
@@ -78,7 +81,7 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
     return { '--gd-no': `calc(${Math.max(2, String(highest).length)}ch + 14px)` } as CSSProperties
   }, [parsed])
   // A selection means nothing in other text: a refresh that changes the diff, or another file, drops it.
-  useEffect(() => { setPicked(null) }, [answer?.text, request?.path])
+  useEffect(() => { setPicked(null); setMenu(null) }, [answer?.text, request?.path])
   const positions = useMemo(() => new Map((parsed?.lines ?? []).map((l, i) => [l, i])), [parsed])
   const low = picked ? Math.min(picked.from, picked.to) : -1
   const high = picked ? Math.max(picked.from, picked.to) : -1
@@ -87,11 +90,30 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
     const i = l ? positions.get(l) : undefined
     return i !== undefined && i >= low && i <= high && picked !== null
   }
+  // Right-clicking a line outside the selection picks that line, as file managers do.
+  const openMenu = (e: ReactMouseEvent, at: number) => {
+    e.preventDefault()
+    const inside = picked !== null && at >= low && at <= high
+    if (!inside) setPicked({ from: at, to: at })
+    setMenu({ x: e.clientX, y: e.clientY, lines: inside ? pickedLines : parsed ? [parsed.lines[at]] : [] })
+  }
+  // On the code, a picked line opens the menu too, unless there is text selected to copy by hand.
+  const codeProps = (l?: DiffLine) => {
+    const at = l ? positions.get(l) : undefined
+    if (at === undefined || !isPicked(l)) return {}
+    return {
+      onContextMenu: (e: ReactMouseEvent) => {
+        if (!window.getSelection()?.isCollapsed) return
+        openMenu(e, at)
+      },
+    }
+  }
   const numberProps = (l?: DiffLine) => {
     const at = l ? positions.get(l) : undefined
     if (at === undefined) return {}
     return {
-      title: 'Click to pick this line. Shift+click or drag for several.',
+      title: 'Click to pick this line, Shift+click or drag for several. Right-click for actions.',
+      onContextMenu: (e: ReactMouseEvent) => openMenu(e, at),
       onPointerDown: (e: ReactPointerEvent) => {
         if (e.button !== 0) return
         e.preventDefault()
@@ -114,8 +136,7 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
   const removed = parsed?.lines.filter(l => l.kind === 'del').length ?? 0
   const slash = request.path.lastIndexOf('/')
   const send = (lines: DiffLine[]) => addRef({ projectId: ctx.projectId, ...buildReference(request, lines, ctx.target, ctx.worktree) })
-  const pickedRange = rangeOf(pickedLines)
-  const pickedLabel = referenceLabel(request, pickedRange)
+  const menuLabel = menu ? referenceLabel(request, rangeOf(menu.lines)) : ''
 
   return (
     <div className={`gd${fullHeight ? ' gd--full' : ''}`}>
@@ -166,7 +187,7 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
                     <tr key={i} className={`gd-row gd-row--${l.kind}${isPicked(l) ? ' gd-row--sel' : ''}`}>
                       <td className="gd-no gd-no--pick" {...numberProps(l)}>{l.oldNo}</td>
                       <td className="gd-no gd-no--pick" {...numberProps(l)}>{l.newNo}</td>
-                      <td className="gd-text"><span className="gd-sign" aria-hidden>{SIGN[l.kind]}</span><Code line={l} lang={lang} plain={plain} /></td>
+                      <td className="gd-text" {...codeProps(l)}><span className="gd-sign" aria-hidden>{SIGN[l.kind]}</span><Code line={l} lang={lang} plain={plain} /></td>
                     </tr>
                   )
               ))}
@@ -189,9 +210,9 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
                 : (
                   <tr key={i} className="gd-row">
                     <td className={`gd-no gd-side--${r.left?.kind ?? 'none'}${r.left ? ' gd-no--pick' : ''}${isPicked(r.left) ? ' gd-cell--sel' : ''}`} {...numberProps(r.left)}>{r.left?.oldNo}</td>
-                    <td className={`gd-text gd-side--${r.left?.kind ?? 'none'}${isPicked(r.left) ? ' gd-cell--sel' : ''}`}>{r.left && <Code line={r.left} lang={lang} plain={plain} />}</td>
+                    <td className={`gd-text gd-side--${r.left?.kind ?? 'none'}${isPicked(r.left) ? ' gd-cell--sel' : ''}`} {...codeProps(r.left)}>{r.left && <Code line={r.left} lang={lang} plain={plain} />}</td>
                     <td className={`gd-no gd-side--${r.right?.kind ?? 'none'}${r.right ? ' gd-no--pick' : ''}${isPicked(r.right) ? ' gd-cell--sel' : ''}`} {...numberProps(r.right)}>{r.right?.newNo}</td>
-                    <td className={`gd-text gd-side--${r.right?.kind ?? 'none'}${isPicked(r.right) ? ' gd-cell--sel' : ''}`}>{r.right && <Code line={r.right} lang={lang} plain={plain} />}</td>
+                    <td className={`gd-text gd-side--${r.right?.kind ?? 'none'}${isPicked(r.right) ? ' gd-cell--sel' : ''}`} {...codeProps(r.right)}>{r.right && <Code line={r.right} lang={lang} plain={plain} />}</td>
                   </tr>
                 ))}
             </tbody>
@@ -199,14 +220,18 @@ export function DiffView({ ctx, request, version }: { ctx: GitCallContext; reque
         )}
         {answer?.truncated && <div className="git-msg">This diff is too long to show whole: it stops here.</div>}
       </div>
-      {pickedRange && (
-        <div className="gd-selbar" role="toolbar" aria-label="Selected lines">
-          <span className="gd-selbar__label" title={pickedLabel}>{pickedLabel}</span>
-          <CopyButton text={pickedLabel} label="Copy reference" className="git-text-btn"><span>Reference</span></CopyButton>
-          <CopyButton text={codeOf(pickedLines)} label="Copy the code of these lines" title="Copy the code" className="git-text-btn"><span>Code</span></CopyButton>
-          <button className="git-text-btn gd-selbar__send" onClick={() => { send(pickedLines); setPicked(null) }} title="Add these lines to your next message to the Supervisor"><IconSend size={13} /><span>Supervisor</span></button>
-          <button className="git-icon-btn git-icon-btn--small" onClick={() => setPicked(null)} title="Clear the selection (Esc)" aria-label="Clear the selection"><IconX size={13} /></button>
-        </div>
+      {menu && (
+        <GitMenu
+          point={menu}
+          header={menuLabel}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: 'Copy reference', icon: <IconCopy size={14} />, onSelect: () => void copyText(menuLabel) },
+            { label: 'Copy code', icon: <IconCode size={14} />, onSelect: () => void copyText(codeOf(menu.lines)) },
+            { label: 'Send to Supervisor', icon: <IconSend size={14} />, onSelect: () => { send(menu.lines); setPicked(null) } },
+            { label: 'Clear selection', icon: <IconX size={14} />, onSelect: () => setPicked(null) },
+          ]}
+        />
       )}
     </div>
   )

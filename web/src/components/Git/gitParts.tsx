@@ -110,21 +110,24 @@ export interface MenuItem {
   onSelect: () => void
 }
 
-// A menu anchored to the button that opened it. It goes through a portal so the scrolling panels
-// it opens from cannot clip it.
-export function GitMenu({ anchor, items, onClose, header }: { anchor: HTMLElement; items: MenuItem[]; onClose: () => void; header?: ReactNode }) {
+// A menu anchored to the button that opened it, or to the pointer for a context menu. It goes
+// through a portal so the scrolling panels it opens from cannot clip it.
+export function GitMenu({ anchor, point, items, onClose, header }: { anchor?: HTMLElement; point?: { x: number; y: number }; items: MenuItem[]; onClose: () => void; header?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   useLayoutEffect(() => {
-    const a = anchor.getBoundingClientRect()
+    const r = anchor?.getBoundingClientRect()
+    const left = r?.left ?? point?.x ?? 0
+    const below = r?.bottom ?? point?.y ?? 0
+    const above = r?.top ?? point?.y ?? 0
     const m = ref.current?.getBoundingClientRect()
     const w = m?.width ?? 200
     const h = m?.height ?? 200
     setPos({
-      left: Math.max(8, Math.min(a.left, window.innerWidth - w - 8)),
-      top: a.bottom + h + 8 > window.innerHeight ? Math.max(8, a.top - h - 4) : a.bottom + 4,
+      left: Math.max(8, Math.min(left, window.innerWidth - w - 8)),
+      top: below + h + 8 > window.innerHeight ? Math.max(8, above - h - 4) : below + (r ? 4 : 0),
     })
-  }, [anchor])
+  }, [anchor, point])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
@@ -132,7 +135,7 @@ export function GitMenu({ anchor, items, onClose, header }: { anchor: HTMLElemen
   }, [onClose])
   return createPortal(
     <>
-      <div className="git-menu__backdrop" onClick={onClose} />
+      <div className="git-menu__backdrop" onClick={onClose} onContextMenu={e => { e.preventDefault(); onClose() }} />
       <div ref={ref} className="git-menu" role="menu" style={pos ? { left: pos.left, top: pos.top } : { visibility: 'hidden', left: 0, top: 0 }}>
         {header && <div className="git-menu__header">{header}</div>}
         {items.map(it => (
