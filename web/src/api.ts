@@ -449,6 +449,11 @@ export interface ReviewStatus {
   error?: string
 }
 export const getCardReview = (id: string) => req<ReviewStatus>('GET', `/api/kanban/cards/${id}/review`)
+
+// Git tab: the runner that holds the repository answers, the hub relays (see components/Git).
+export const getGitTargets = <T,>(projectId: string) => req<T>('GET', `/api/projects/${projectId}/git/targets`)
+export const projectGit = <T,>(projectId: string, op: string, body: Record<string, unknown>) =>
+  req<T>('POST', `/api/projects/${projectId}/git/${op}`, body)
 export const mergeCardReview = (id: string) =>
   req<{ card: KanbanCard; warnings: string[] }>('POST', `/api/kanban/cards/${id}/review/merge`)
 export const resolveCardReview = (id: string) =>

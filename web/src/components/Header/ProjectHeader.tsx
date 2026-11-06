@@ -10,7 +10,7 @@ import { ProjectEnvInfo } from './ProjectEnvInfo'
 import { AlertsBell } from './AlertsBell'
 import { UsageMeters } from './UsageMeters'
 
-// Top bar of a project: its name and menu, the Supervisor | Work | Running | Flows tabs, and the
+// Top bar of a project: its name and menu, the Supervisor | Work | Running | Flows | Git tabs, and the
 // Runners / Agents actions at the right.
 export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const navigate = useNavigate()
@@ -42,6 +42,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const onAgentTab = /\/agent\/?$/.test(pathname)
   const onKanban = pathname.includes('/kanban')
   const onFlows = pathname.includes('/flows')
+  const onGit = /\/git\/?$/.test(pathname)
   // The running list and the chats opened from it share the Running tab.
   const onRunning = pathname.includes('/running') || pathname.includes('/sessions/')
 
@@ -159,6 +160,10 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
           className={`project-tab${onFlows ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/flows`)}
         >Flows</button>
+        <button
+          className={`project-tab${onGit ? ' project-tab--active' : ''}`}
+          onClick={() => navigate(`${base}/git`)}
+        >Git</button>
       </nav>
 
       {isMobile ? (mobileSlot && createPortal(actions, mobileSlot)) : actions}

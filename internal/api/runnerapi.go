@@ -26,6 +26,7 @@ func NewRunnerHandler(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager,
 	mux.HandleFunc("POST /api/review/merge-options", h.reviewMergeOptionsRPC)
 	mux.HandleFunc("POST /api/review/repo", h.reviewRepoRPC)
 	mux.HandleFunc("POST /api/review/diffstat", h.diffStatRPC)
+	h.registerGitRPC(mux)
 	mux.HandleFunc("GET /api/ai-profiles", h.listAIProfiles)
 	mux.HandleFunc("POST /api/ai-profiles", h.createAIProfile)
 	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)

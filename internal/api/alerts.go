@@ -45,6 +45,9 @@ func pidAlive(pid int) bool {
 
 type worktreeInfo struct {
 	path, branch string
+	head         string
+	detached     bool
+	prunable     bool
 	locked       bool
 	lockReason   string
 }
@@ -69,6 +72,12 @@ func parseWorktrees(porcelain string) []worktreeInfo {
 		case cur == nil:
 		case strings.HasPrefix(l, "branch refs/heads/"):
 			cur.branch = strings.TrimPrefix(l, "branch refs/heads/")
+		case strings.HasPrefix(l, "HEAD "):
+			cur.head = strings.TrimPrefix(l, "HEAD ")
+		case l == "detached":
+			cur.detached = true
+		case l == "prunable" || strings.HasPrefix(l, "prunable "):
+			cur.prunable = true
 		case l == "locked" || strings.HasPrefix(l, "locked "):
 			cur.locked = true
 			cur.lockReason = strings.TrimSpace(strings.TrimPrefix(l, "locked"))

@@ -99,6 +99,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/health", h.health)
 	mux.HandleFunc("GET /api/version", h.version("hub"))
 	h.registerFlows(mux)
+	h.registerGit(mux)
 
 	mux.HandleFunc("POST /api/projects", h.createProject)
 	mux.HandleFunc("GET /api/projects", h.listProjects)
