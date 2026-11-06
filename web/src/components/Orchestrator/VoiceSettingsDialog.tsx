@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { IconX } from '@tabler/icons-react'
 import * as api from '../../api'
 import { SttTester } from './SttTester'
+import { TtsTester } from './TtsTester'
 import { VoiceModelPicker } from './VoiceModelPicker'
 import { canChooseOutput, DEFAULT_TUNING, getAutoSend, getDeviceId, getHotword, getSttTuning, listAudioDevices, setAutoSend, setDeviceId, setHotword, setSttTuning, type AudioDevices, type SttTuning } from '../../lib/audioDevices'
 
@@ -271,6 +272,7 @@ export function VoiceSettingsDialog({ onClose, onSaved }: { onClose: () => void;
                   <span>Speed (0.5 – 2)</span>
                   <input value={speed} onChange={e => setSpeed(e.target.value)} placeholder="1" inputMode="decimal" />
                 </label>
+                <TtsTester configured={configured} />
               </>
             )}
           </div>

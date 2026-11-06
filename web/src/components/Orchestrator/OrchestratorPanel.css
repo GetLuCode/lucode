@@ -118,6 +118,15 @@
   border-radius: 6px; padding: 7px 9px; font: inherit; font-size: 13px;
 }
 .orch-dialog__field input:focus { outline: none; border-color: var(--accent); }
+.orch-dialog__field textarea {
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border-bright);
+  border-radius: 6px; padding: 7px 9px; font: inherit; font-size: 13px; resize: vertical; min-height: 60px;
+}
+.orch-dialog__field textarea:focus { outline: none; border-color: var(--accent); }
+.orch-tts-test { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.orch-tts-test__row { display: flex; align-items: center; gap: 10px; }
+.orch-tts-test__row .orch-dialog__btn { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.orch-tts-test__row .orch-dialog__note { margin: 0; }
 .orch-dialog__field select {
   background: var(--bg-input); color: var(--text); border: 1px solid var(--border-bright);
   border-radius: 6px; padding: 7px 9px; font: inherit; font-size: 13px; max-width: 100%;
