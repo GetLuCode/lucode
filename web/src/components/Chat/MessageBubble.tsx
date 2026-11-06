@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { marked, type Token, type TokensList } from 'marked'
-import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces, IconZoomIn, IconZoomOut, IconZoomReset, IconArrowsMaximize, IconX, IconClock, IconChevronRight, IconPoint } from '@tabler/icons-react'
+import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces, IconZoomIn, IconZoomOut, IconZoomReset, IconArrowsMaximize, IconX, IconClock, IconChevronRight, IconPoint, IconRobot } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
 import { HookHeader } from '../Hook/HookHeader'
@@ -171,8 +171,11 @@ function BubbleContent({ message, sendHookRespond }: { message: Message; sendHoo
     case 'system':
       return <p className="msg__system-notice">{message.content}</p>
 
-    case 'tool_execution':
-      return <ToolExecutionMessage content={message.content} />
+    case 'tool_execution': {
+      // A call the hub logged says who decided it, and reads like any answered approval.
+      const logged = parseLoggedTool(message.content)
+      return logged ? <AnsweredHook hookData={logged} /> : <ToolExecutionMessage content={message.content} />
+    }
 
     default:
       return <pre className="msg__code">{message.content}</pre>
@@ -398,18 +401,30 @@ interface HookData {
   decision: string
   tool_use_id?: string
   tool_input_schema?: ToolInputField[] | null
+  decided_by?: string
+  reason?: string
+}
+
+function parseLoggedTool(content: string): HookData | null {
+  try {
+    const data = JSON.parse(content) as HookData
+    return data.decision ? data : null
+  } catch {
+    return null
+  }
 }
 
 const OUTCOME_ICON: Record<HookOutcome, typeof IconCheck> = {
   allowed: IconCheck,
   denied: IconX,
+  auto: IconRobot,
   timeout: IconClock,
   unknown: IconPoint,
 }
 
 /** An answered approval: one quiet line in the history, with the details on demand. */
 function AnsweredHook({ hookData }: { hookData: HookData }) {
-  const { label, outcome } = hookOutcome(hookData.decision)
+  const { label, outcome } = hookOutcome(hookData.decision, hookData.decided_by)
   const OutcomeIcon = OUTCOME_ICON[outcome]
   const summary = hookSummary(hookData.tool_name, hookData.tool_input)
 
@@ -423,6 +438,7 @@ function AnsweredHook({ hookData }: { hookData: HookData }) {
         <IconChevronRight size={14} className="hook-done__chevron" aria-hidden="true" />
       </summary>
       <div className="hook-done__body">
+        {hookData.reason && <p className="hook-done__reason">{hookData.reason}</p>}
         <ToolInputRenderer toolName={hookData.tool_name} input={hookData.tool_input} />
       </div>
     </details>

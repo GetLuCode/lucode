@@ -66,7 +66,7 @@ type TurnOptions struct {
 	AgentName       string
 	Tools           []string // built-in tools the agent may use (claude names); empty = all
 	Persistent      bool     // keep the claude process alive between turns (Executor "claude" only)
-	AutoMode        bool     // claude --permission-mode auto: no approval hook (Executor "claude" only)
+	AutoMode        bool     // claude --permission-mode auto: nobody is asked (Executor "claude" only)
 	Worktree        bool     // claude --worktree: work in its own git worktree (Executor "claude" only)
 	WorktreeBaseRef string   // worktree.baseRef setting: "head" (default) or "fresh"
 	RunnerID        string   // run the turn on this peer runner instead of here ("" = this instance)

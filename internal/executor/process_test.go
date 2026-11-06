@@ -101,7 +101,7 @@ func TestUsageLimitResultIsReported(t *testing.T) {
 	}
 }
 
-func TestAutoModeReplacesTheApprovalHook(t *testing.T) {
+func TestAutoModeKeepsTheApprovalHook(t *testing.T) {
 	has := func(args []string, want string) bool {
 		for _, a := range args {
 			if a == want {
@@ -115,8 +115,8 @@ func TestAutoModeReplacesTheApprovalHook(t *testing.T) {
 		t.Errorf("by default the approval hook must be passed: %v", def)
 	}
 	auto := buildArgs(TurnRequest{SessionID: "s", ClaudeSettings: "hooks.json", PermissionMode: "auto"})
-	if !has(auto, "--permission-mode=auto") || has(auto, "--settings=hooks.json") {
-		t.Errorf("auto mode passes --permission-mode and not the hook: %v", auto)
+	if !has(auto, "--permission-mode=auto") || !has(auto, "--settings=hooks.json") {
+		t.Errorf("auto mode passes --permission-mode and keeps the hook: %v", auto)
 	}
 }
 
@@ -159,7 +159,7 @@ func TestWorktreeSettingsAndFlag(t *testing.T) {
 
 	fresh := buildArgs(TurnRequest{SessionID: "12345678-aaaa", PermissionMode: "auto", ClaudeSettings: hooks, Worktree: true, WorktreeBaseRef: "fresh"})
 	m = parse(fresh)
-	if base(m) != "fresh" || m["hooks"] != nil {
-		t.Errorf("auto mode: fresh baseRef and no hooks: %v", m)
+	if base(m) != "fresh" || m["hooks"] == nil {
+		t.Errorf("auto mode: fresh baseRef and the hook settings: %v", m)
 	}
 }

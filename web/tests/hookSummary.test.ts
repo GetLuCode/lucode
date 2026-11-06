@@ -26,6 +26,14 @@ test('hookOutcome covers every decision the server stores', () => {
   assert.deepEqual(hookOutcome('timeout'), { label: 'Timed out', outcome: 'timeout' })
 })
 
+test('hookOutcome says who decided a logged tool call', () => {
+  assert.deepEqual(hookOutcome('allow', 'rule'), { label: 'Allowed by a rule', outcome: 'allowed' })
+  assert.deepEqual(hookOutcome('allow', 'flow'), { label: 'Allowed by a flow', outcome: 'allowed' })
+  assert.deepEqual(hookOutcome('allow', 'lucode'), { label: 'Allowed', outcome: 'allowed' })
+  assert.deepEqual(hookOutcome('deny', 'flow'), { label: 'Denied by a flow', outcome: 'denied' })
+  assert.deepEqual(hookOutcome('auto', 'auto'), { label: 'Claude auto mode', outcome: 'auto' })
+})
+
 test('hookOutcome shows a decision it does not know instead of hiding it', () => {
   assert.deepEqual(hookOutcome('later'), { label: 'later', outcome: 'unknown' })
   assert.deepEqual(hookOutcome(''), { label: 'Answered', outcome: 'unknown' })

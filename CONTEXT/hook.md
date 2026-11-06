@@ -1,201 +1,60 @@
-# Hook Binary: lucodehook
+# Hook: lucodehook
 
-## Overview
+`lucodehook` (`cmd/lucodehook`) es el binario que `claude -p` ejecuta en cada `PreToolUse`. En modo
+headless no hay dialogo de permisos y `PermissionRequest` no se dispara, asi que este evento es el
+unico punto donde parar una herramienta. Lo lanza el claude del runner; quien decide es el hub.
 
-**lucodehook** es un binario Go compilado que Claude Code invoca sincronizamente para eventos `PermissionRequest`. Actúa como puente entre el CLI de claude y el backend del orchestrator: se conecta via NATS pub/sub, envía la información de la herramienta, espera la decisión de aprobación/denegación del usuario, y sale con 0 (permitir) o 2 (denegar). Claude bloquea hasta que el hook sale.
-
-Todos los demás hooks (`PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop`, `SubagentStop`) se envían via **HTTP hook mode** al endpoint `POST /api/hooks/{event}` del backend de lucode.
-
-## Architecture
+## Camino de una aprobacion
 
 ```
-┌─ lucode (CLI principal) ─────────────────────────┐
-│  • Inicia servidor NATS (TCP :5222 + WS :5224) │
-│  • Arranca manager de sesiones                  │
-│  • Expone API HTTP (:8090) + Web UI             │
-└──────────────────────────────────────────────────┘
-                           ▲
-                           │ WS (browsers)
-                           │
-┌─ Claude Code CLI ────────┼───────────────────────┐
-│  • Inyecta env: LUCODE_SESSION_ID, LUCODE_NATS_URL
-│  • En PreToolUse → ejecuta lucodehook           │
-└──────────────────────────┼───────────────────────┘
-                           │
-                    ┌──────▼────────┐
-                    │  lucodehook   │
-                    │ (proc. hook)  │
-                    │ • Lee stdin   │
-                    │ • Conecta NATS│
-                    │ • Espera aprob│
-                    │ • Exit 0 o 2  │
-                    └───────────────┘
+claude (runner) -> lucodehook -> NATS request lucode.permissions.<sesion> -> hub
+                                                                              |
+claude <- JSON permissionDecision <- lucodehook <- respuesta allow/deny <-----+
 ```
 
-## Generation / Embedding
+En el hub, `Bus.handlePermissionRequest` atiende cada peticion en su propia goroutine (una suscripcion
+entrega de una en una y esto espera a una persona) y `Manager.onPermissionRequest` decide, en orden:
 
-El binario `lucodehook` se genera y **embebe** en el ejecutable `lucode` en tiempo de compilación:
+1. Herramientas de tarea y `ToolSearch`: se permiten.
+2. Ya se denego algo en este turno: se deniega, para que el agente pare y pregunte.
+3. Reglas de permisos (`internal/permissions`): allow y deny deciden; ask va directo a la persona.
+4. `Manager.ToolGate`: los flujos del proyecto con el disparador Tool requested (`internal/flows/toolgate.go`,
+   ver `docs/flows.md`). Pueden contestar allow, deny o dejarlo abierto.
+5. Si claude corre en modo auto (`permission_mode` que reporta el hook): el hub contesta `auto`, el hook
+   sale sin decision y decide el clasificador de claude.
+6. Si no, la persona: `hook_pending` a la pagina, hasta contestar o agotar el tiempo.
 
-1. **Compilar lucodehook** → `cmd/lucodehook/main.go` → `cmd/lucode/embedded/lucodehook`
-   ```bash
-   GOOS=linux GOARCH=amd64 go build -o cmd/lucode/embedded/lucodehook ./cmd/lucodehook
-   ```
+Cada llamada no contestada por una persona queda en el chat como mensaje `tool_execution`, con sus
+parametros, la decision y quien la tomo (`Manager.logToolCall`). Las de una persona salen como mensaje `hook`.
 
-2. **Embeber en lucode** → `cmd/lucode/main.go`
-   ```go
-   //go:embed embedded/lucodehook
-   var embeddedHook []byte
-   ```
+## Tiempos
 
-3. **Instalar** (comando `lucode install`) → extrae `embeddedHook` a `~/.lucode/lucodehook`
-   ```bash
-   lucode install  # → writes lucodehook a ~/.lucode/lucodehook
-   ```
+| Quien | Cuanto | Al agotarse |
+|---|---|---|
+| Flujos | 60 s | Pregunta a la persona |
+| Hub, desde que el hook pregunto | 4 min menos 5 s | Deny, "user did not respond"; la pagina deja de esperar |
+| Hook | 4 min | Deny, "approval timed out" |
+| Hook, si nadie escucha (hub caido) | Reintenta 30 s | Deny, "the lucode hub is not running" |
 
-4. **Registrar en settings.json** → se escribe automáticamente durante install
-   ```json
-   {
-     "hooks": {
-       "PermissionRequest": [
-         {
-           "matcher": "",
-           "hooks": [{"type": "command", "command": "/home/homebox/.lucode/lucodehook"}]
-         }
-       ],
-       "PreToolUse": [
-         {"matcher": "", "hooks": [{"type": "http", "url": "http://localhost:8090/api/hooks/PreToolUse"}]}
-       ],
-       "PostToolUse": [
-         {"matcher": "", "hooks": [{"type": "http", "url": "http://localhost:8090/api/hooks/PostToolUse"}]}
-       ],
-       "SessionStart": [...],
-       "SessionEnd": [...],
-       "UserPromptSubmit": [...],
-       "Stop": [...],
-       "SubagentStop": [...]
-     }
-   }
-   ```
+## Si algo falla
 
-## Environment Variables
+El hook falla cerrado cuando esta bajo lucode: sin NATS, sin respuesta o con una respuesta invalida,
+deniega, tambien en modo auto. Sin `LUCODE_SESSION_ID` no esta bajo lucode y sale sin decidir nada.
 
-Inyectadas por `session.Manager` (ver `process.go`) cuando crea el proceso Claude:
+## Instalacion
 
-- **LUCODE_SESSION_ID** (o fallback ORCHESTRATOR_SESSION_ID): ID único de la sesión
-- **LUCODE_NATS_URL**: URL del servidor NATS para comunicación pub/sub
-  - Formato: `nats://host:port` (TCP) o `ws://host:port` (WebSocket)
-  - Default: `nats://127.0.0.1:4222`
+- Cada SO embebe su binario: `cmd/lucode-runner/hook_<os>.go` + `embedded/lucodehook-<os>`, generado por
+  `./build-runner.sh`. Un cambio en `cmd/lucodehook` exige recompilar y reiniciar el runner.
+- `session.InstallHookSettings` lo escribe en `~/.lucode` junto a un settings que se pasa con `claude --settings`.
 
-## Stdin Format
+## Variables y registro
 
-Claude pasa esta información JSON en el stdin del hook (para `PermissionRequest`):
-```json
-{
-  "session_id": "...",
-  "transcript_path": "/path/to/transcript.jsonl",
-  "cwd": "/path/to/working/dir",
-  "permission_mode": "default",
-  "hook_event_name": "PermissionRequest",
-  "tool_name": "Bash",
-  "tool_input": { "command": "rm -rf /", "description": "Remove files" },
-  "tool_use_id": "toolu_01Q5iS3HFyLyqPhMxA985Squ",
-  "permission_suggestions": [...]
-}
-```
+- `LUCODE_SESSION_ID` (o `ORCHESTRATOR_SESSION_ID`), `LUCODE_NATS_URL` (por defecto
+  `nats://127.0.0.1:4222`) y `LUCODE_NATS_CREDS`.
+- Registro en `~/.lucode/lucodehook.log`, en la maquina donde corre el hook.
 
-Campos extraídos: `hook_event_name`, `tool_name`, `tool_use_id`, `tool_input`.
+## Pruebas
 
-El hook binario solo procesa `hook_event_name == "PermissionRequest"`. Para cualquier otro evento, sale con 0 inmediatamente (passthrough). Los otros eventos llegan al backend directamente via HTTP.
-
-## HTTP Hook Events (all events except PermissionRequest)
-
-```
-Claude CLI (PreToolUse / PostToolUse / SessionStart / etc.)
-  │
-  └─ POST http://localhost:8090/api/hooks/{eventName}
-       │  Body: full hook payload JSON
-       │
-       │  Backend (hookEvent handler):
-       │    - persists event as "hook_event" role message in DB
-       │    - broadcasts hook_event to browser WS clients
-       │    - returns { "continue": true } (or with permissionDecision for PreToolUse)
-       │
-       └─ Response: 200 OK { "continue": true }
-```
-
-## Approval Flow (NATS-based, PermissionRequest only)
-
-```
-Claude PermissionRequest
-  │
-  └─ runs lucodehook
-       │
-       ├─ read stdin (hook_event_name, tool info)
-       ├─ verify hook_event_name == "PermissionRequest"
-       ├─ connect NATS (TCP o WS)
-       ├─ subscribe to: hooks.{sessionID}.response.{toolUseID}
-       ├─ publish hook_request to: hooks.{sessionID}.request
-       │
-       │  Backend receives hook_request:
-       │    - stores in pending_hooks DB
-       │    - updates session status → waiting_hook
-       │    - broadcasts hook_pending to browser (WS)
-       │
-       ├─ hook waits for hook_response (4 min timeout)
-       │
-       │  User clicks Approve/Deny en browser:
-       │    - browser envía hook_respond { tool_use_id, decision }
-       │    - backend publishes hook_response a hooks.{sessionID}.response.{toolUseID}
-       │
-       ├─ hook recibe hook_response { decision }
-       │
-       ├─ decision == "deny" → exit 2 (stderr → Claude error)
-       └─ decision == "approve" → stdout JSON approval response → exit 0
-```
-
-## Concurrent Tool Calls
-
-Claude puede ejecutar múltiples herramientas en paralelo. Cada call spawns un hook process separado conectado a NATS:
-
-**Routing**: Cada hook envía su `tool_use_id` en `hook_request`. El backend lo usa para:
-- Crear subscription específica: `hooks.{sessionID}.response.{toolUseID}`
-- Publicar respuesta al canal exacto cuando el usuario aprueba/deniega
-
-Frontend muestra una cola de hooks pendientes (un modal a la vez). Cada `hook_resolved` elimina una entrada.
-
-## Timeout Handling
-
-- **Hook timeout**: 4 minutos (`sub.NextMsg(4 * time.Minute)`)
-- Si timeout → `deny("approval timed out — tool blocked")` → exit 2 (herramienta denegada automáticamente)
-
-Backend maneja:
-1. Hook se desconecta (timeout o usuario respondió)
-2. Si aún pendiente → publica `hook_resolved` + `info`
-3. Si ya resolvido → no-op
-
-## Logging
-
-Hook escribe logs a `~/.lucode/lucodehook-log-<timestamp>.txt`:
-```
-15:36:28.123456 === lucodehook invoked ===
-15:36:28.234567 args: [/home/homebox/.lucode/lucodehook]
-15:36:28.345678 LUCODE_SESSION_ID="sess_abc123..."
-15:36:28.456789 LUCODE_NATS_URL="nats://127.0.0.1:4222"
-15:36:28.567890 stdin: { full JSON }
-15:36:28.678901 tool_name="Bash" tool_use_id="toolu_..."
-15:36:28.789012 connecting to NATS nats://127.0.0.1:4222
-15:36:28.890123 nats connected
-15:36:28.901234 hook_request published to hooks.sess_abc123.request, waiting on hooks.sess_abc123.response.toolu_...
-15:36:40.012345 received: type="hook_response" decision="approve" reason=""
-15:36:40.123456 EXIT allow — user approved
-```
-
-## Safety: No Hook When Not Under Orchestrator
-
-```go
-if sessionID == "" {
-    allow("no LUCODE_SESSION_ID — not running under lucode")
-}
-```
-
-Si Claude Code se ejecuta directamente (no via orchestrator), `LUCODE_SESSION_ID` no se configura → hook exit 0 inmediatamente → todas las herramientas permitidas sin prompting.
+- `internal/api/toolgate_e2e_test.go`: el binario real del hook, NATS temporal y hub con motor.
+- `internal/flows/toolgate_test.go`: reglas del flujo. `cmd/lucodehook/main_test.go`: reintento sin hub.
+- `internal/natsbus/permission_test.go`: una aprobacion pendiente no frena a otras sesiones.

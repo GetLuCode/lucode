@@ -62,8 +62,9 @@ type Bus struct {
 	// before executing a tool. The callback MUST block until it has a
 	// decision (allow/deny) and return it as the (decision, reason)
 	// pair. The orchestrator's manager wires this to its store + UI
-	// prompt path.
-	OnPermissionRequest func(sessID, toolUseID, toolName string, toolInput json.RawMessage) (decision, reason string)
+	// prompt path. Requests run concurrently. Besides allow and deny it can answer auto, which
+	// leaves the call to claude's auto mode.
+	OnPermissionRequest func(PermissionRequest) (decision, reason string)
 
 	// OnTaskTool runs a task tool (task_comment / task_done / task_blocked) an
 	// agent called. The returned text is shown to the agent; an error is
@@ -108,7 +109,10 @@ func (b *Bus) Start() error {
 	if _, err := b.nc.Subscribe("sess.*.cmd", b.handleSessionCmd); err != nil {
 		return fmt.Errorf("subscribe sess.*.cmd: %w", err)
 	}
-	if _, err := b.nc.Subscribe("lucode.permissions.>", b.handlePermissionRequest); err != nil {
+	// A subscription delivers its messages one at a time and this handler waits for a person,
+	// so each request needs its own goroutine: otherwise one pending approval holds up every
+	// session until it is answered or expires.
+	if _, err := b.nc.Subscribe("lucode.permissions.>", func(msg *nats.Msg) { go b.handlePermissionRequest(msg) }); err != nil {
 		return fmt.Errorf("subscribe lucode.permissions.>: %w", err)
 	}
 	if _, err := b.nc.Subscribe("lucode.tasktools.>", b.handleTaskTool); err != nil {
@@ -252,17 +256,22 @@ func (b *Bus) handleSessionCmd(msg *nats.Msg) {
 	}
 }
 
+// PermissionRequest is a tool call the hook asks about, as the claude on the runner reports it.
+type PermissionRequest struct {
+	SessionID      string          `json:"-"` // from the subject
+	ToolUseID      string          `json:"tool_use_id"`
+	ToolName       string          `json:"tool_name"`
+	ToolInput      json.RawMessage `json:"tool_input"`
+	WorkDir        string          `json:"work_dir"`
+	PermissionMode string          `json:"permission_mode"`
+}
+
 // handlePermissionRequest is the aiapi→orchestrator permission gate.
 // It runs the OnPermissionRequest callback (which blocks until the
 // orchestrator's manager has a decision) and replies on the request's
 // inbox subject. Fail-closed: any error path replies with deny.
 func (b *Bus) handlePermissionRequest(msg *nats.Msg) {
-	var req struct {
-		ToolUseID string          `json:"tool_use_id"`
-		ToolName  string          `json:"tool_name"`
-		ToolInput json.RawMessage `json:"tool_input"`
-		WorkDir   string          `json:"work_dir"`
-	}
+	var req PermissionRequest
 	if err := json.Unmarshal(msg.Data, &req); err != nil {
 		log.Printf("[natsbus] permission request parse error: %v", err)
 		b.replyDeny(msg, "malformed permission request")
@@ -281,8 +290,11 @@ func (b *Bus) handlePermissionRequest(msg *nats.Msg) {
 		b.replyDeny(msg, "permission gate not configured")
 		return
 	}
-	decision, reason := b.OnPermissionRequest(sessID, req.ToolUseID, req.ToolName, req.ToolInput)
-	if decision != "allow" && decision != "deny" {
+	req.SessionID = sessID
+	decision, reason := b.OnPermissionRequest(req)
+	// auto only means something to a claude in auto mode: anywhere else it would be silence,
+	// and the hook of an older runner would read it as a deny anyway.
+	if decision != "allow" && decision != "deny" && !(decision == "auto" && req.PermissionMode == "auto") {
 		// fail-closed: unknown decision → deny
 		decision = "deny"
 		if reason == "" {

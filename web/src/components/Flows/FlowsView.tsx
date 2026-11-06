@@ -622,6 +622,8 @@ function FieldInput({ field, value, disabled, agents, lists, onChange }: {
       )
     case 'template':
       return <textarea className="input flows-field__text" rows={3} value={text} disabled={disabled} onChange={e => onChange(e.target.value)} />
+    case 'lines':
+      return <textarea className="input flows-field__text flows-field__code" rows={3} spellCheck={false} value={text} disabled={disabled} onChange={e => onChange(e.target.value)} />
     default:
       return (
         <input

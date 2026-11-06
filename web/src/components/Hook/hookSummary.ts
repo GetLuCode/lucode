@@ -20,15 +20,29 @@ export function hookAction(toolName: string): string {
   return ACTIONS[toolName] ?? 'Use a tool'
 }
 
-export type HookOutcome = 'allowed' | 'denied' | 'timeout' | 'unknown'
+export type HookOutcome = 'allowed' | 'denied' | 'auto' | 'timeout' | 'unknown'
 
-/** How an answered approval reads in the chat history. The server stores the UI's decision as is. */
-export function hookOutcome(decision: string): { label: string; outcome: HookOutcome } {
+/** Who decided a tool call nobody had to answer, as the hub logs it. */
+function decidedBySuffix(decidedBy?: string): string {
+  switch (decidedBy) {
+    case 'rule': return ' by a rule'
+    case 'flow': return ' by a flow'
+    default: return ''
+  }
+}
+
+/**
+ * How an answered approval or a logged tool call reads in the chat history. For an approval the
+ * server stores the UI's decision as is; for a logged call, allow, deny or auto and who decided.
+ */
+export function hookOutcome(decision: string, decidedBy?: string): { label: string; outcome: HookOutcome } {
   switch (decision) {
+    case 'allow': return { label: `Allowed${decidedBySuffix(decidedBy)}`, outcome: 'allowed' }
+    case 'auto': return { label: 'Claude auto mode', outcome: 'auto' }
     case 'approve': return { label: 'Approved', outcome: 'allowed' }
     case 'allow_always': return { label: 'Allowed always', outcome: 'allowed' }
     case 'allow_with_rule': return { label: 'Allowed by rule', outcome: 'allowed' }
-    case 'deny': return { label: 'Denied', outcome: 'denied' }
+    case 'deny': return { label: `Denied${decidedBySuffix(decidedBy)}`, outcome: 'denied' }
     case 'deny_always': return { label: 'Denied always', outcome: 'denied' }
     case 'timeout': return { label: 'Timed out', outcome: 'timeout' }
     default: return { label: decision || 'Answered', outcome: 'unknown' }

@@ -212,6 +212,7 @@ func Validate(g Graph) []Problem {
 	}
 
 	problems = append(problems, mergeProblems(g)...)
+	problems = append(problems, toolFlowProblems(g)...)
 
 	if cycle := findCycle(g); cycle != "" {
 		add(cycle, "this node is in a loop: loops must go through the \"again\" output of a Retry node, which limits them")

@@ -176,7 +176,7 @@ export type WSEvent =
   | { type: 'session_status'; session_id: string; status: string; error?: string }
   | { type: 'stream_event'; session_id: string; event: unknown; partial?: boolean }
   | { type: 'user_message'; session_id: string; id: string; content: string; seq: number; created_at: string }
-  | { type: 'tool_execution'; session_id: string; tool_name: string; tool_use_id: string; tool_input: unknown; timestamp: string; message_id: string }
+  | { type: 'tool_execution'; session_id: string; tool_name: string; tool_use_id: string; tool_input: unknown; timestamp: string; message_id: string; decision?: string; decided_by?: string; reason?: string }
   | { type: 'tool_execution_complete'; session_id: string; tool_use_id: string; tool_response: unknown; message_id: string }
   | { type: 'task_updated'; session_id: string; project_id: string; card_id: string }
   | { type: 'flow_updated'; project_id: string; flow_id: string; run_id: string; status: string }
@@ -292,7 +292,7 @@ export interface Agent {
   scope: 'project' | 'global'   // global agents are available in every project
   lucode_tools: string[]        // lucode tools the agent has (task_*, agent_list, send_to_agent, task_info)
   persistent: boolean           // keep the claude -p process alive between messages
-  auto_mode: boolean            // claude --permission-mode auto: no lucode approval requests
+  auto_mode: boolean            // claude --permission-mode auto: what rules and flows leave open goes to claude, not to a person
   worktree: boolean             // claude --worktree: work in its own git worktree
   worktree_base_ref: 'head' | 'fresh' // worktree.baseRef: branch off the current HEAD (default) or a fresh remote default branch
   reports_to: string            // id of the supervising agent ('' = none)

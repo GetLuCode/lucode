@@ -1489,8 +1489,8 @@ type Agent struct {
 	// ("" = use the project's). The AI belongs to the runner it is set with.
 	RunnerID    string `json:"runner_id"`
 	AIProfileID string `json:"ai_profile_id"`
-	// AutoMode runs claude with --permission-mode auto: it decides on its own which
-	// tools are safe, so lucode's approval hook is not installed for this agent.
+	// AutoMode runs claude with --permission-mode auto. lucode's hook stays: rules and
+	// flows still apply, and claude decides what they leave open instead of a person.
 	AutoMode bool `json:"auto_mode"`
 	// Worktree makes claude work in its own git worktree (--worktree). WorktreeBaseRef
 	// is the worktree.baseRef setting passed through --settings: "head" (the
