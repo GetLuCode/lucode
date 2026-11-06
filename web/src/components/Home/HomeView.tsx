@@ -40,7 +40,7 @@ export function HomeView() {
 
   async function open(p: Project) {
     await setActiveProject(p.id)
-    navigate(`/projects/${p.id}/kanban`)
+    navigate(`/projects/${p.id}/agent`)
   }
 
   return (

@@ -26,7 +26,7 @@ export function NavPanel({ mobileOpen = false, onMobileClose }: { mobileOpen?: b
 
   const handleSelectProject = async (id: string) => {
     await setActiveProject(id)
-    navigate(`/projects/${id}/kanban`)
+    navigate(`/projects/${id}/agent`)
   }
 
   const handleWorkspacePickerConfirm = async (name: string, path: string, env: { runnerId: string; aiProfileId: string }) => {
@@ -40,7 +40,7 @@ export function NavPanel({ mobileOpen = false, onMobileClose }: { mobileOpen?: b
       ...(remote ? { runner_id: env.runnerId, env_dirs: { [env.runnerId]: [path] } } : {}),
     })
     await setActiveProject(p.id)
-    navigate(`/projects/${p.id}/kanban`)
+    navigate(`/projects/${p.id}/agent`)
   }
 
   return (

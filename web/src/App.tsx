@@ -104,7 +104,7 @@ export default function App() {
   }, [projectId, sessionId])
 
   // Sync store changes to URL — skip if already on a sub-route like /agents or /kanban.
-  // A bare /projects/:id lands on the board; "/" is the start page.
+  // A bare /projects/:id lands on the Supervisor tab; "/" is the start page.
   useEffect(() => {
     const path = location.pathname
     if (path === '/') return // the start page
@@ -114,7 +114,7 @@ export default function App() {
       if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
       return // a deep link: wait for the store to pick the session up
     }
-    navigate(`/projects/${activeProjectId}/kanban`, { replace: true })
+    navigate(`/projects/${activeProjectId}/agent`, { replace: true })
   }, [activeProjectId, activeSessionId, navigate, location.pathname])
 
   // Any navigation closes the overlay.
