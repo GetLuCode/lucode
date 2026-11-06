@@ -523,7 +523,8 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
 
       <div className="orch__body">
       <div className="orch__main">
-      {sid && !isLocalModel && <ContextBar sessionId={sid} placement="panel" />}
+      {/* the side panel is too narrow for the details: they open in the middle of the screen */}
+      {sid && !isLocalModel && <ContextBar sessionId={sid} placement={full ? 'panel' : 'viewport'} />}
 
       <div className="orch__messages" ref={scrollRef}>
         {hasOlder && (
