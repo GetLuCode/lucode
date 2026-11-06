@@ -51,3 +51,26 @@ func TestResolveTurnEnv(t *testing.T) {
 		t.Errorf("agent on this instance: %+v %v", env, err)
 	}
 }
+
+// A hub (--hub-only) runs no claude: a project or agent that would run on this
+// instance is an error that says what to do, and the runners it offers do not include
+// itself. Projects on a runner are unaffected.
+func TestHubOnlyNeverRunsLocally(t *testing.T) {
+	h, _, _ := newTaskTestHandler(t)
+	h.bus = natspkg.NewBus(nil)
+	h.SetHubOnly(true)
+
+	local := dbpkg.Project{Name: "p", WorkDirs: []string{"/w"}}
+	remote := dbpkg.Project{Name: "p", RunnerID: "peer1", EnvDirs: map[string][]string{"peer1": {"/peer/w"}}}
+
+	if _, err := h.resolveTurnEnv(dbpkg.Agent{}, local); err == nil || !strings.Contains(err.Error(), "--hub-only") {
+		t.Errorf("a project without runner must fail with a hint, got %v", err)
+	}
+	if _, err := h.resolveTurnEnv(dbpkg.Agent{RunnerID: "local"}, remote); err == nil {
+		t.Error("an agent pulled back to the hub must fail")
+	}
+	env, err := h.resolveTurnEnv(dbpkg.Agent{}, remote)
+	if err != nil || env.RunnerID != "peer1" || env.WorkDirs[0] != "/peer/w" {
+		t.Errorf("a project on a runner must work: %+v %v", env, err)
+	}
+}

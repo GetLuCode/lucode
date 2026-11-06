@@ -71,9 +71,11 @@ func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpk
 		Executor:        agent.Executor,
 		SystemPrompt:    agentSystemPrompt(agent, card, h.supervisorName(agent)),
 		AgentName:       agent.Name,
-		Tools:           agent.Tools,
+		Tools:           agentTools(agent),
 		Persistent:      agent.Persistent && agent.Executor == "claude",
 		AutoMode:        agent.AutoMode && agent.Executor == "claude",
+		Worktree:        agent.Worktree && agent.Executor == "claude",
+		WorktreeBaseRef: agent.WorktreeBaseRef,
 		LucodeTools:     agent.LucodeTools,
 	}, nil
 }
@@ -322,6 +324,7 @@ func (h *Handler) notifySupervisor(agent dbpkg.Agent, card dbpkg.KanbanCard, tex
 // (today: a session that cannot be resumed) is recorded on the task, which moves
 // to Blocked, and the supervising agent is told. There is no automatic retry.
 func (h *Handler) HandleTurnFailed(sessID, code, message string) {
+	h.recordTurnEvent(sessID, dbpkg.EventTurnFailed, map[string]any{"code": code, "message": message})
 	sess, err := dbpkg.GetSession(h.db, sessID)
 	if err != nil || sess.CardID == "" {
 		return

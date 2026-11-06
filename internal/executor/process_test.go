@@ -1,7 +1,9 @@
 package executor
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -115,5 +117,49 @@ func TestAutoModeReplacesTheApprovalHook(t *testing.T) {
 	auto := buildArgs(TurnRequest{SessionID: "s", ClaudeSettings: "hooks.json", PermissionMode: "auto"})
 	if !has(auto, "--permission-mode=auto") || has(auto, "--settings=hooks.json") {
 		t.Errorf("auto mode passes --permission-mode and not the hook: %v", auto)
+	}
+}
+
+func TestWorktreeSettingsAndFlag(t *testing.T) {
+	hooks := filepath.Join(t.TempDir(), "hooks.json")
+	if err := os.WriteFile(hooks, []byte(`{"hooks":{"PreToolUse":[]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	find := func(args []string, prefix string) string {
+		for _, a := range args {
+			if strings.HasPrefix(a, prefix) {
+				return a
+			}
+		}
+		return ""
+	}
+	parse := func(args []string) map[string]any {
+		raw := strings.TrimPrefix(find(args, "--settings="), "--settings=")
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatalf("--settings is not JSON: %q (%v)", raw, err)
+		}
+		return m
+	}
+	base := func(m map[string]any) any { return m["worktree"].(map[string]any)["baseRef"] }
+
+	off := buildArgs(TurnRequest{SessionID: "12345678-aaaa", ClaudeSettings: hooks, WorktreeBaseRef: "fresh"})
+	if find(off, "--worktree") != "" || find(off, "--settings=") != "--settings="+hooks {
+		t.Errorf("without worktree nothing changes: %v", off)
+	}
+
+	def := buildArgs(TurnRequest{SessionID: "12345678-aaaa", ClaudeSettings: hooks, Worktree: true})
+	m := parse(def)
+	if base(m) != "head" || m["hooks"] == nil {
+		t.Errorf("baseRef defaults to head and keeps the hook settings: %v", m)
+	}
+	if find(def, "--worktree=") != "--worktree=lucode-12345678" {
+		t.Errorf("worktree flag: %v", def)
+	}
+
+	fresh := buildArgs(TurnRequest{SessionID: "12345678-aaaa", PermissionMode: "auto", ClaudeSettings: hooks, Worktree: true, WorktreeBaseRef: "fresh"})
+	m = parse(fresh)
+	if base(m) != "fresh" || m["hooks"] != nil {
+		t.Errorf("auto mode: fresh baseRef and no hooks: %v", m)
 	}
 }

@@ -1,10 +1,12 @@
+import { buildCardMachine, canMoveCard, cardState, type CardMachine } from '../../lib/cardMachine'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   IconPlus, IconX, IconTrash, IconArchive,
   IconArchiveOff, IconRobot, IconCalendar, IconLink,
-  IconTag, IconGripVertical, IconRefresh,
+  IconTag, IconGripVertical, IconRefresh, IconGitMerge, IconCopy,
 } from '@tabler/icons-react'
+import { copyText } from '../../lib/copyText'
 import { useStore } from '../../store'
 import type { Agent, CardComment, KanbanCard, KanbanList } from '../../types'
 import * as api from '../../api'
@@ -12,7 +14,7 @@ import { backdropClose } from '../../lib/backdropClose'
 import { KanbanFilters, NO_FILTERS, matchesFilters, type KanbanFilterState } from './KanbanFilters'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { AgentAvatar } from '../Agents/AgentAvatar'
-import { OrchestratorOpenButton } from '../Orchestrator/OrchestratorOpenButton'
+import { ReviewModal } from './ReviewModal'
 
 // ---- pasted images -----------------------------------------------------------
 
@@ -248,6 +250,10 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
               >⋯</button>
               {menuOpen && (
                 <div className="nav-tree__dropdown" style={{ right: 0, left: 'auto' }}>
+                  <button className="nav-tree__menu-item" onClick={() => { copyText(card.id); setMenuOpen(false) }} title={card.id}>
+                    <IconCopy size={14} />
+                    <span>Copy task id</span>
+                  </button>
                   <button className="nav-tree__menu-item" onClick={handleReset}>
                     <IconRefresh size={14} />
                     <span>Reset</span>
@@ -507,6 +513,7 @@ interface CardItemProps {
   card: KanbanCard
   agents: Agent[]
   onClick: () => void
+  onReview?: () => void   // only for cards in the Review list: opens the merge dialog
   onDragStart: (e: React.DragEvent) => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
@@ -518,7 +525,7 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
   error:        { label: '✕ error',          color: '#ef4444' },
 }
 
-function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop }: CardItemProps) {
+function KanbanCardItem({ card, agents, onClick, onReview, onDragStart, onDragOver, onDrop }: CardItemProps) {
   const agent = agents.find(a => a.id === card.agent_id)
   // Live state of the agent working on this task (its chat session).
   const runStatus = useStore(s => {
@@ -548,6 +555,19 @@ function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop
       {card.description && (
         <p className="kcard__desc">{card.description}</p>
       )}
+      {runStatus === 'error' && card.last_error && (
+        <p className="kcard__error" title={card.last_error}>{card.last_error}</p>
+      )}
+      {onReview && (
+        <button
+          className="kcard__review-btn"
+          draggable={false}
+          onClick={e => { e.stopPropagation(); onReview() }}
+          title="Check the branch and merge it"
+        >
+          <IconGitMerge size={12} /> Review &amp; merge
+        </button>
+      )}
       <div className="kcard__meta">
         {hasDates && (
           <span className={`kcard__date${isOverdue ? ' kcard__date--overdue' : ''}`}>
@@ -559,13 +579,79 @@ function KanbanCardItem({ card, agents, onClick, onDragStart, onDragOver, onDrop
           <span key={t} className="kcard__tag">{t}</span>
         ))}
         {badge && (
-          <span className="kcard__status" style={{ color: badge.color }}>{badge.label}</span>
+          <span className="kcard__status" style={{ color: badge.color }} title={runStatus === 'error' ? card.last_error : undefined}>{badge.label}</span>
         )}
         {card.depends_on.length > 0 && (
           <span className="kcard__deps" title={`${card.depends_on.length} dependency`}>
             <IconLink size={11} />{card.depends_on.length}
           </span>
         )}
+        {agent && <CardAgent agent={agent} />}
+      </div>
+    </div>
+  )
+}
+
+// ---- List view ---------------------------------------------------------------
+
+// The same cards as the board, grouped by status (list) as rows. Tasks are added per group.
+function KanbanListView({ lists, cards, agents, onCardClick, onAddCard }: {
+  lists: KanbanList[]
+  cards: KanbanCard[]
+  agents: Agent[]
+  onCardClick: (c: KanbanCard) => void
+  onAddCard: (listId: string, title: string) => void
+}) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  return (
+    <div className="klist">
+      {lists.map(list => {
+        const rows = cards.filter(c => c.list_id === list.id).sort((a, b) => a.position - b.position)
+        return (
+          <section key={list.id}>
+            <div className="klist__group-head">{list.name} <span className="klist__count">{rows.length}</span></div>
+            <div className="klist__rows">
+              {rows.length === 0 && <div className="klist__empty">No tasks</div>}
+              {rows.map(c => <KanbanListRow key={c.id} card={c} agents={agents} onClick={() => onCardClick(c)} />)}
+              <input
+                className="klist__add"
+                placeholder="+ Add a task…"
+                value={drafts[list.id] ?? ''}
+                onChange={e => setDrafts(d => ({ ...d, [list.id]: e.target.value }))}
+                onKeyDown={e => {
+                  const v = (drafts[list.id] ?? '').trim()
+                  if (e.key === 'Enter' && v) { onAddCard(list.id, v); setDrafts(d => ({ ...d, [list.id]: '' })) }
+                  if (e.key === 'Escape') setDrafts(d => ({ ...d, [list.id]: '' }))
+                }}
+              />
+            </div>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
+function KanbanListRow({ card, agents, onClick }: { card: KanbanCard; agents: Agent[]; onClick: () => void }) {
+  const agent = agents.find(a => a.id === card.agent_id)
+  const runStatus = useStore(s => {
+    const sess = s.sessions.find(x => x.card_id === card.id)
+    return sess ? (s.sessionStatus[sess.id] ?? sess.status) : undefined
+  })
+  const badge = runStatus ? STATUS_BADGE[runStatus] : undefined
+  const isOverdue = card.end_date && new Date(card.end_date) < new Date()
+  return (
+    <div className="klist__row" onClick={onClick}>
+      <span className="klist__type" style={{ color: typeColor(card.card_type) }}>{card.card_type}</span>
+      <p className="klist__title" title={card.title}>{card.title}</p>
+      <div className="klist__meta">
+        {card.tags.slice(0, 2).map(t => <span key={t} className="kcard__tag">{t}</span>)}
+        {(card.end_date || card.start_date) && (
+          <span className={`kcard__date${isOverdue ? ' kcard__date--overdue' : ''}`}>
+            <IconCalendar size={11} />{formatDate(card.end_date || card.start_date)}
+          </span>
+        )}
+        {badge && <span style={{ color: badge.color }}>{badge.label}</span>}
         {agent && <CardAgent agent={agent} />}
       </div>
     </div>
@@ -604,6 +690,7 @@ interface ColumnProps {
   cards: KanbanCard[]
   agents: Agent[]
   onCardClick: (c: KanbanCard) => void
+  onReviewCard: (c: KanbanCard) => void
   onAddCard: (listId: string, title: string) => void
   onRenameList: (id: string, name: string) => void
   onDeleteList: (id: string) => void
@@ -613,7 +700,7 @@ interface ColumnProps {
 
 function KanbanColumn({
   list, cards, agents,
-  onCardClick, onAddCard, onRenameList, onDeleteList,
+  onCardClick, onReviewCard, onAddCard, onRenameList, onDeleteList,
   onCardDragStart, onCardDrop,
 }: ColumnProps) {
   const [addingCard, setAddingCard] = useState(false)
@@ -676,6 +763,7 @@ function KanbanColumn({
             card={card}
             agents={agents}
             onClick={() => onCardClick(card)}
+            onReview={list.kind === 'review' ? () => onReviewCard(card) : undefined}
             onDragStart={() => onCardDragStart(card.id, list.id)}
             onDragOver={e => e.preventDefault()}
             onDrop={() => onCardDrop(list.id, card.id)}
@@ -726,11 +814,23 @@ export function KanbanView() {
   const navigate = useNavigate()
 
   const [lists, setLists] = useState<KanbanList[]>([])
+  const cardMachine = useRef<CardMachine | null>(null)
+  useEffect(() => {
+    api.getCardMachine().then(m => { cardMachine.current = buildCardMachine(m) }).catch(console.error)
+  }, [])
   const [cards, setCards] = useState<KanbanCard[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [showArchived, setShowArchived] = useState(false)
+  const [view, setViewState] = useState<'list' | 'kanban'>(() => {
+    try { return localStorage.getItem('lucode.work.view') === 'list' ? 'list' : 'kanban' } catch { return 'kanban' }
+  })
+  const setView = (v: 'list' | 'kanban') => {
+    setViewState(v)
+    try { localStorage.setItem('lucode.work.view', v) } catch { /* private mode */ }
+  }
   const [filters, setFilters] = useState<KanbanFilterState>(NO_FILTERS)
   const [selectedCard, setSelectedCard] = useState<KanbanCard | null>(null)
+  const [reviewCard, setReviewCard] = useState<KanbanCard | null>(null)
   const [addingList, setAddingList] = useState(false)
   const [newListName, setNewListName] = useState('')
   const [loading, setLoading] = useState(false)
@@ -773,6 +873,11 @@ export function KanbanView() {
         const canUp = e.deltaY < 0 && list.scrollTop > 0
         const canDown = e.deltaY > 0 && list.scrollTop + list.clientHeight < list.scrollHeight - 1
         if (canUp || canDown) return // let the list scroll natively
+        if (list.scrollHeight > list.clientHeight) {
+          // scrollable list at its edge: swallow the wheel so the board doesn't scroll sideways
+          e.preventDefault()
+          return
+        }
       }
       if (board.scrollWidth <= board.clientWidth) return
       e.preventDefault()
@@ -823,6 +928,7 @@ export function KanbanView() {
       depends_on: [],
       position: pos,
     })
+    // the server puts new cards on top of the list (most recent first)
     setCards(prev => [...prev, c])
   }
 
@@ -840,7 +946,13 @@ export function KanbanView() {
 
   async function handleSaveCard(id: string, patch: Partial<KanbanCard>) {
     const before = cards.find(c => c.id === id)
-    const updated = await api.updateKanbanCard(id, patch)
+    let updated: KanbanCard
+    try {
+      updated = await api.updateKanbanCard(id, patch)
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e))
+      return
+    }
     setCards(prev => prev.map(c => c.id === id ? updated : c))
     // keep modal in sync
     setSelectedCard(updated)
@@ -878,6 +990,18 @@ export function KanbanView() {
     dragCardId.current = null
     dragFromListId.current = null
 
+    // A move the card's lifecycle already refuses never leaves the browser. What only the hub
+    // knows (dependencies, an unanswered blocker) counts as fine here: the hub still decides.
+    const dragged = cards.find(c => c.id === cid)
+    if (dragged && dragged.list_id !== toListId && cardMachine.current) {
+      const from = cardState(lists.find(l => l.id === dragged.list_id)?.kind)
+      const to = cardState(lists.find(l => l.id === toListId)?.kind)
+      if (!canMoveCard(cardMachine.current, from, to, { hasAgent: !!dragged.agent_id, depsDone: true, blockerAnswered: true })) {
+        window.alert('Assign an agent to this task before moving it to In Progress.')
+        return
+      }
+    }
+
     // reorder locally first for snappy feel
     setCards(prev => {
       const moving = prev.find(c => c.id === cid)
@@ -904,7 +1028,14 @@ export function KanbanView() {
     const newPos = afterCardId
       ? (cards.filter(c => c.list_id === toListId).findIndex(c => c.id === afterCardId) + 1)
       : cards.filter(c => c.list_id === toListId).length
-    await api.updateKanbanCard(cid, { list_id: toListId, position: newPos })
+    try {
+      await api.updateKanbanCard(cid, { list_id: toListId, position: newPos })
+    } catch (e) {
+      // the move was refused (for example no agent assigned): put the card back
+      await reloadBoard()
+      window.alert(e instanceof Error ? e.message : String(e))
+      return
+    }
     if (card.list_id !== toListId) await reloadBoard()
   }
 
@@ -924,11 +1055,16 @@ export function KanbanView() {
         agents={agents}
         showArchived={showArchived}
         onToggleArchived={() => setShowArchived(v => !v)}
-        shown={visibleCards.length}
-        total={cards.filter(c => showArchived || !c.archived).length}
+        view={view}
+        onViewChange={setView}
       />
-      {/* board */}
-      <div className="kanban-board" ref={boardRef}>
+      <div className="kanban-content">
+        <span className="kanban-count"><b>{visibleCards.length}</b> of {cards.filter(c => showArchived || !c.archived).length} cards</span>
+      {view === 'list' && (
+        <KanbanListView lists={lists} cards={visibleCards} agents={agents} onCardClick={setSelectedCard} onAddCard={handleAddCard} />
+      )}
+      {/* board (kept mounted in list view: its wheel handler is bound to this element) */}
+      <div className="kanban-board" ref={boardRef} style={view === 'list' ? { display: 'none' } : undefined}>
         {loading && <div className="kanban-board__loading">Loading…</div>}
 
         {lists.map(list => (
@@ -938,6 +1074,7 @@ export function KanbanView() {
             cards={visibleCards.filter(c => c.list_id === list.id).sort((a, b) => a.position - b.position)}
             agents={agents}
             onCardClick={setSelectedCard}
+            onReviewCard={setReviewCard}
             onAddCard={handleAddCard}
             onRenameList={handleRenameList}
             onDeleteList={handleDeleteList}
@@ -973,11 +1110,17 @@ export function KanbanView() {
           )
         )}
       </div>
-
-      {/* board actions live under the board */}
-      <div className="kanban-view__footer">
-        <OrchestratorOpenButton />
       </div>
+
+      {/* review: merge the branch an agent left, or send it back */}
+      {reviewCard && (
+        <ReviewModal
+          card={reviewCard}
+          onClose={() => setReviewCard(null)}
+          onDetails={() => { setSelectedCard(reviewCard); setReviewCard(null) }}
+          onChanged={async () => { setReviewCard(null); await reloadBoard() }}
+        />
+      )}
 
       {/* card modal */}
       {selectedCard && (

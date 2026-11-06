@@ -22,6 +22,36 @@ export interface Runner {
   hostname: string
   os: string
   self: boolean
+  version?: string      // short git commit it was built from ("+dirty" = uncommitted changes)
+  started_at?: string   // RFC3339
+  runner_only?: boolean // lucode-runner: it only executes; the hub never does
+}
+
+// A claude command line a runner launched (or failed to launch).
+export interface ClaudeCommand {
+  id: string
+  session_id: string
+  runner_id?: string
+  at: string            // RFC3339
+  exe: string
+  args: string[]
+  cwd: string
+  pid: number
+  error?: string
+}
+
+// GET /api/version of a runner.
+export interface RunnerVersion {
+  commit?: string
+  short: string
+  commit_time?: string
+  dirty: boolean
+  built_at?: string
+  started_at: string
+  go: string
+  os: string
+  arch: string
+  role?: string
 }
 
 // A preconfigured AI of a runner: a claude_config_dir plus the account it belongs to.
@@ -60,6 +90,9 @@ export interface Session {
   card_id?: string        // the task (kanban card) this session belongs to
   agent_id?: string       // the agent running it
   kind?: 'orchestrator' | '' // the project's main chat (right-hand panel)
+  worktree?: string       // git worktree the agent works in (from its transcript)
+  worktree_removed?: boolean // merging its task deleted that worktree: the chat is closed
+  branch?: string         // its branch
 }
 
 export interface MessageUsage {
@@ -146,6 +179,7 @@ export type WSEvent =
   | { type: 'tool_execution'; session_id: string; tool_name: string; tool_use_id: string; tool_input: unknown; timestamp: string; message_id: string }
   | { type: 'tool_execution_complete'; session_id: string; tool_use_id: string; tool_response: unknown; message_id: string }
   | { type: 'task_updated'; session_id: string; project_id: string; card_id: string }
+  | { type: 'flow_updated'; project_id: string; flow_id: string; run_id: string; status: string }
   | { type: 'hook_pending'; session_id: string; tool_use_id: string; tool_name: string; tool_input: unknown; tool_input_schema?: ToolInputField[] | null; created_at: string }
   | { type: 'hook_resolved'; session_id: string; tool_use_id: string; decision: string }
   | { type: 'turn_complete'; session_id: string; result_subtype: string; result_text: string }
@@ -154,9 +188,11 @@ export type WSEvent =
   | { type: 'info'; session_id: string; message: string }
   | { type: 'progress'; session_id: string; text: string }
   | { type: 'claude_process'; session_id: string; alive: boolean; pid?: number; runner?: string }
+  | ({ type: 'claude_workspace'; session_id: string } & ClaudeWorkspace)
   | { type: 'context_usage'; session_id: string; categories: ContextCategory[]; totalTokens: number; maxTokens: number; percentage: number; model: string }
-  | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; model: string }
+  | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; cache_creation_1h_input_tokens?: number; model: string }
   | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
+  | { type: 'peers_changed' }
 
 // Structured assistant message content
 export interface AssistantMessage {
@@ -218,7 +254,7 @@ export interface KanbanList {
   project_id: string
   name: string
   position: number
-  kind?: string  // workflow role: backlog, todo, inprogress, done, blocked (custom lists have none)
+  kind?: string  // workflow role: backlog, todo, inprogress, review, done, blocked (custom lists have none)
   created_at: string
 }
 
@@ -239,6 +275,7 @@ export interface KanbanCard {
   position: number
   archived: boolean
   parent_id: string
+  last_error?: string  // why the task's session is in error (newest error note)
   created_at: string
   updated_at: string
 }
@@ -256,6 +293,8 @@ export interface Agent {
   lucode_tools: string[]        // lucode tools the agent has (task_*, agent_list, send_to_agent, task_info)
   persistent: boolean           // keep the claude -p process alive between messages
   auto_mode: boolean            // claude --permission-mode auto: no lucode approval requests
+  worktree: boolean             // claude --worktree: work in its own git worktree
+  worktree_base_ref: 'head' | 'fresh' // worktree.baseRef: branch off the current HEAD (default) or a fresh remote default branch
   reports_to: string            // id of the supervising agent ('' = none)
   runner_id: string             // runner the agent works on ('' = the project's)
   ai_profile_id: string         // preconfigured AI of that runner ('' = the project's)
@@ -362,6 +401,16 @@ export interface ClaudeProcess {
   alive: boolean
   pid?: number     // local processes only
   runner?: string  // the runner holding it, when it is not this instance
+  workspace?: ClaudeWorkspace
+}
+
+// Where claude works, as the machine that runs it reported when the process started.
+export interface ClaudeWorkspace {
+  cwd: string
+  path?: string      // git root of the cwd (the worktree itself, when it is one)
+  branch?: string
+  worktree?: boolean // a linked git worktree, not the main checkout
+  repo?: string      // the main checkout a worktree belongs to
 }
 
 // A Google AI Mode conversation of the local model: the chat it belongs to and the url that
@@ -391,3 +440,26 @@ export interface AIModeConversation {
   message_count: number
   current: boolean
 }
+
+// Something lucode noticed that the user may want to clean up by hand (the bell in the header).
+export interface Alert {
+  id: string
+  kind: 'stale_worktree'
+  title: string
+  detail: string
+  command: string // what to run to clean it up
+}
+
+// Flows: automations of a project. The hub owns the node types, validates and runs them.
+export interface FlowNode { id: string; type: string; x: number; y: number; config?: Record<string, unknown> }
+export interface FlowEdge { from: string; port: string; to: string }
+export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[] }
+export interface FlowNodeField { name: string; label: string; kind: 'text' | 'template' | 'expr' | 'number' | 'select' | 'agent' | 'list' | 'bool'; required?: boolean; options?: string[]; default?: unknown; help?: string; min?: number; port_label?: string }
+export interface FlowNodeType { type: string; title: string; category: 'trigger' | 'control' | 'action'; description: string; ports: string[] | null; fields: FlowNodeField[] | null }
+export interface Flow { id: string; project_id: string; name: string; draft: FlowGraph; published_version: number; enabled: boolean; created_at: string; updated_at: string }
+export interface FlowProblem { node_id?: string; message: string }
+export interface FlowRun { id: string; flow_id: string; version: number; project_id: string; card_id: string; event_id: number; event: unknown; depth: number; status: string; error: string; started_at: string; finished_at: string }
+export interface FlowStep { seq: number; run_id: string; node_id: string; from_node: string; status: string; port: string; output: unknown; error: string; wait_key: string; wake_at: string; started_at: string; finished_at: string }
+export interface ActiveFlowRun { run: FlowRun; flow_name: string; open: string[]; open_names: string[]; card_title: string }
+export interface FlowApproval { seq: number; run_id: string; flow_id: string; flow_name: string; node_id: string; card_id: string; card_title: string; question: string; since: string }
+export interface FlowBlueprint { key: string; name: string; description: string; seeded: boolean }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -109,6 +110,22 @@ func (h *Handler) ttsSpeak(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no Fish Audio key: add it in the voice settings", http.StatusPreconditionFailed)
 		return
 	}
+	setAudioHeaders := func() {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("X-Sample-Rate", "44100")
+		w.Header().Set("Cache-Control", "no-store")
+	}
+
+	// Same text, model, voice and speed as an earlier playback: serve it from disk, no worker, no Fish Audio.
+	key := ttsCacheKey(s, body.Text)
+	if f := ttsCacheOpen(key); f != nil {
+		defer f.Close()
+		setAudioHeaders()
+		w.Header().Set("X-TTS-Cache", "hit")
+		_, _ = io.Copy(w, f)
+		return
+	}
+
 	c, _, err := stt.Ensure(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -118,15 +135,15 @@ func (h *Handler) ttsSpeak(w http.ResponseWriter, r *http.Request) {
 
 	flusher, _ := w.(http.Flusher)
 	started := false
+	cache := ttsCacheCreate(key)
 	err = c.Synthesize(r.Context(), stt.TTSRequest{
 		Text: body.Text, APIKey: s.APIKey, Model: s.Model, VoiceID: s.VoiceID, Speed: s.Speed,
 	}, func(pcm []byte) error {
 		if !started {
 			started = true
-			w.Header().Set("Content-Type", "application/octet-stream")
-			w.Header().Set("X-Sample-Rate", "44100")
-			w.Header().Set("Cache-Control", "no-store")
+			setAudioHeaders()
 		}
+		cache.Write(pcm)
 		if _, err := w.Write(pcm); err != nil {
 			return err
 		}
@@ -135,6 +152,11 @@ func (h *Handler) ttsSpeak(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
+	if err == nil && started {
+		cache.Commit() // only a synthesis that ended cleanly is kept
+	} else {
+		cache.Discard()
+	}
 	if err != nil && !started {
 		http.Error(w, ttsErrorText(err), ttsErrorStatus(err))
 	}

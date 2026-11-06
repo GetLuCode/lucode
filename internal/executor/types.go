@@ -7,24 +7,24 @@ package executor
 type Provider string
 
 const (
-	ProviderClaude  Provider = "claude"  // claude CLI (default)
-	ProviderOllama  Provider = "ollama"  // local Ollama API
+	ProviderClaude Provider = "claude" // claude CLI (default)
+	ProviderOllama Provider = "ollama" // local Ollama API
 )
 
 // TurnRequest is the unit of work: everything needed to run an AI turn.
 type TurnRequest struct {
-	SessionID   string   `json:"session_id"`
-	ProjectID   string   `json:"project_id"`
-	AccountID   string   `json:"account_id"`
-	Message     string   `json:"message"`
-	Model       string   `json:"model"`
-	Provider    Provider `json:"provider"`
-	WorkDirs    []string `json:"work_dirs"`
-	Resume      bool     `json:"resume"`
-	ForkFrom    string   `json:"fork_from,omitempty"`
-	Name        string   `json:"name,omitempty"`
-	Effort      string   `json:"effort,omitempty"`
-	Thinking    string   `json:"thinking,omitempty"`
+	SessionID string   `json:"session_id"`
+	ProjectID string   `json:"project_id"`
+	AccountID string   `json:"account_id"`
+	Message   string   `json:"message"`
+	Model     string   `json:"model"`
+	Provider  Provider `json:"provider"`
+	WorkDirs  []string `json:"work_dirs"`
+	Resume    bool     `json:"resume"`
+	ForkFrom  string   `json:"fork_from,omitempty"`
+	Name      string   `json:"name,omitempty"`
+	Effort    string   `json:"effort,omitempty"`
+	Thinking  string   `json:"thinking,omitempty"`
 
 	ClaudeConfigDir string `json:"claude_config_dir,omitempty"`
 	ClaudeSettings  string `json:"claude_settings,omitempty"` // --settings path
@@ -34,6 +34,12 @@ type TurnRequest struct {
 	// PermissionMode is claude's --permission-mode (e.g. "auto"). When set, the
 	// lucode approval hook (ClaudeSettings) is not passed: claude decides by itself.
 	PermissionMode string `json:"permission_mode,omitempty"`
+
+	// Worktree runs claude in its own git worktree (--worktree=<name>, stable per
+	// session so a resumed turn goes back to it). WorktreeBaseRef is the
+	// worktree.baseRef setting written into --settings: "head" (default) or "fresh".
+	Worktree        bool   `json:"worktree,omitempty"`
+	WorktreeBaseRef string `json:"worktree_base_ref,omitempty"`
 
 	// Tools restricts the built-in tools offered to the model (--tools). Empty = all.
 	Tools []string `json:"tools,omitempty"`

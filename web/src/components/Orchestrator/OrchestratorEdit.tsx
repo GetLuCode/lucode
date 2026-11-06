@@ -5,10 +5,11 @@ import * as api from '../../api'
 import type { Project, Session } from '../../types'
 
 // Rename the current conversation and assign it to a project, so it can be found later in the history.
-export function OrchestratorEdit({ projectId, sessionId, onMoved }: {
+export function OrchestratorEdit({ projectId, sessionId, onMoved, onSaved }: {
   projectId: string
   sessionId: string
   onMoved: (s: Session) => void
+  onSaved?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
@@ -30,6 +31,7 @@ export function OrchestratorEdit({ projectId, sessionId, onMoved }: {
       let s = await api.updateOrchestratorChat(sessionId, data)
       if (project !== projectId) s = await api.openOrchestratorChat(sessionId) // it is the one shown in its new project
       setOpen(false)
+      onSaved?.()
       if (project !== projectId) onMoved(s)
     } catch (e) {
       setError(String((e as Error)?.message ?? e))

@@ -134,6 +134,14 @@ func (a *App) startServer() {
 	if err != nil {
 		log.Fatalf("db init: %v", err)
 	}
+	if err := dbpkg.SeedDefaults(db); err != nil {
+		log.Fatalf("seed defaults: %v", err)
+	}
+	go func() {
+		if _, err := dbpkg.BackfillToolUsage(db); err != nil {
+			log.Printf("backfill tool usage: %v", err)
+		}
+	}()
 
 	natsOpts := []natsclient.Option{
 		natsclient.Timeout(10 * time.Second),
@@ -155,6 +163,7 @@ func (a *App) startServer() {
 	_ = hookBinary // legacy: claude-CLI hook path removed; permission gate is now NATS-based
 
 	manager := sessionpkg.NewManager(db, bus, natsURL, "")
+	manager.BaseDir = workDir
 	if natsCreds != "" {
 		manager.SetNATSCreds(natsCreds)
 	}

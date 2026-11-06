@@ -1,7 +1,7 @@
-import type { AIProfile, Runner, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { ActiveFlowRun, Flow, FlowApproval, FlowBlueprint, FlowGraph, FlowNodeType, FlowProblem, FlowRun, FlowStep, Alert, AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
 import { useAuthStore } from './store/auth'
 
-const BASE = import.meta.env.VITE_API_BASE ?? ''
+const BASE = process.env.VITE_API_BASE ?? ''
 
 // Active remote lucode instance — when set, all requests are proxied via NATS.
 let activeRemoteId: string | null = null
@@ -100,9 +100,9 @@ export const newOrchestratorSession = (pid: string) => req<Session>('POST', `/ap
 // History of the local Google AI Mode model: its conversations by url, and bringing one back to work on.
 export const listAIModeConversations = (pid: string) => req<AIModeConversation[]>('GET', `/api/projects/${pid}/aimode/conversations`)
 export const continueAIModeConversation = (id: string) => req<Session>('POST', `/api/aimode/conversations/${id}/continue`)
-// History of the orchestrator conversations (all projects unless `project`), to rename, move and find them.
-export const listOrchestratorChats = (q = '', project = '') =>
-  req<OrchestratorChat[]>('GET', `/api/orchestrator/chats?q=${encodeURIComponent(q)}&project=${encodeURIComponent(project)}`)
+// History of the Supervisor conversations of a project: the ones claude can pick up again.
+export const listSupervisorChats = (pid: string) =>
+  req<OrchestratorChat[]>('GET', `/api/orchestrator/chats?project=${encodeURIComponent(pid)}&mode=supervisor`)
 export const updateOrchestratorChat = (id: string, data: { name?: string; project_id?: string }) =>
   req<Session>('PATCH', `/api/orchestrator/chats/${id}`, data)
 export const openOrchestratorChat = (id: string) => req<Session>('POST', `/api/orchestrator/chats/${id}/open`)
@@ -113,6 +113,24 @@ export interface TTSSettings { configured: boolean; model: string; voice_id: str
 export const getTTSSettings = () => req<TTSSettings>('GET', '/api/tts/settings')
 export const saveTTSSettings = (data: { api_key?: string; clear_key?: boolean; model: string; voice_id: string; speed: number }) =>
   req<TTSSettings>('PUT', '/api/tts/settings', data)
+// Orchard Run, the second speech recognition engine (cloud, push to talk). The key is write-only.
+export interface OrchardSettings { configured: boolean; language: string; prompt: string }
+export const getOrchardSettings = () => req<OrchardSettings>('GET', '/api/stt/orchard/settings')
+export const saveOrchardSettings = (data: { api_key?: string; clear_key?: boolean; language: string; prompt: string }) =>
+  req<OrchardSettings>('PUT', '/api/stt/orchard/settings', data)
+// Sends one recording (WAV) and gets its text.
+export async function orchardTranscribe(wav: Blob, signal?: AbortSignal): Promise<string> {
+  const headers: Record<string, string> = { 'Content-Type': 'audio/wav' }
+  const token = getAuthToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  if (activeRemoteId) headers['X-Lucode-Remote'] = activeRemoteId
+  const res = await fetch(`${BASE}/api/stt/orchard/transcribe`, { method: 'POST', headers, body: wav, signal })
+  if (!res.ok) {
+    if (res.status === 401) useAuthStore.getState().clearAuth()
+    throw new Error((await res.text()).trim() || `Orchard failed (${res.status})`)
+  }
+  return ((await res.json()) as { text: string }).text
+}
 // Speech recognition model of the shared voice worker. `selected` is the choice kept by lucode;
 // `worker` is what runs right now (null: nothing answers, it starts when somebody needs it).
 export interface SttModel { id: string; label: string; device: 'gpu' | 'cpu'; memory: string; recommended?: boolean }
@@ -140,6 +158,18 @@ export const fetchVoskModel = async (): Promise<string> => {
   return URL.createObjectURL(await res.blob())
 }
 // The persistent claude process of a session: is it alive, and close it (the next message starts a new one).
+// What the session's task branch changes against its base; computed by the runner that holds the worktree.
+export interface DiffStat {
+  base: string
+  branch: string
+  added: number     // lines added
+  removed: number   // lines removed
+  created: number   // files created
+  modified: number
+  deleted: number   // files deleted
+  error?: string
+}
+export const getSessionDiffStat = (id: string) => req<DiffStat>('GET', `/api/sessions/${id}/diffstat`)
 export const getSessionProcess = (id: string) => req<ClaudeProcess>('GET', `/api/sessions/${id}/process`)
 export const closeSessionProcess = (id: string) => req<void>('DELETE', `/api/sessions/${id}/process`)
 export const cancelTurn = (id: string) =>
@@ -224,6 +254,10 @@ export interface ModelUsageEntry {
 // ── Metrics / Usage ─────────────────────────────────────────────────────────
 
 export type UsageRange = '7d' | '30d' | '90d' | 'all'
+// An exact window (ISO instants, `to` excluded) instead of a preset range.
+export interface UsageWindow { from: string; to: string }
+const windowQS = (w: UsageRange | UsageWindow) =>
+  typeof w === 'string' ? `range=${w}` : `from=${encodeURIComponent(w.from)}&to=${encodeURIComponent(w.to)}`
 
 export interface DailyUsageRow {
   date: string
@@ -232,6 +266,7 @@ export interface DailyUsageRow {
   output_tokens: number
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
+  cache_creation_1h_input_tokens?: number // of the written ones, the 1 hour cache
   turn_count: number
 }
 
@@ -241,6 +276,7 @@ export interface ModelUsageRow {
   output_tokens: number
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
+  cache_creation_1h_input_tokens?: number
   turn_count: number
 }
 
@@ -253,19 +289,58 @@ export interface SessionUsageRow {
   output_tokens: number
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
+  cache_creation_1h_input_tokens?: number
   turn_count: number
   duration_minutes: number
   created_at: string
 }
 
-export const getUsageDaily = (range: UsageRange) =>
-  req<DailyUsageRow[]>('GET', `/api/usage/daily?range=${range}`)
+// hourly: one row per (UTC) hour, `date` being "YYYY-MM-DDTHH", instead of per day
+export const getUsageDaily = (range: UsageRange | UsageWindow, hourly = false) =>
+  req<DailyUsageRow[]>('GET', `/api/usage/daily?${windowQS(range)}${hourly ? '&granularity=hour' : ''}`)
 
-export const getUsageModels = (range: UsageRange) =>
-  req<ModelUsageRow[]>('GET', `/api/usage/models?range=${range}`)
+export const getUsageModels = (range: UsageRange | UsageWindow) =>
+  req<ModelUsageRow[]>('GET', `/api/usage/models?${windowQS(range)}`)
 
-export const getUsageSessions = (range: UsageRange, projectId?: string) =>
-  req<SessionUsageRow[]>('GET', `/api/usage/sessions?range=${range}${projectId ? `&project_id=${projectId}` : ''}`)
+export const getUsageSessions = (range: UsageRange | UsageWindow, projectId?: string) =>
+  req<SessionUsageRow[]>('GET', `/api/usage/sessions?${windowQS(range)}${projectId ? `&project_id=${projectId}` : ''}`)
+
+// The tokens of a session's first turn (what its initial context really wrote to / read from
+// the cache). Rejects with a 404 until the session has one.
+export interface FirstTurnUsage {
+  // true: the session's very first call to the model (exactly what its initial context billed).
+  // false: an older session, only with the turn totals, which hold the LAST call of the turn.
+  exact?: boolean
+  cache_creation_1h_tokens?: number // of the written tokens, the ones billed at the 1h price
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+}
+export const getFirstTurnUsage = (sessionId: string) =>
+  req<FirstTurnUsage>('GET', `/api/sessions/${sessionId}/first-turn-usage`)
+
+// What one tool used in one model, in tokens by price class (see internal/db/toolcost.go).
+export interface ToolCostRow {
+  tool: string
+  model: string
+  calls: number
+  errors: number
+  result_tokens: number  // added to the context by its results
+  unmeasured: number     // calls whose result was never measured (the last call of a turn)
+  output_tokens: number  // the model's output to ask for them
+  written_1h: number     // result tokens written to the cache with a 1h TTL
+  written_5m: number
+  uncached: number
+  carried_read: number   // result tokens x the later calls that re-read them
+}
+export const getUsageTools = (range: UsageRange | UsageWindow, projectId?: string) =>
+  req<ToolCostRow[]>('GET', `/api/usage/tools?${windowQS(range)}${projectId ? `&project_id=${projectId}` : ''}`)
+
+// What each tool cost in one session (empty until the session has reported its calls).
+export const getSessionToolCosts = (sessionId: string) =>
+  req<ToolCostRow[]>('GET', `/api/sessions/${sessionId}/tool-costs`)
 
 // User Tools
 export const listUserTools = () => req<UserTool[]>('GET', '/api/tools')
@@ -283,6 +358,15 @@ export const getInstances = () =>
   req<{ self: InstanceInfo; peers: InstanceInfo[] }>('GET', '/api/instances')
 // Runners and their preconfigured AIs
 export const listRunners = () => req<Runner[]>('GET', '/api/runners')
+// What a runner launched, newest first, and which build it is. The hub only relays them:
+// the runner is the one that knows.
+export const listRunnerCommands = (runnerId: string, limit = 100) =>
+  req<ClaudeCommand[]>('GET', `/api/runners/${runnerId}/commands?limit=${limit}`)
+export const getRunnerVersion = (runnerId: string) =>
+  req<RunnerVersion>('GET', `/api/runners/${runnerId}/version`)
+// The command a session's claude was last started with (reported by the runner).
+export const getSessionCommand = (sessionId: string) =>
+  req<ClaudeCommand>('GET', `/api/sessions/${sessionId}/command`)
 export const listAIProfiles = (runnerId: string) =>
   req<AIProfile[]>('GET', `/api/runners/${runnerId}/ai-profiles`)
 export const addAIProfile = (runnerId: string, data: { name: string; claude_config_dir: string }) =>
@@ -291,6 +375,15 @@ export const refreshAIProfile = (runnerId: string, id: string) =>
   req<AIProfile>('POST', `/api/runners/${runnerId}/ai-profiles/${id}/refresh`)
 export const deleteAIProfile = (runnerId: string, id: string) =>
   req<void>('DELETE', `/api/runners/${runnerId}/ai-profiles/${id}`)
+// Plan usage windows of an AI's account (Anthropic /api/oauth/usage). utilization is 0-100.
+export interface UsageWindow { utilization: number | null; resets_at: string | null }
+export interface AIProfileUsage { five_hour?: UsageWindow | null; seven_day?: UsageWindow | null; seven_day_opus?: UsageWindow | null; seven_day_sonnet?: UsageWindow | null }
+// The AI picked in the usage container: orchestrator/agents without an AI of their own use it.
+export interface ActiveAI { runner_id: string; ai_profile_id: string }
+export const getActiveAI = () => req<ActiveAI>('GET', '/api/active-ai')
+export const setActiveAI = (a: ActiveAI) => req<ActiveAI>('PUT', '/api/active-ai', a)
+export const getAIProfileUsage =(runnerId: string, id: string) =>
+  req<AIProfileUsage>('GET', `/api/runners/${runnerId}/ai-profiles/${id}/usage`)
 export const setProjectAIAPI = (projectId: string, aiapiInstanceId: string) =>
   req<void>('PATCH', `/api/projects/${projectId}/aiapi`, { aiapi_instance_id: aiapiInstanceId })
 
@@ -341,6 +434,31 @@ export const deleteCardImage = (cardId: string, name: string) =>
 export const resetKanbanCard = (id: string) =>
   req<void>('POST', `/api/kanban/cards/${id}/reset`)
 
+// Review: the git branch an agent left in a worktree, waiting to be merged.
+export interface ReviewStatus {
+  branch: string
+  base: string              // the branch checked out in the main checkout
+  worktree_path: string
+  repo_path: string
+  ahead: number             // commits not in base yet
+  files: string[]           // "M path" per changed file
+  dirty: boolean            // uncommitted changes in the worktree
+  conflicts: boolean
+  conflict_files: string[]
+  merged: boolean
+  error?: string
+}
+export const getCardReview = (id: string) => req<ReviewStatus>('GET', `/api/kanban/cards/${id}/review`)
+
+// Git tab: the runner that holds the repository answers, the hub relays (see components/Git).
+export const getGitTargets = <T,>(projectId: string) => req<T>('GET', `/api/projects/${projectId}/git/targets`)
+export const projectGit = <T,>(projectId: string, op: string, body: Record<string, unknown>) =>
+  req<T>('POST', `/api/projects/${projectId}/git/${op}`, body)
+export const mergeCardReview = (id: string) =>
+  req<{ card: KanbanCard; warnings: string[] }>('POST', `/api/kanban/cards/${id}/review/merge`)
+export const resolveCardReview = (id: string) =>
+  req<{ card: KanbanCard }>('POST', `/api/kanban/cards/${id}/review/resolve`)
+
 // ── Checkpoints / Versioning (aiapi:8091) ────────────────────────────────
 
 export const listCheckpoints = (workDir: string) =>
@@ -389,3 +507,31 @@ export const previewPermission = (workdir: string, tool: string, input?: string)
 
 export const getPermissionFiles = (workdir: string) =>
   req<{ user_file: string; project_file: string }>('GET', `/api/permissions/files?workdir=${encodeURIComponent(workdir)}`)
+
+// Things to clean up by hand in the project's repositories (merged worktrees left behind).
+export const listProjectAlerts = (projectId: string) => req<Alert[]>('GET', `/api/projects/${projectId}/alerts`)
+
+// Flows
+export const listFlowNodeTypes = () => req<FlowNodeType[]>('GET', '/api/flow-node-types')
+export const getCardMachine = () => req<Record<string, unknown>>('GET', '/api/card-machine')
+export const listFlows = (projectId: string) => req<Flow[]>('GET', `/api/projects/${projectId}/flows`)
+export const createFlow = (projectId: string, name: string, blueprint?: string) => req<Flow>('POST', `/api/projects/${projectId}/flows`, { name, blueprint })
+export const listFlowBlueprints = () => req<FlowBlueprint[]>('GET', '/api/flow-blueprints')
+export const getFlow = (id: string) => req<Flow>('GET', `/api/flows/${id}`)
+export const saveFlow = (id: string, data: { name: string; draft: FlowGraph }) => req<Flow>('PUT', `/api/flows/${id}`, data)
+export const deleteFlow = (id: string) => req<void>('DELETE', `/api/flows/${id}`)
+export const validateFlow = (id: string) => req<{ problems: FlowProblem[] }>('POST', `/api/flows/${id}/validate`)
+export const publishFlow = (id: string) => req<Flow>('POST', `/api/flows/${id}/publish`)
+export const setFlowEnabled = (id: string, enabled: boolean) => req<Flow>('PUT', `/api/flows/${id}/enabled`, { enabled })
+export const runFlow = (id: string, cardId?: string) => req<FlowRun>('POST', `/api/flows/${id}/run`, { card_id: cardId ?? '' })
+export const listFlowRuns = (id: string) => req<FlowRun[]>('GET', `/api/flows/${id}/runs`)
+export const getFlowRun = (id: string) => req<{ run: FlowRun; steps: FlowStep[]; graph: FlowGraph }>('GET', `/api/flow-runs/${id}`)
+export const cancelFlowRun = (id: string) => req<void>('POST', `/api/flow-runs/${id}/cancel`)
+export const listActiveFlowRuns = (projectId: string) => req<ActiveFlowRun[]>('GET', `/api/projects/${projectId}/flow-runs/active`)
+export const getFlowsPaused = (projectId: string) => req<{ paused: boolean }>('GET', `/api/projects/${projectId}/flows/paused`)
+export const setFlowsPaused = (projectId: string, paused: boolean) => req<{ paused: boolean }>('PUT', `/api/projects/${projectId}/flows/paused`, { paused })
+export const listFlowApprovals = (projectId: string) => req<FlowApproval[]>('GET', `/api/projects/${projectId}/flow-approvals`)
+export const decideFlowApproval = (seq: number, decision: 'approved' | 'rejected', note = '') => req<void>('POST', `/api/flow-steps/${seq}/decision`, { decision, note })
+export const getFlowAISettings = () => req<{ configured: boolean; source: string }>('GET', '/api/flow-ai-settings')
+export const saveFlowAIKey = (apiKey: string) => req<{ configured: boolean; source: string }>('PUT', '/api/flow-ai-settings', { api_key: apiKey })
+export const clearFlowAIKey = () => req<{ configured: boolean; source: string }>('PUT', '/api/flow-ai-settings', { clear: true })

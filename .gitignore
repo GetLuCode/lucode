@@ -7,6 +7,7 @@ cmd/desktop/frontend/
 /lucode
 /lucodehook
 cmd/lucode/embedded/lucodehook
+cmd/lucode-runner/embedded/lucodehook*
 dist/
 tmp/
 
@@ -16,6 +17,7 @@ go.sum
 # Node / Frontend
 web/node_modules/
 web/dist/
+web/.parcel-cache/
 
 # DB
 *.db
@@ -39,3 +41,7 @@ CLAUDE.md
 build/
 /desktop
 /desktop.exe
+
+/lucode.exe
+/.claude/
+/.impeccable/

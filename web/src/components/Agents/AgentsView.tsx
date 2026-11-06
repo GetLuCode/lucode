@@ -68,6 +68,7 @@ const LUCODE_TOOLS = [
   { name: 'agent_update',  desc: 'Edit another agent of the project' },
   { name: 'agent_delete',  desc: 'Delete an idle agent of the project' },
   { name: 'project_info',  desc: 'See the project: folders, runner, AI, board counts, agents' },
+  { name: 'git_diff',      desc: 'Read a diff of a repository of the project, from any runner' },
 ]
 
 // Control of Microsoft Edge (CDP). Stored in lucode_tools like the rest, but never on by default.
@@ -139,10 +140,12 @@ interface AgentFormData {
   executor: 'aiapi' | 'claude'
   persistent: boolean
   auto_mode: boolean
+  worktree: boolean
+  worktree_base_ref: 'head' | 'fresh'
   reports_to: string
   scope: 'project' | 'global'
   lucode_tools: string[]
-  runner_id: string     // '' = the project's; 'local' = this instance
+  runner_id: string     // chosen in the form; 'local' = this instance; '' only while the runners load
   ai_profile_id: string // '' = the project's
 }
 
@@ -155,6 +158,8 @@ const EMPTY_FORM: AgentFormData = {
   executor: 'aiapi',
   persistent: false,
   auto_mode: false,
+  worktree: false,
+  worktree_base_ref: 'head',
   reports_to: '',
   scope: 'project',
   lucode_tools: LUCODE_TOOLS.map(t => t.name),
@@ -186,6 +191,16 @@ function AgentForm({
   const [runners, setRunners] = useState<Runner[]>([])
   const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([])
   useEffect(() => { api.listRunners().then(setRunners).catch(() => setRunners([])) }, [])
+  // An agent always has a runner. One without a valid choice (a new agent, or an old one that
+  // followed the project, or one pinned to a machine that is no longer offered) starts on
+  // the project's runner, else on the first one.
+  const projectRunner = project?.runner_id || 'local'
+  useEffect(() => {
+    const offered = runners.map(r => (r.self ? 'local' : r.id))
+    if (offered.length === 0 || offered.includes(form.runner_id)) return
+    const pick = offered.includes(projectRunner) ? projectRunner : offered[0]
+    setForm(f => ({ ...f, runner_id: pick, ai_profile_id: f.runner_id === '' && pick === projectRunner ? f.ai_profile_id : '' }))
+  }, [runners]) // eslint-disable-line react-hooks/exhaustive-deps
   // The AIs offered are those of the runner the agent will use.
   const aiRunner = form.runner_id || project?.runner_id || 'local'
   useEffect(() => {
@@ -348,6 +363,26 @@ function AgentForm({
                 />
                 Auto mode (no approval requests)
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 6, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
+                <input
+                  type="checkbox"
+                  checked={form.worktree && form.executor === 'claude'}
+                  disabled={form.executor !== 'claude'}
+                  onChange={e => setField('worktree', e.target.checked)}
+                />
+                Work in a git worktree
+              </label>
+              {form.worktree && form.executor === 'claude' && (
+                <select
+                  className="agent-form__input"
+                  style={{ marginTop: 6 }}
+                  value={form.worktree_base_ref}
+                  onChange={e => setField('worktree_base_ref', e.target.value as 'head' | 'fresh')}
+                >
+                  <option value="head">Branch off the current HEAD</option>
+                  <option value="fresh">Branch off a fresh origin default branch</option>
+                </select>
+              )}
             </div>
           </div>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
@@ -355,7 +390,9 @@ function AgentForm({
             reached with agent_message. Keep alive (claude -p only): replies faster, but each active task holds a
             claude process in memory; it exits by itself after 30 idle minutes and the conversation resumes later.
             Auto mode (claude only): claude decides by itself which tool calls are safe, so lucode never asks you to
-            approve them.
+            approve them. Worktree (claude only): the agent works in its own git worktree, so parallel agents do not
+            step on each other; the base is passed as worktree.baseRef (head = where the project is now, fresh =
+            the remote default branch).
           </p>
 
           <div className="agent-form__row">
@@ -366,7 +403,6 @@ function AgentForm({
                 value={form.runner_id}
                 onChange={e => { setField('runner_id', e.target.value); setField('ai_profile_id', '') }}
               >
-                <option value="">Project&apos;s runner</option>
                 {runners.map(r => (
                   <option key={r.id} value={r.self ? 'local' : r.id}>
                     {r.hostname}{r.self ? ' (this)' : ''}
@@ -381,7 +417,7 @@ function AgentForm({
                 value={form.ai_profile_id}
                 onChange={e => setField('ai_profile_id', e.target.value)}
               >
-                <option value="">{form.runner_id ? 'Default account' : "Project's AI"}</option>
+                <option value="">{form.runner_id && form.runner_id !== projectRunner ? 'Default account' : "Project's AI"}</option>
                 {aiProfiles.map(p => (
                   <option key={p.id} value={p.id}>{p.name}{p.email ? ` — ${p.email}` : ''}</option>
                 ))}
@@ -389,8 +425,9 @@ function AgentForm({
             </div>
           </div>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
-            Where the agent runs and with which account. Empty uses the project&apos;s. Only claude -p agents run on
-            other runners, and the project needs a work dir on that runner.
+            Where the agent runs and with which account. The AI is optional: empty uses the project&apos;s on its
+            own runner, else the runner&apos;s default account. Only claude -p agents run on other runners, and the
+            project needs a work dir on that runner.
           </p>
 
           <div className="agent-form__field">
@@ -480,6 +517,7 @@ function AgentCard({
           <span className="agent-card__model">{agent.executor === 'claude' ? 'claude -p' : 'aiapi'}</span>
           {agent.scope === 'global' && <span className="agent-card__model" title="Available in every project">global</span>}
           {agent.auto_mode && <span className="agent-card__model" title="claude decides on its own which tools are safe; no approval requests">auto</span>}
+          {agent.worktree && <span className="agent-card__model" title={`works in its own git worktree (baseRef=${agent.worktree_base_ref})`}>worktree</span>}
           {agent.persistent && <span className="agent-card__model" title="Process stays alive between messages">live</span>}
           {supervisor && <span className="agent-card__model" title="Reports to">→ {supervisor}</span>}
         </div>
@@ -620,6 +658,8 @@ export function AgentsView() {
             executor: view.edit.executor ?? 'aiapi',
             persistent: view.edit.persistent ?? false,
             auto_mode: view.edit.auto_mode ?? false,
+            worktree: view.edit.worktree ?? false,
+            worktree_base_ref: view.edit.worktree_base_ref ?? 'head',
             reports_to: view.edit.reports_to ?? '',
             scope: view.edit.scope ?? 'project',
             lucode_tools: view.edit.lucode_tools ?? LUCODE_TOOLS.map(t => t.name),

@@ -41,6 +41,8 @@ type Live struct {
 	turnDone chan struct{} // closed when the turn in flight ends; nil while idle
 	idle     *time.Timer
 	exited   bool
+
+	interrupting bool // an interrupt was sent; the turn's result is not an error
 }
 
 // StartLive spawns the process and sends req.Message as its first message. The
@@ -48,7 +50,7 @@ type Live struct {
 // onExit is called once, after the process is gone.
 func StartLive(req TurnRequest, publish func(map[string]any), onExit func()) (*Live, <-chan struct{}, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	sr, err := spawnClaude(ctx, req)
+	sr, err := spawnClaude(ctx, req, publish)
 	if err != nil {
 		cancel()
 		return nil, nil, err
@@ -118,8 +120,50 @@ func (l *Live) Send(text, imageBase64, imageMediaType string) (<-chan struct{}, 
 // Close asks the process to exit by closing its stdin.
 func (l *Live) Close() { closeStdin(l.ps) }
 
-// Kill stops the process immediately (used to cancel a turn in flight).
+// Kill stops the process immediately.
 func (l *Live) Kill() { l.cancel() }
+
+// interruptGrace is how long Stop waits for claude to end the turn after an
+// interrupt before it kills the process.
+const interruptGrace = 5 * time.Second
+
+// Interrupt asks claude to stop the turn in flight, as Esc does in the CLI: a
+// control_request "interrupt" on stdin. The process stays alive and the
+// conversation continues with the next message. done is the channel Send returned.
+func (l *Live) Interrupt() error {
+	l.mu.Lock()
+	if l.exited || l.turnDone == nil {
+		l.mu.Unlock()
+		return ErrLiveGone
+	}
+	l.interrupting = true
+	l.mu.Unlock()
+	return SendControlRequest(l.ps, "interrupt")
+}
+
+// Stop cancels the turn in flight without killing the process: it sends an
+// interrupt and waits for the turn to end. If the interrupt cannot be written or
+// claude does not answer within interruptGrace, the process is killed.
+func (l *Live) Stop(done <-chan struct{}) {
+	if err := l.Interrupt(); err != nil {
+		l.Kill()
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(interruptGrace):
+		log.Printf("[executor] session=%s interrupt not answered; killing the process", l.req.SessionID[:8])
+		l.Kill()
+	}
+}
+
+func (l *Live) takeInterrupted() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	v := l.interrupting
+	l.interrupting = false
+	return v
+}
 
 // endTurn marks the turn finished, arms the idle timer and wakes the waiter.
 func (l *Live) endTurn() {
@@ -146,6 +190,7 @@ func (l *Live) loop(stdout io.Reader) {
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	accum := newTurnAccum()
+	tracker := newToolTracker()
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -153,6 +198,12 @@ func (l *Live) loop(stdout io.Reader) {
 		}
 		log.Printf("[executor/stdout] session=%s: %s", sid8, string(line))
 
+		if wt := EnteredWorktree(line); wt != "" {
+			l.publish(WorkspaceEvent(sessID, wt))
+		}
+		for _, ev := range tracker.observe(sessID, line) {
+			l.publish(ev)
+		}
 		event, isResult, err := ParseLine(sessID, line)
 		if err != nil {
 			log.Printf("[executor] session=%s parse error: %v", sid8, err)
@@ -160,6 +211,10 @@ func (l *Live) loop(stdout io.Reader) {
 		}
 		if event.EventType == "" {
 			continue
+		}
+
+		if event.Cwd != "" {
+			l.publish(WorkspaceEvent(sessID, event.Cwd))
 		}
 
 		if event.EventType == "control_response" {
@@ -175,6 +230,18 @@ func (l *Live) loop(stdout io.Reader) {
 				})
 			}
 			continue // a live process stays open: nothing to close here
+		}
+
+		if isResult && l.takeInterrupted() {
+			// The user stopped the turn: end it as a normal idle, not as an error.
+			l.publish(parsedEventToMap(event))
+			l.publish(map[string]any{"type": "session_status", "session_id": sessID, "status": "idle"})
+			accum = newTurnAccum()
+			l.endTurn()
+			if err := RequestContextUsage(l.ps); err != nil {
+				log.Printf("[executor] session=%s context request error: %v", sid8, err)
+			}
+			continue
 		}
 
 		if isResult && resumeFailed(l.req, event, accum) {
@@ -211,15 +278,16 @@ func (l *Live) loop(stdout io.Reader) {
 			log.Printf("[executor] session=%s live turn complete: subtype=%s", sid8, event.ResultSubtype)
 			if accum.inputTokens > 0 || accum.outputTokens > 0 {
 				l.publish(map[string]any{
-					"type":                        "turn_usage",
-					"session_id":                  sessID,
-					"project_id":                  l.req.ProjectID,
-					"account_id":                  l.req.AccountID,
-					"model":                       l.req.Model,
-					"input_tokens":                accum.inputTokens,
-					"output_tokens":               accum.outputTokens,
-					"cache_creation_input_tokens": accum.cacheCreationInputTokens,
-					"cache_read_input_tokens":     accum.cacheReadInputTokens,
+					"type":                           "turn_usage",
+					"session_id":                     sessID,
+					"project_id":                     l.req.ProjectID,
+					"account_id":                     l.req.AccountID,
+					"model":                          l.req.Model,
+					"input_tokens":                   accum.inputTokens,
+					"output_tokens":                  accum.outputTokens,
+					"cache_creation_input_tokens":    accum.cacheCreationInputTokens,
+					"cache_read_input_tokens":        accum.cacheReadInputTokens,
+					"cache_creation_1h_input_tokens": accum.cacheCreation1hTokens,
 				})
 			}
 			l.publish(map[string]any{"type": "session_status", "session_id": sessID, "status": "idle"})

@@ -1,0 +1,188 @@
+{
+  "id": "card",
+  "initial": "backlog",
+  "states": {
+    "backlog": {
+      "on": {
+        "MOVE_BACKLOG": {
+          "target": "backlog"
+        },
+        "MOVE_BLOCKED": {
+          "target": "blocked"
+        },
+        "MOVE_CUSTOM": {
+          "target": "custom"
+        },
+        "MOVE_DONE": {
+          "target": "done"
+        },
+        "MOVE_INPROGRESS": {
+          "guard": "canStart",
+          "target": "inprogress"
+        },
+        "MOVE_REVIEW": {
+          "target": "review"
+        },
+        "MOVE_TODO": {
+          "target": "todo"
+        }
+      }
+    },
+    "blocked": {
+      "on": {
+        "MOVE_BACKLOG": {
+          "target": "backlog"
+        },
+        "MOVE_BLOCKED": {
+          "target": "blocked"
+        },
+        "MOVE_CUSTOM": {
+          "target": "custom"
+        },
+        "MOVE_DONE": {
+          "target": "done"
+        },
+        "MOVE_INPROGRESS": {
+          "guard": "canRestart",
+          "target": "inprogress"
+        },
+        "MOVE_REVIEW": {
+          "target": "review"
+        },
+        "MOVE_TODO": {
+          "target": "todo"
+        }
+      }
+    },
+    "custom": {
+      "on": {
+        "MOVE_BACKLOG": {
+          "target": "backlog"
+        },
+        "MOVE_BLOCKED": {
+          "target": "blocked"
+        },
+        "MOVE_CUSTOM": {
+          "target": "custom"
+        },
+        "MOVE_DONE": {
+          "target": "done"
+        },
+        "MOVE_INPROGRESS": {
+          "guard": "canStart",
+          "target": "inprogress"
+        },
+        "MOVE_REVIEW": {
+          "target": "review"
+        },
+        "MOVE_TODO": {
+          "target": "todo"
+        }
+      }
+    },
+    "done": {
+      "on": {
+        "MOVE_BACKLOG": {
+          "target": "backlog"
+        },
+        "MOVE_BLOCKED": {
+          "target": "blocked"
+        },
+        "MOVE_CUSTOM": {
+          "target": "custom"
+        },
+        "MOVE_DONE": {
+          "target": "done"
+        },
+        "MOVE_INPROGRESS": {
+          "guard": "canStart",
+          "target": "inprogress"
+        },
+        "MOVE_REVIEW": {
+          "target": "review"
+        },
+        "MOVE_TODO": {
+          "target": "todo"
+        }
+      }
+    },
+    "inprogress": {
+      "on": {
+        "MOVE_BACKLOG": {
+          "target": "backlog"
+        },
+        "MOVE_BLOCKED": {
+          "target": "blocked"
+        },
+        "MOVE_CUSTOM": {
+          "target": "custom"
+        },
+        "MOVE_DONE": {
+          "target": "done"
+        },
+        "MOVE_INPROGRESS": {
+          "guard": "canStart",
+          "target": "inprogress"
+        },
+        "MOVE_REVIEW": {
+          "target": "review"
+        },
+        "MOVE_TODO": {
+          "target": "todo"
+        }
+      }
+    },
+    "review": {
+      "on": {
+        "MOVE_BACKLOG": {
+          "target": "backlog"
+        },
+        "MOVE_BLOCKED": {
+          "target": "blocked"
+        },
+        "MOVE_CUSTOM": {
+          "target": "custom"
+        },
+        "MOVE_DONE": {
+          "target": "done"
+        },
+        "MOVE_INPROGRESS": {
+          "guard": "canStart",
+          "target": "inprogress"
+        },
+        "MOVE_REVIEW": {
+          "target": "review"
+        },
+        "MOVE_TODO": {
+          "target": "todo"
+        }
+      }
+    },
+    "todo": {
+      "on": {
+        "MOVE_BACKLOG": {
+          "target": "backlog"
+        },
+        "MOVE_BLOCKED": {
+          "target": "blocked"
+        },
+        "MOVE_CUSTOM": {
+          "target": "custom"
+        },
+        "MOVE_DONE": {
+          "target": "done"
+        },
+        "MOVE_INPROGRESS": {
+          "guard": "canStart",
+          "target": "inprogress"
+        },
+        "MOVE_REVIEW": {
+          "target": "review"
+        },
+        "MOVE_TODO": {
+          "target": "todo"
+        }
+      }
+    }
+  }
+}

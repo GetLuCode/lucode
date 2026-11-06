@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   PieChart, Pie, Cell, Tooltip, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Legend,
@@ -7,7 +7,9 @@ import {
 import { useStore } from '../../store'
 import * as api from '../../api'
 import type { DailyUsageRow, ModelUsageRow, SessionUsageRow, UsageRange } from '../../api'
-import { estimateCost, formatCost } from '../../lib/tokenPricing'
+import { estimateCost, estimateUsageCost, formatCost } from '../../lib/tokenPricing'
+import { totalsByTool, toolTotalCost, toolLabel } from '../../lib/toolCosts'
+import type { ToolTotals } from '../../lib/toolCosts'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -32,7 +34,7 @@ const MODEL_COLORS = ['#6366f1', '#d97706', '#22c55e', '#f59e0b', '#8b5cf6', '#3
 // ─── Range selector ──────────────────────────────────────────────────────────
 
 interface RangeSelectorProps {
-  value: UsageRange
+  value: UsageRange | null // null while a day is chosen
   onChange: (r: UsageRange) => void
 }
 
@@ -54,6 +56,62 @@ function RangeSelector({ value, onChange }: RangeSelectorProps) {
           {o.label}
         </button>
       ))}
+    </div>
+  )
+}
+
+// ─── Day and hours filter ────────────────────────────────────────────────────
+
+interface DayFilterProps {
+  day: string
+  fromHour: number
+  toHour: number
+  onChange: (f: { day: string; fromHour: number; toHour: number }) => void
+}
+
+// One day (local time) narrowed to an hour span; it replaces the preset range while a day is set.
+function DayFilter({ day, fromHour, toHour, onChange }: DayFilterProps) {
+  const hours = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i)
+  const label = (h: number) => `${String(h % 24).padStart(2, '0')}:00`
+  return (
+    <div className="usage-dayfilter">
+      <label className="usage-filter">
+        <span>Day</span>
+        <input
+          type="date"
+          className="usage-select"
+          value={day}
+          max={new Date().toLocaleDateString('sv')}
+          onChange={e => onChange({ day: e.target.value, fromHour, toHour })}
+        />
+      </label>
+      <label className="usage-filter">
+        <span>From</span>
+        <select
+          className="usage-select"
+          value={fromHour}
+          disabled={!day}
+          onChange={e => { const f = Number(e.target.value); onChange({ day, fromHour: f, toHour: Math.max(toHour, f + 1) }) }}
+        >
+          {hours(0, 23).map(h => <option key={h} value={h}>{label(h)}</option>)}
+        </select>
+      </label>
+      <label className="usage-filter">
+        <span>To</span>
+        <select
+          className="usage-select"
+          value={toHour}
+          disabled={!day}
+          onChange={e => onChange({ day, fromHour, toHour: Number(e.target.value) })}
+        >
+          {hours(fromHour + 1, 24).map(h => <option key={h} value={h}>{h === 24 ? '24:00' : label(h)}</option>)}
+        </select>
+      </label>
+      {day && (
+        <button className="usage-range__btn" onClick={() => onChange({ day: '', fromHour: 0, toHour: 24 })} title="Back to the range">
+          Clear
+        </button>
+      )}
     </div>
   )
 }
@@ -89,29 +147,37 @@ interface DailyChartProps {
   data: DailyUsageRow[]
   chartType: ChartType
   showCache: boolean
+  hourly: boolean // rows are hours ("YYYY-MM-DDTHH", UTC) instead of days
 }
 
-function aggregateByDate(data: DailyUsageRow[]): { date: string; input: number; output: number; cache_read: number; cache_write: number }[] {
-  const map: Record<string, { input: number; output: number; cache_read: number; cache_write: number }> = {}
+interface DayTotals { input: number; output: number; cache_read: number; write_5m: number; write_1h: number }
+
+function aggregateByDate(data: DailyUsageRow[]): ({ date: string } & DayTotals)[] {
+  const map: Record<string, DayTotals> = {}
   for (const row of data) {
-    if (!map[row.date]) map[row.date] = { input: 0, output: 0, cache_read: 0, cache_write: 0 }
+    if (!map[row.date]) map[row.date] = { input: 0, output: 0, cache_read: 0, write_5m: 0, write_1h: 0 }
+    const written = row.cache_creation_input_tokens
+    const oneHour = Math.min(row.cache_creation_1h_input_tokens ?? 0, written)
     map[row.date].input      += row.input_tokens
     map[row.date].output     += row.output_tokens
-    map[row.date].cache_read  += row.cache_read_input_tokens
-    map[row.date].cache_write += row.cache_creation_input_tokens
+    map[row.date].cache_read += row.cache_read_input_tokens
+    map[row.date].write_5m   += written - oneHour
+    map[row.date].write_1h   += oneHour
   }
   return Object.entries(map)
     .map(([date, v]) => ({ date, ...v }))
     .sort((a, b) => a.date.localeCompare(b.date))
 }
 
-function DailyChart({ data, chartType, showCache }: DailyChartProps) {
+function DailyChart({ data, chartType, showCache, hourly }: DailyChartProps) {
   const aggregated = useMemo(() => aggregateByDate(data), [data])
   if (aggregated.length === 0) return <div className="usage-chart__empty">No data for this period</div>
 
   const chartData = aggregated.map(d => ({
     ...d,
-    date: fmtDate(d.date),
+    date: hourly
+      ? new Date(`${d.date}:00:00Z`).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+      : fmtDate(d.date),
   }))
 
   const commonProps = {
@@ -119,12 +185,14 @@ function DailyChart({ data, chartType, showCache }: DailyChartProps) {
     margin: { top: 4, right: 8, left: 0, bottom: 0 },
   }
 
+  // the same colors as "Where the cost goes" (COST_PARTS)
   const bars = [
-    { key: 'input',       name: 'Input',       color: '#6366f1' },
-    { key: 'output',      name: 'Output',      color: '#d97706' },
+    { key: 'input',  name: 'Input',  color: '#3b82f6' },
+    { key: 'output', name: 'Output', color: '#8b5cf6' },
     ...(showCache ? [
-      { key: 'cache_read',  name: 'Cache read',  color: '#22c55e' },
-      { key: 'cache_write', name: 'Cache write', color: '#f59e0b' },
+      { key: 'cache_read', name: 'Cache read',          color: '#22c55e' },
+      { key: 'write_5m',   name: 'Cache write (5 min)', color: '#f59e0b' },
+      { key: 'write_1h',   name: 'Cache write (1 h)',   color: '#d97706' },
     ] : []),
   ]
 
@@ -204,13 +272,16 @@ function ModelPie({ data }: { data: ModelUsageRow[] }) {
 interface KPICardProps {
   label: string
   value: string
+  sub?: string      // a second line under the label
+  accent?: boolean  // the headline number
 }
 
-function KPICard({ label, value }: KPICardProps) {
+function KPICard({ label, value, sub, accent }: KPICardProps) {
   return (
-    <div className="usage-kpi">
+    <div className={`usage-kpi${accent ? ' usage-kpi--accent' : ''}`}>
       <span className="usage-kpi__value">{value}</span>
       <span className="usage-kpi__label">{label}</span>
+      {sub && <span className="usage-kpi__sub">{sub}</span>}
     </div>
   )
 }
@@ -267,7 +338,7 @@ function SessionTable({ data }: { data: SessionUsageRow[] }) {
         <tbody>
           {sorted.map(row => {
             const proj = projects.find(p => p.id === row.project_id)
-            const cost = estimateCost(row.model, row.input_tokens, row.output_tokens, row.cache_read_input_tokens, row.cache_creation_input_tokens)
+            const cost = estimateUsageCost(row.model, row)
             return (
               <tr
                 key={row.session_id}
@@ -293,139 +364,352 @@ function SessionTable({ data }: { data: SessionUsageRow[] }) {
   )
 }
 
+// ─── Tool table ───────────────────────────────────────────────────────────────
+
+type ToolSort = 'calls' | 'cost'
+
+function ToolTable({ data }: { data: api.ToolCostRow[] }) {
+  const [sortKey, setSortKey] = useState<ToolSort>('cost')
+  const rows = useMemo(() => {
+    return totalsByTool(data).sort((a: ToolTotals, b: ToolTotals) =>
+      sortKey === 'cost' ? toolTotalCost(b) - toolTotalCost(a) : b.calls - a.calls)
+  }, [data, sortKey])
+
+  if (rows.length === 0) {
+    return (
+      <div className="usage-chart__empty">
+        No tool data in this period yet. It is collected from sessions run after the runners were updated.
+      </div>
+    )
+  }
+  const th = (key: ToolSort, label: string) => (
+    <th onClick={() => setSortKey(key)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+      {label} {sortKey === key ? '↓' : ''}
+    </th>
+  )
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table className="usage-table">
+        <thead>
+          <tr>
+            <th>Tool</th>
+            {th('calls', 'Calls')}
+            <th>Errors</th>
+            <th title="Tokens its results added to the context, per call">Avg result</th>
+            <th title="Result tokens x the later calls that re-read them from the cache">Re-read tokens</th>
+            <th title="What the model wrote to ask for the tool">Output</th>
+            {th('cost', 'Est. cost')}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(t => {
+            const measured = t.calls - t.unmeasured
+            const cost = toolTotalCost(t)
+            const tip = `Asking for it: ${formatCost(t.askCost)}\nWriting its results to the cache: ${formatCost(t.writeCost)}\n` +
+              `Re-reading its results in later calls: ${formatCost(t.readCost)}` +
+              (t.unmeasured ? `\n${t.unmeasured} call(s) ended a turn: their result could not be measured` : '')
+            return (
+              <tr key={t.tool}>
+                <td className="usage-table__model">{toolLabel(t.tool)}</td>
+                <td>{fmtNum(t.calls)}</td>
+                <td>{t.errors || ''}</td>
+                <td>{measured > 0 ? fmtNum(Math.round(t.resultTokens / measured)) : '—'}</td>
+                <td>{fmtNum(t.carriedRead)}</td>
+                <td>{fmtNum(t.outputTokens)}</td>
+                <td title={tip}>{formatCost(cost)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ─── Cost breakdown ───────────────────────────────────────────────────────────
+
+const COST_PARTS = [
+  { key: 'input', label: 'Input', color: '#3b82f6' },
+  { key: 'output', label: 'Output', color: '#8b5cf6' },
+  { key: 'cacheRead', label: 'Cache read', color: '#22c55e' },
+  { key: 'write5m', label: 'Cache write (5 min)', color: '#f59e0b' },
+  { key: 'write1h', label: 'Cache write (1 h)', color: '#d97706' },
+] as const
+type CostPart = typeof COST_PARTS[number]['key']
+
+// Where the estimated cost goes: every kind of token priced apart, both cache TTLs included.
+function costByPart(models: ModelUsageRow[]): Record<CostPart, number> {
+  const t: Record<CostPart, number> = { input: 0, output: 0, cacheRead: 0, write5m: 0, write1h: 0 }
+  for (const r of models) {
+    const written = r.cache_creation_input_tokens
+    const oneHour = Math.min(r.cache_creation_1h_input_tokens ?? 0, written)
+    t.input += estimateCost(r.model, r.input_tokens, 0)
+    t.output += estimateCost(r.model, 0, r.output_tokens)
+    t.cacheRead += estimateCost(r.model, 0, 0, r.cache_read_input_tokens)
+    t.write5m += estimateCost(r.model, 0, 0, 0, written - oneHour)
+    t.write1h += estimateCost(r.model, 0, 0, 0, 0, oneHour)
+  }
+  return t
+}
+
+function CostBreakdown({ models }: { models: ModelUsageRow[] }) {
+  const parts = useMemo(() => costByPart(models), [models])
+  const total = COST_PARTS.reduce((s, p) => s + parts[p.key], 0)
+  if (total <= 0) return <div className="usage-chart__empty">No cost in this period</div>
+  return (
+    <div className="usage-breakdown">
+      <div className="usage-breakdown__bar" role="img" aria-label="Cost by kind of token">
+        {COST_PARTS.map(p => parts[p.key] > 0 && (
+          <span
+            key={p.key}
+            className="usage-breakdown__seg"
+            style={{ width: `${(parts[p.key] / total) * 100}%`, background: p.color }}
+            title={`${p.label}: ${formatCost(parts[p.key])}`}
+          />
+        ))}
+      </div>
+      <ul className="usage-breakdown__legend">
+        {COST_PARTS.map(p => (
+          <li key={p.key} className="usage-breakdown__row">
+            <span className="usage-breakdown__dot" style={{ background: p.color }} />
+            <span className="usage-breakdown__name">{p.label}</span>
+            <span className="usage-breakdown__cost">{formatCost(parts[p.key])}</span>
+            <span className="usage-breakdown__pct">{((parts[p.key] / total) * 100).toFixed(1)}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// ─── Project filter ───────────────────────────────────────────────────────────
+
+function ProjectFilter({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const projects = useStore(s => s.projects)
+  return (
+    <label className="usage-filter">
+      <span>Project</span>
+      <select className="usage-select" value={value} onChange={e => onChange(e.target.value)}>
+        <option value="">All projects</option>
+        {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+    </label>
+  )
+}
+
 // ─── Main page ───────────────────────────────────────────────────────────────
 
+type UsageTab = 'overview' | 'tools' | 'sessions'
+
 export function UsagePage() {
+  const [params, setParams] = useSearchParams()
+  const tabParam = params.get('tab')
+  const tab: UsageTab = tabParam === 'tools' || tabParam === 'sessions' ? tabParam : 'overview'
+  const setTab = (t: UsageTab) => setParams(t === 'overview' ? {} : { tab: t }, { replace: true })
+
   const [range, setRange] = useState<UsageRange>('30d')
-  const [chartType, setChartType] = useState<ChartType>('bar')
+  // A chosen day (local) with an hour span replaces the preset range.
+  const [day, setDay] = useState('')
+  const [fromHour, setFromHour] = useState(0)
+  const [toHour, setToHour] = useState(24)
+  const filter = useMemo<UsageRange | api.UsageWindow>(() => {
+    if (!day) return range
+    const [y, m, d] = day.split('-').map(Number)
+    return { from: new Date(y, m - 1, d, fromHour).toISOString(), to: new Date(y, m - 1, d, toHour).toISOString() }
+  }, [range, day, fromHour, toHour])
+  const hourly = !!day
+  const [projectId, setProjectId] = useState('')
+  const [chartType, setChartType] = useState<ChartType>('area')
   const [showCache, setShowCache] = useState(false)
 
   const [dailyData, setDailyData] = useState<DailyUsageRow[]>([])
   const [modelData, setModelData] = useState<ModelUsageRow[]>([])
   const [sessionData, setSessionData] = useState<SessionUsageRow[]>([])
-  const [loading, setLoading] = useState(true)
+  const [toolData, setToolData] = useState<api.ToolCostRow[]>([])
+  const [loadingOverview, setLoadingOverview] = useState(true)
+  const [loadingDetail, setLoadingDetail] = useState(true)
 
   const loadProjects = useStore(s => s.loadProjects)
   useEffect(() => { loadProjects() }, [])
 
+  // Overview: the whole account, by day and by model
   useEffect(() => {
-    setLoading(true)
+    setLoadingOverview(true)
+    Promise.all([api.getUsageDaily(filter, hourly), api.getUsageModels(filter)])
+      .then(([d, m]) => { setDailyData(d); setModelData(m) })
+      .catch(() => {})
+      .finally(() => setLoadingOverview(false))
+  }, [filter, hourly])
+
+  // Sessions and tools: they can be narrowed to one project
+  useEffect(() => {
+    setLoadingDetail(true)
     Promise.all([
-      api.getUsageDaily(range),
-      api.getUsageModels(range),
-      api.getUsageSessions(range),
-    ]).then(([d, m, s]) => {
-      setDailyData(d)
-      setModelData(m)
-      setSessionData(s)
-      setLoading(false)
-    }).catch(() => setLoading(false))
-  }, [range])
+      api.getUsageSessions(filter, projectId || undefined),
+      api.getUsageTools(filter, projectId || undefined).catch(() => [] as api.ToolCostRow[]), // an older hub has no such route
+    ])
+      .then(([s, t]) => { setSessionData(s); setToolData(t) })
+      .catch(() => {})
+      .finally(() => setLoadingDetail(false))
+  }, [filter, projectId])
 
   const kpis = useMemo(() => {
-    const totalInput  = dailyData.reduce((s, r) => s + r.input_tokens, 0)
-    const totalOutput = dailyData.reduce((s, r) => s + r.output_tokens, 0)
-    const totalCacheR = dailyData.reduce((s, r) => s + r.cache_read_input_tokens, 0)
-    const totalCacheW = dailyData.reduce((s, r) => s + r.cache_creation_input_tokens, 0)
-    const totalTurns  = dailyData.reduce((s, r) => s + r.turn_count, 0)
-    const totalCost   = modelData.reduce((s, r) =>
-      s + estimateCost(r.model, r.input_tokens, r.output_tokens, r.cache_read_input_tokens, r.cache_creation_input_tokens), 0)
-    return { totalInput, totalOutput, totalCacheR, totalCacheW, totalTurns, totalCost }
+    const sum = (f: (r: DailyUsageRow) => number) => dailyData.reduce((s, r) => s + f(r), 0)
+    return {
+      input: sum(r => r.input_tokens),
+      output: sum(r => r.output_tokens),
+      cacheRead: sum(r => r.cache_read_input_tokens),
+      cacheWrite: sum(r => r.cache_creation_input_tokens),
+      cacheWrite1h: sum(r => r.cache_creation_1h_input_tokens ?? 0),
+      turns: sum(r => r.turn_count),
+      cost: modelData.reduce((s, r) => s + estimateUsageCost(r.model, r), 0),
+    }
   }, [dailyData, modelData])
+
+  const tabs: { id: UsageTab; label: string; count?: number }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'tools', label: 'Tools', count: toolData.length ? new Set(toolData.map(t => t.tool)).size : undefined },
+    { id: 'sessions', label: 'Sessions', count: sessionData.length || undefined },
+  ]
 
   return (
     <div className="usage-page">
       <div className="usage-page__header">
-        <h1 className="usage-page__title">Usage</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <RangeSelector value={range} onChange={setRange} />
+        <div>
+          <h1 className="usage-page__title">Usage</h1>
+          <p className="usage-page__subtitle">Tokens and estimated cost (list prices, not billed)</p>
+        </div>
+        <div className="usage-page__filters">
+          <DayFilter
+            day={day}
+            fromHour={fromHour}
+            toHour={toHour}
+            onChange={f => { setDay(f.day); setFromHour(f.fromHour); setToHour(f.toHour) }}
+          />
+          <RangeSelector value={day ? null : range} onChange={r => { setDay(''); setFromHour(0); setToHour(24); setRange(r) }} />
         </div>
       </div>
 
-      {loading ? (
-        <div className="usage-page__loading">Loading…</div>
-      ) : (
-        <div className="usage-page__content">
+      <nav className="usage-tabs" aria-label="Usage sections">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            className={`usage-tab${tab === t.id ? ' usage-tab--active' : ''}`}
+            onClick={() => setTab(t.id)}
+            aria-current={tab === t.id ? 'page' : undefined}
+          >
+            {t.label}
+            {t.count !== undefined && <span className="usage-tab__badge">{t.count}</span>}
+          </button>
+        ))}
+      </nav>
 
-          {/* KPI cards */}
-          <div className="usage-kpis" style={{ marginBottom: 24 }}>
-            <KPICard label="Input tokens" value={fmtNum(kpis.totalInput)} />
-            <KPICard label="Output tokens" value={fmtNum(kpis.totalOutput)} />
-            <KPICard label="Cache read" value={fmtNum(kpis.totalCacheR)} />
-            <KPICard label="Cache write" value={fmtNum(kpis.totalCacheW)} />
-            <KPICard label="Turns" value={fmtNum(kpis.totalTurns)} />
-            <KPICard label="Est. cost" value={formatCost(kpis.totalCost)} />
-          </div>
-
-          {/* Daily usage chart */}
-          <div className="usage-section">
-            <div className="usage-section__header">
-              <span className="usage-section-label">Daily token usage</span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <label className="usage-cache-toggle">
-                  <input type="checkbox" checked={showCache} onChange={e => setShowCache(e.target.checked)} />
-                  <span>Show cache</span>
-                </label>
-                <ChartTypeSelector value={chartType} onChange={setChartType} />
-              </div>
+      <div className="usage-page__content">
+        {tab === 'overview' && (loadingOverview ? (
+          <div className="usage-page__loading">Loading…</div>
+        ) : (
+          <>
+            <div className="usage-kpis">
+              <KPICard label="Est. cost" value={formatCost(kpis.cost)} accent />
+              <KPICard label="Turns" value={fmtNum(kpis.turns)} />
+              <KPICard label="Input" value={fmtNum(kpis.input)} />
+              <KPICard label="Output" value={fmtNum(kpis.output)} />
+              <KPICard label="Cache read" value={fmtNum(kpis.cacheRead)} />
+              <KPICard
+                label="Cache write"
+                value={fmtNum(kpis.cacheWrite)}
+                sub={`1 h ${fmtNum(kpis.cacheWrite1h)} · 5 min ${fmtNum(Math.max(0, kpis.cacheWrite - kpis.cacheWrite1h))}`}
+              />
             </div>
-            <DailyChart data={dailyData} chartType={chartType} showCache={showCache} />
-          </div>
 
-          {/* Model distribution */}
-          {modelData.length > 0 && (
-            <div className="usage-section" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
-              <div>
-                <div className="usage-section-label">Model distribution</div>
-                <ModelPie data={modelData} />
+            <section className="usage-section">
+              <div className="usage-section-label">Where the cost goes</div>
+              <CostBreakdown models={modelData} />
+            </section>
+
+            <section className="usage-section">
+              <div className="usage-section__header">
+                <span className="usage-section-label">{hourly ? 'Hourly token usage' : 'Daily token usage'}</span>
+                <div className="usage-section__tools">
+                  <label className="usage-cache-toggle">
+                    <input type="checkbox" checked={showCache} onChange={e => setShowCache(e.target.checked)} />
+                    <span>Show cache</span>
+                  </label>
+                  <ChartTypeSelector value={chartType} onChange={setChartType} />
+                </div>
               </div>
-              <div>
-                <div className="usage-section-label">Token usage by model</div>
-                <table className="usage-table">
-                  <thead>
-                    <tr>
-                      <th>Model</th>
-                      <th>Input</th>
-                      <th>Output</th>
-                      <th>Cache R</th>
-                      <th>Cache W</th>
-                      <th>Turns</th>
-                      <th>Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {modelData.map(r => (
-                      <tr key={r.model}>
-                        <td className="usage-table__model">{r.model.replace(/claude-/i, '').replace(/-\d{8}$/, '')}</td>
-                        <td>{fmtNum(r.input_tokens)}</td>
-                        <td>{fmtNum(r.output_tokens)}</td>
-                        <td>{fmtNum(r.cache_read_input_tokens)}</td>
-                        <td>{fmtNum(r.cache_creation_input_tokens)}</td>
-                        <td>{r.turn_count}</td>
-                        <td>{formatCost(estimateCost(r.model, r.input_tokens, r.output_tokens, r.cache_read_input_tokens, r.cache_creation_input_tokens))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+              <DailyChart data={dailyData} chartType={chartType} showCache={showCache} hourly={hourly} />
+            </section>
 
-          {/* Session breakdown */}
-          <div className="usage-section">
-            <div className="usage-section-label">Sessions ({sessionData.length})</div>
-            <SessionTable data={sessionData} />
-          </div>
+            {modelData.length > 0 && (
+              <section className="usage-section">
+                <div className="usage-section-label">By model</div>
+                <div className="usage-models">
+                  <ModelPie data={modelData} />
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="usage-table">
+                      <thead>
+                        <tr>
+                          <th>Model</th>
+                          <th>Input</th>
+                          <th>Output</th>
+                          <th>Cache R</th>
+                          <th title="Cache writes: 1 hour cache / 5 minute cache">Cache W</th>
+                          <th>Turns</th>
+                          <th>Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {modelData.map(r => (
+                          <tr key={r.model}>
+                            <td className="usage-table__model">{r.model.replace(/claude-/i, '').replace(/-\d{8}$/, '')}</td>
+                            <td>{fmtNum(r.input_tokens)}</td>
+                            <td>{fmtNum(r.output_tokens)}</td>
+                            <td>{fmtNum(r.cache_read_input_tokens)}</td>
+                            <td>{fmtNum(r.cache_creation_input_tokens)}</td>
+                            <td>{r.turn_count}</td>
+                            <td>{formatCost(estimateUsageCost(r.model, r))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            )}
 
-          {/* Legacy per-account stats */}
-          <div className="usage-section">
-            <div className="usage-section-label">Account activity (stats-cache.json)</div>
-            <p className="usage-page__subtitle" style={{ fontSize: 12, marginTop: 4 }}>
-              Historical data from external stats-cache.json per account. Requires credfeeder to be running.
+            <p className="usage-page__footnote">
+              Cache writes are priced by their TTL: 1 hour at twice the input price, 5 minutes at 1.25 times.
+              Turns recorded before the runners reported the split count as 5 minutes.
             </p>
-          </div>
-        </div>
-      )}
+          </>
+        ))}
+
+        {tab === 'tools' && (
+          <section className="usage-section">
+            <div className="usage-toolbar">
+              <div className="usage-section-label">Most used and most expensive tools</div>
+              <ProjectFilter value={projectId} onChange={setProjectId} />
+            </div>
+            {loadingDetail ? <div className="usage-page__loading">Loading…</div> : <ToolTable data={toolData} />}
+            <p className="usage-page__footnote">
+              A tool&apos;s cost is what the model wrote to ask for it, plus its result: written to the cache once and
+              re-read by every later call. Results of tools called in parallel are split by size; sessions from before
+              the runners reported result sizes split them equally.
+            </p>
+          </section>
+        )}
+
+        {tab === 'sessions' && (
+          <section className="usage-section">
+            <div className="usage-toolbar">
+              <div className="usage-section-label">Sessions ({sessionData.length})</div>
+              <ProjectFilter value={projectId} onChange={setProjectId} />
+            </div>
+            {loadingDetail ? <div className="usage-page__loading">Loading…</div> : <SessionTable data={sessionData} />}
+          </section>
+        )}
+      </div>
     </div>
   )
 }

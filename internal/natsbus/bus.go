@@ -79,6 +79,10 @@ type Bus struct {
 	// large holds the Object Store used for messages above the NATS limit
 	large largeStore
 
+	// runnerStream: the JetStream stream with the events of turns run on runners
+	runnerStreamMu sync.Mutex
+	runnerStreamOK bool
+
 	// discovery
 	peersMu           sync.RWMutex
 	selfInfo          InstanceInfo

@@ -159,3 +159,39 @@ func TestEndpointerOffAndIdleWithoutPhrase(t *testing.T) {
 		t.Fatal("a phrase the worker already closed must not be closed again")
 	}
 }
+
+// The worker can answer a flush seconds late. Seen live: "Se las cantamos." was sent when the
+// partial stalled, the speaker then said "hola", and the worker's late final of the first
+// phrase ("Se las cantamos a usted.") arrived after SPEECH_START of the second and was
+// delivered as if it were new.
+func TestEndpointerDropsTheLateFinalOfAClosedPhraseAfterTheNextOneStarted(t *testing.T) {
+	e := NewEndpointer(2 * time.Second)
+	e.Speech(at(0))
+	e.Partial("Se las cantamos.", at(0.5))
+	c, ok := e.Tick(at(2.6))
+	if !ok || c.Text != "Se las cantamos." {
+		t.Fatalf("got %+v %v", c, ok)
+	}
+	e.Speech(at(5)) // "hola" begins before the worker answered the flush
+	if _, _, send := e.Final("Se las cantamos a usted."); send {
+		t.Fatal("the late final of the closed phrase must be dropped")
+	}
+	// the new phrase is not affected
+	e.Partial("hola", at(5.4))
+	if out, _, send := e.Final("hola"); !send || out != "hola" {
+		t.Fatalf("new phrase: %q %v", out, send)
+	}
+}
+
+// A final for the phrase in progress that has nothing to do with the closed one is not dropped.
+func TestEndpointerKeepsAnUnrelatedFinalAfterAClose(t *testing.T) {
+	e := NewEndpointer(2 * time.Second)
+	e.Speech(at(0))
+	e.Partial("Se las cantamos.", at(0.5))
+	e.Tick(at(2.6))
+	e.Speech(at(5))
+	e.Partial("hola", at(5.4))
+	if out, _, send := e.Final("hola"); !send || out != "hola" {
+		t.Fatalf("unrelated final must pass: %q %v", out, send)
+	}
+}

@@ -21,12 +21,14 @@ import (
 	"claude-orchestrator/internal/aimode"
 	authclient "claude-orchestrator/internal/authclient"
 	dbpkg "claude-orchestrator/internal/db"
+	"claude-orchestrator/internal/flows"
 	natspkg "claude-orchestrator/internal/natsbus"
 	"claude-orchestrator/internal/permissions"
 	sessionpkg "claude-orchestrator/internal/session"
 
 	"github.com/google/uuid"
 	"claude-orchestrator/internal/taskmcp"
+	versionpkg "claude-orchestrator/internal/version"
 )
 
 // toolNameRe matches valid Anthropic tool names: ^[a-zA-Z0-9_-]{1,128}$
@@ -38,6 +40,9 @@ type cachedEntry struct {
 }
 
 type Handler struct {
+	// hubOnly: this instance orchestrates and runs no claude of its own (--hub-only);
+	// every turn goes to a runner.
+	hubOnly    bool
 	db         *sql.DB
 	bus        *natspkg.Bus
 	manager    *sessionpkg.Manager
@@ -56,6 +61,8 @@ type Handler struct {
 	inbox       map[string][]string  // session id -> messages waiting for its turn to end
 	sent        map[string][]time.Time // session id -> recent send_to_agent sends (rate limit)
 	startTurnFn func(sessionpkg.TurnOptions) error // overrides manager.StartTurn in tests
+
+	flows *flows.Engine // nil until StartFlows (only the hub runs it)
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
@@ -76,6 +83,10 @@ func (h *Handler) SetAuthURL(url string) {
 	h.auth = authclient.New(url)
 }
 
+// SetHubOnly makes this instance refuse to run claude itself: it is not offered as a
+// runner and a turn without a runner fails with a clear message.
+func (h *Handler) SetHubOnly(v bool) { h.hubOnly = v }
+
 func (h *Handler) SetAIAPIURL(url string) {
 	h.aiAPIURL = url
 }
@@ -86,6 +97,9 @@ func (h *Handler) SetMinimaxSubscriptionKey(key string) {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/health", h.health)
+	mux.HandleFunc("GET /api/version", h.version("hub"))
+	h.registerFlows(mux)
+	h.registerGit(mux)
 
 	mux.HandleFunc("POST /api/projects", h.createProject)
 	mux.HandleFunc("GET /api/projects", h.listProjects)
@@ -93,6 +107,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /api/projects/{pid}/sessions", h.createSession)
 	mux.HandleFunc("GET /api/projects/{pid}/sessions", h.listSessions)
+	mux.HandleFunc("GET /api/projects/{pid}/alerts", h.listProjectAlerts)
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.deleteSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", h.updateSessionName)
 
@@ -106,6 +121,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)
 	mux.HandleFunc("DELETE /api/sessions/{id}/turn", h.cancelTurn)
 	mux.HandleFunc("GET /api/sessions/{id}/process", h.getSessionProcess)
+	mux.HandleFunc("GET /api/sessions/{id}/diffstat", h.getSessionDiffStat)
 	mux.HandleFunc("DELETE /api/sessions/{id}/process", h.closeSessionProcess)
 	mux.HandleFunc("POST /api/sessions/{id}/fork", h.forkSession)
 
@@ -172,6 +188,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/kanban/cards/{id}", h.updateKanbanCard)
 	mux.HandleFunc("DELETE /api/kanban/cards/{id}", h.deleteKanbanCard)
 	mux.HandleFunc("POST /api/kanban/cards/{id}/reset", h.resetKanbanCard)
+	mux.HandleFunc("GET /api/kanban/cards/{id}/review", h.getCardReview)
+	mux.HandleFunc("POST /api/kanban/cards/{id}/review/merge", h.mergeCardReview)
+	mux.HandleFunc("POST /api/kanban/cards/{id}/review/resolve", h.resolveCardReview)
 	mux.HandleFunc("GET /api/kanban/cards/{id}/images", h.listCardImages)
 	mux.HandleFunc("POST /api/kanban/cards/{id}/images", h.addCardImage)
 	mux.HandleFunc("DELETE /api/kanban/cards/{id}/images/{name}", h.deleteCardImage)
@@ -197,6 +216,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/usage/daily", h.usageDaily)
 	mux.HandleFunc("GET /api/usage/models", h.usageModels)
 	mux.HandleFunc("GET /api/usage/sessions", h.usageSessions)
+	mux.HandleFunc("GET /api/usage/tools", h.usageTools)
+	mux.HandleFunc("GET /api/sessions/{id}/first-turn-usage", h.firstTurnUsage)
+	mux.HandleFunc("GET /api/sessions/{id}/tool-costs", h.sessionToolCosts)
 
 	mux.HandleFunc("GET /ws", h.globalWS)
 	mux.HandleFunc("GET /ws/stt", h.sttSocket)
@@ -205,6 +227,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/stt/models", h.sttModels)
 	mux.HandleFunc("POST /api/stt/model", h.sttSetModel)
 	mux.HandleFunc("GET /api/stt/vosk-model.tar.gz", h.sttVoskModel)
+	mux.HandleFunc("GET /api/stt/orchard/settings", h.getOrchardSettings)
+	mux.HandleFunc("PUT /api/stt/orchard/settings", h.putOrchardSettings)
+	mux.HandleFunc("POST /api/stt/orchard/transcribe", h.orchardTranscribe)
+	mux.HandleFunc("GET /api/active-ai", h.getActiveAI)
+	mux.HandleFunc("PUT /api/active-ai", h.putActiveAI)
 	mux.HandleFunc("GET /api/tts/settings", h.getTTSSettings)
 	mux.HandleFunc("PUT /api/tts/settings", h.putTTSSettings)
 	mux.HandleFunc("POST /api/tts", h.ttsSpeak)
@@ -218,7 +245,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/ai-profiles", h.createAIProfile)
 	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)
 	mux.HandleFunc("DELETE /api/ai-profiles/{id}", h.deleteAIProfile)
+	mux.HandleFunc("GET /api/ai-profiles/{id}/usage", h.aiProfileUsage)
 	mux.HandleFunc("GET /api/runners", h.listRunners)
+	mux.HandleFunc("GET /api/sessions/{id}/command", h.getSessionCommand)
+	// the hub is not an executor: what a runner launched and which build it is come from the runner
+	mux.HandleFunc("GET /api/runners/{rid}/commands", h.runnerAI(notARunner, func(*http.Request) string { return "/api/commands" }))
+	mux.HandleFunc("GET /api/runners/{rid}/version", h.runnerAI(notARunner, func(*http.Request) string { return "/api/version" }))
 	root := func(*http.Request) string { return "/api/ai-profiles" }
 	byID := func(tail string) func(*http.Request) string {
 		return func(r *http.Request) string { return "/api/ai-profiles/" + r.PathValue("id") + tail }
@@ -228,6 +260,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runners/{rid}/ai-profiles", h.runnerAI(h.createAIProfile, root))
 	mux.HandleFunc("POST /api/runners/{rid}/ai-profiles/{id}/refresh", h.runnerAI(h.refreshAIProfile, byID("/refresh")))
 	mux.HandleFunc("DELETE /api/runners/{rid}/ai-profiles/{id}", h.runnerAI(h.deleteAIProfile, byID("")))
+	mux.HandleFunc("GET /api/runners/{rid}/ai-profiles/{id}/usage", h.runnerAI(h.aiProfileUsage, byID("/usage")))
 	mux.HandleFunc("PATCH /api/projects/{id}/aiapi", h.setProjectAIAPI)
 
 	// Process task manager (proxied to aiapi)
@@ -382,6 +415,11 @@ func spaHandler(spaFS fs.FS) http.Handler {
 			return
 		}
 		f.Close()
+		if strings.HasSuffix(path, "sw.js") {
+			// The service worker lives under /src/ in the Parcel build; this lets it control "/".
+			w.Header().Set("Service-Worker-Allowed", "/")
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		fileServer.ServeHTTP(w, r)
 	})
 }
@@ -390,6 +428,14 @@ func spaHandler(spaFS fs.FS) http.Handler {
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// version says which build is running here (git commit, dirty flag, build and start
+// times). A hub answers it for itself; on a runner it is reached over the RPC bridge.
+func (h *Handler) version(role string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		jsonResp(w, http.StatusOK, versionpkg.Current(role))
+	}
 }
 
 func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
@@ -427,6 +473,7 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.seedProjectFlows(p.ID)
 	jsonResp(w, http.StatusCreated, p)
 }
 
@@ -503,6 +550,20 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	if sessions == nil {
 		sessions = []dbpkg.Session{}
 	}
+	for i := range sessions {
+		if sessions[i].CardID != "" {
+			sessions[i].Worktree, sessions[i].Branch = dbpkg.SessionWorktree(h.db, sessions[i].ID)
+			if sessions[i].Branch == "" {
+				// a worktree made by claude --worktree leaves no trace in the transcript:
+				// use where the process reported it works, or the branch waiting in Review
+				if rv, ok := h.resolveReview(sessions[i].ID, sessions[i].CardID); ok {
+					sessions[i].Worktree, sessions[i].Branch = rv.WorktreePath, rv.Branch
+				} else if rv, err := dbpkg.GetCardReview(h.db, sessions[i].CardID); err == nil {
+					sessions[i].Worktree, sessions[i].Branch = rv.WorktreePath, rv.Branch
+				}
+			}
+		}
+	}
 	jsonResp(w, http.StatusOK, sessions)
 }
 
@@ -557,6 +618,10 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	sess, err := dbpkg.GetSession(h.db, id)
 	if err != nil {
 		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if sess.WorktreeRemoved {
+		http.Error(w, "this task's worktree was merged and deleted: the chat is closed", http.StatusConflict)
 		return
 	}
 	log.Printf("[sendTurn] session=%s account_id=%q from db", id, sess.AccountID)
@@ -618,9 +683,11 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	if agent != nil {
 		opts.Executor = agent.Executor
 		opts.AgentName = agent.Name
-		opts.Tools = agent.Tools
+		opts.Tools = agentTools(*agent)
 		opts.Persistent = agent.Persistent && agent.Executor == "claude"
 		opts.AutoMode = agent.AutoMode && agent.Executor == "claude"
+		opts.Worktree = agent.Worktree && agent.Executor == "claude"
+		opts.WorktreeBaseRef = agent.WorktreeBaseRef
 		opts.LucodeTools = agent.LucodeTools
 		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
 			opts.SystemPrompt = agentSystemPrompt(*agent, card, h.supervisorName(*agent))
@@ -631,6 +698,22 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 
 	if aimode.IsModel(model) { // local model: Google AI Mode in Edge, no claude and no tools
 		opts.Executor, opts.Persistent, opts.Resume = "aimode", false, false
+	}
+
+	if opts.Executor != "aimode" {
+		// Where it runs and with which AI: the agent's runner, else the project's.
+		// On a hub this sends the turn to the runner instead of starting claude here.
+		var envAgent dbpkg.Agent
+		if agent != nil {
+			envAgent = *agent
+		}
+		env, err := h.resolveTurnEnv(envAgent, proj)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		opts.WorkDirs, opts.ClaudeConfigDir = env.WorkDirs, env.ConfigDir
+		opts.RunnerID, opts.AIProfileID = env.RunnerID, env.AIProfileID
 	}
 
 	// If the session has an account, pass it to aiapi (which will resolve it to the claude_config_dir)
@@ -2189,9 +2272,23 @@ func (h *Handler) requireAPIKey(r *http.Request) (string, error) {
 
 // ---- Usage / Metrics ----
 
-// parseRangeParam maps a "range" query param (7d|30d|90d|all) to a since time.Time.
-func parseRangeParam(r *http.Request) time.Time {
-	switch r.URL.Query().Get("range") {
+// rangeSince maps a "range" preset (7d|30d|90d|all) to a since time.Time.
+// parseWindow is the time window of a usage request: "from"/"to" (RFC3339, to excluded) when
+// given, otherwise the "range" preset. A zero until means no upper limit.
+func parseWindow(r *http.Request) (since, until time.Time) {
+	q := r.URL.Query()
+	if from, err := time.Parse(time.RFC3339, q.Get("from")); err == nil {
+		since = from
+		if to, err := time.Parse(time.RFC3339, q.Get("to")); err == nil {
+			until = to
+		}
+		return since, until
+	}
+	return rangeSince(q.Get("range")), time.Time{}
+}
+
+func rangeSince(name string) time.Time {
+	switch name {
 	case "7d":
 		return time.Now().AddDate(0, 0, -7)
 	case "30d":
@@ -2204,8 +2301,8 @@ func parseRangeParam(r *http.Request) time.Time {
 }
 
 func (h *Handler) usageDaily(w http.ResponseWriter, r *http.Request) {
-	since := parseRangeParam(r)
-	rows, err := dbpkg.AggregateDailyUsage(h.db, since)
+	since, until := parseWindow(r)
+	rows, err := dbpkg.AggregateDailyUsage(h.db, since, until, r.URL.Query().Get("granularity") == "hour")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2217,8 +2314,8 @@ func (h *Handler) usageDaily(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) usageModels(w http.ResponseWriter, r *http.Request) {
-	since := parseRangeParam(r)
-	rows, err := dbpkg.AggregateModelUsage(h.db, since)
+	since, until := parseWindow(r)
+	rows, err := dbpkg.AggregateModelUsage(h.db, since, until)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2230,9 +2327,9 @@ func (h *Handler) usageModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
-	since := parseRangeParam(r)
+	since, until := parseWindow(r)
 	projectID := r.URL.Query().Get("project_id")
-	rows, err := dbpkg.AggregateSessionUsage(h.db, since, projectID)
+	rows, err := dbpkg.AggregateSessionUsage(h.db, since, until, projectID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2241,6 +2338,59 @@ func (h *Handler) usageSessions(w http.ResponseWriter, r *http.Request) {
 		rows = []dbpkg.SessionUsageRow{}
 	}
 	jsonResp(w, http.StatusOK, rows)
+}
+
+// usageTools serves what each tool used (tokens by price class, per tool and model). Only
+// sessions run since the runners started reporting per-call usage have data.
+func (h *Handler) usageTools(w http.ResponseWriter, r *http.Request) {
+	since, until := parseWindow(r)
+	rows, err := dbpkg.ToolCosts(h.db, since, until, r.URL.Query().Get("project_id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []dbpkg.ToolCostRow{}
+	}
+	jsonResp(w, http.StatusOK, rows)
+}
+
+// sessionToolCosts serves what each tool cost in one session (empty until it has reported calls).
+func (h *Handler) sessionToolCosts(w http.ResponseWriter, r *http.Request) {
+	rows, err := dbpkg.SessionToolCosts(h.db, r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []dbpkg.ToolCostRow{}
+	}
+	jsonResp(w, http.StatusOK, rows)
+}
+
+// firstTurnUsage serves what the session's initial context billed (404 until it has usage).
+// Exact when the runner reported per-call usage: then it is the very first call. Older
+// sessions only have the turn totals, which were the LAST call of the turn: not the first.
+func (h *Handler) firstTurnUsage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	u, written1h, err := dbpkg.FirstCallUsage(h.db, id)
+	exact := err == nil
+	if errors.Is(err, sql.ErrNoRows) {
+		u, err = dbpkg.FirstTurnUsage(h.db, id)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "no usage yet", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, struct {
+		dbpkg.TurnUsage
+		Exact           bool `json:"exact"`
+		CacheCreation1h int  `json:"cache_creation_1h_tokens"` // of the written tokens, the ones billed at the 1h price
+	}{u, exact, written1h})
 }
 
 // remoteProxy intercepts requests with X-Lucode-Remote header and forwards
@@ -2325,6 +2475,14 @@ func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(agents)
 }
 
+// normalizeBaseRef is the worktree.baseRef of an agent: "fresh" or, by default, "head".
+func normalizeBaseRef(v string) string {
+	if v == "fresh" {
+		return v
+	}
+	return "head"
+}
+
 func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	var body struct {
@@ -2336,6 +2494,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Executor    string   `json:"executor"`
 		Persistent  bool     `json:"persistent"`
 		AutoMode    bool     `json:"auto_mode"`
+		Worktree    bool     `json:"worktree"`
+		WorktreeBaseRef string `json:"worktree_base_ref"` // "head" (default) | "fresh"
 		ReportsTo   string   `json:"reports_to"`
 		Scope       string   `json:"scope"`        // "project" (default) or "global"
 		LucodeTools []string `json:"lucode_tools"` // nil = all
@@ -2375,6 +2535,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Executor:    body.Executor,
 		Persistent:  body.Persistent && body.Executor == "claude",
 		AutoMode:    body.AutoMode && body.Executor == "claude",
+		Worktree:    body.Worktree && body.Executor == "claude",
+		WorktreeBaseRef: normalizeBaseRef(body.WorktreeBaseRef),
 		ReportsTo:   body.ReportsTo,
 		RunnerID:    body.RunnerID,
 		AIProfileID: body.AIProfileID,
@@ -2418,6 +2580,8 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Executor    *string  `json:"executor"`
 		Persistent  *bool    `json:"persistent"`
 		AutoMode    *bool    `json:"auto_mode"`
+		Worktree    *bool    `json:"worktree"`
+		WorktreeBaseRef *string `json:"worktree_base_ref"`
 		ReportsTo   *string  `json:"reports_to"`
 		Scope       *string  `json:"scope"`      // "project" | "global"
 		ProjectID   *string  `json:"project_id"` // needed when a global agent becomes project-only
@@ -2447,6 +2611,12 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.AutoMode != nil {
 		a.AutoMode = *body.AutoMode
+	}
+	if body.Worktree != nil {
+		a.Worktree = *body.Worktree
+	}
+	if body.WorktreeBaseRef != nil {
+		a.WorktreeBaseRef = *body.WorktreeBaseRef
 	}
 	if body.Scope != nil {
 		switch *body.Scope {
@@ -2496,6 +2666,8 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Persistent = a.Persistent && a.Executor == "claude" // only the claude CLI can stay alive
 	a.AutoMode = a.AutoMode && a.Executor == "claude"     // --permission-mode is a claude CLI flag
+	a.Worktree = a.Worktree && a.Executor == "claude"     // --worktree is a claude CLI flag
+	a.WorktreeBaseRef = normalizeBaseRef(a.WorktreeBaseRef)
 	if err := dbpkg.UpdateAgent(h.db, a); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2521,6 +2693,9 @@ func (h *Handler) listKanbanLists(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	if err := dbpkg.EnsureDefaultKanbanLists(h.db, pid); err != nil {
 		log.Printf("kanban: default lists for %s: %v", pid, err)
+	}
+	if err := dbpkg.EnsureReviewList(h.db, pid); err != nil {
+		log.Printf("kanban: review list for %s: %v", pid, err)
 	}
 	lists, err := dbpkg.ListKanbanLists(h.db, pid)
 	if err != nil {
@@ -2613,6 +2788,11 @@ func (h *Handler) listKanbanCards(w http.ResponseWriter, r *http.Request) {
 	if cards == nil {
 		cards = []dbpkg.KanbanCard{}
 	}
+	if errs := dbpkg.LatestCardErrors(h.db, pid); len(errs) > 0 {
+		for i := range cards {
+			cards[i].LastError = errs[cards[i].ID]
+		}
+	}
 	json.NewEncoder(w).Encode(cards)
 }
 
@@ -2663,11 +2843,16 @@ func (h *Handler) createKanbanCard(w http.ResponseWriter, r *http.Request) {
 	if c.DependsOn == nil {
 		c.DependsOn = []string{}
 	}
-	if err := dbpkg.InsertKanbanCard(h.db, c); err != nil {
+	if err := dbpkg.InsertKanbanCardCause(h.db, c, dbpkg.EventCause{Source: "user"}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	c, _ = dbpkg.GetKanbanCard(h.db, c.ID)
+	// A card created directly in a workflow list behaves like one moved there, the same
+	// as task_create: In Progress runs it, Done releases its dependents.
+	if l, err := dbpkg.GetKanbanList(h.db, c.ListID); err == nil && (l.Kind == dbpkg.KanbanInProgress || l.Kind == dbpkg.KanbanDone) {
+		c = h.afterCardSaved(c)
+	}
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(c)
 }
@@ -2710,7 +2895,11 @@ func (h *Handler) updateKanbanCard(w http.ResponseWriter, r *http.Request) {
 	if body.Position != nil    { c.Position = *body.Position }
 	if body.Archived != nil    { c.Archived = *body.Archived }
 	if body.ParentID != nil    { c.ParentID = *body.ParentID }
-	if err := dbpkg.UpdateKanbanCard(h.db, c); err != nil {
+	if reason := h.moveBlocker(c, oldListID); reason != "" {
+		http.Error(w, reason, http.StatusConflict)
+		return
+	}
+	if err := dbpkg.UpdateKanbanCardCause(h.db, c, dbpkg.EventCause{Source: "user"}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

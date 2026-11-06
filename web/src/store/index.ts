@@ -9,6 +9,7 @@ export interface TokenUsage {
   output_tokens: number
   cache_creation_input_tokens?: number
   cache_read_input_tokens?: number
+  cache_creation_1h_input_tokens?: number // of the written ones, the 1 hour cache
 }
 
 // Pending usage collected during a streaming turn (not exposed directly to components)
@@ -32,11 +33,22 @@ export interface FilePreview {
   modified?: string     // mode === 'diff'
 }
 
+// Something another tab wants to tell the Supervisor about: shown as a chip by its input, and sent
+// as `text` ahead of the message.
+export interface ChatReference {
+  id: string
+  projectId: string
+  label: string
+  detail: string
+  text: string
+}
+
 interface AppState {
   projects: Project[]
   sessions: Session[]
   // Bumped when an agent changes a task (done/blocked/comment) so open boards refresh.
   boardVersion: number
+  flowVersion: number // bumped when a flow run changes, so the views refetch
   activeProjectId: string | null
   activeSessionId: string | null
   pendingSession: { projectId: string; model: string } | null
@@ -63,6 +75,11 @@ interface AppState {
   setOrchOpen: (open: boolean) => void
   orchCache: CacheCountdown | null
   setOrchCache: (c: CacheCountdown) => void
+  // References waiting to go with the next Supervisor message, per project. Adding one opens the panel.
+  orchRefs: ChatReference[]
+  addOrchRef: (ref: Omit<ChatReference, 'id'>) => void
+  removeOrchRef: (id: string) => void
+  clearOrchRefs: (projectId: string) => void
   jumpToMessageId: string | null
   userTools: UserTool[]
   // Context window usage per session (updated after each turn via WS)
@@ -281,6 +298,7 @@ export const useStore = create<AppState>((set, get) => ({
   projects: [],
   sessions: [],
   boardVersion: 0,
+  flowVersion: 0,
   activeProjectId: null,
   activeSessionId: null,
   pendingSession: null,
@@ -304,6 +322,19 @@ export const useStore = create<AppState>((set, get) => ({
   },
   orchCache: null,
   setOrchCache: (c) => set(s => (s.orchCache && s.orchCache.label === c.label && s.orchCache.state === c.state ? s : { orchCache: c })),
+  orchRefs: [],
+  addOrchRef: (ref) => {
+    try { localStorage.setItem('orch_open', '1') } catch { /* private mode */ }
+    set(s => ({
+      orchOpen: true,
+      // the same reference twice is one reference
+      orchRefs: s.orchRefs.some(r => r.projectId === ref.projectId && r.text === ref.text)
+        ? s.orchRefs
+        : [...s.orchRefs, { ...ref, id: `${Date.now()}-${s.orchRefs.length}` }],
+    }))
+  },
+  removeOrchRef: (id) => set(s => ({ orchRefs: s.orchRefs.filter(r => r.id !== id) })),
+  clearOrchRefs: (projectId) => set(s => ({ orchRefs: s.orchRefs.filter(r => r.projectId !== projectId) })),
   jumpToMessageId: null,
   userTools: [],
   contextUsage: {},
@@ -945,6 +976,11 @@ export const useStore = create<AppState>((set, get) => ({
         break
       }
 
+      case 'flow_updated': {
+        set(s => ({ flowVersion: s.flowVersion + 1 }))
+        break
+      }
+
       case 'task_updated': {
         set(s => ({ boardVersion: s.boardVersion + 1 }))
         break
@@ -1044,6 +1080,8 @@ export const useStore = create<AppState>((set, get) => ({
 
       case 'error':
         set(s => ({
+          // a task's error note is saved by the hub just before this event: re-read the board
+          boardVersion: s.sessions.some(x => x.id === event.session_id && x.card_id) ? s.boardVersion + 1 : s.boardVersion,
           sessionStatus: { ...s.sessionStatus, [event.session_id]: 'error' },
           sessions: s.sessions.map(sess =>
             sess.id === event.session_id ? { ...sess, status: 'error' } : sess
@@ -1138,7 +1176,13 @@ export const useStore = create<AppState>((set, get) => ({
       }
 
       case 'claude_process': {
-        set(s => ({ claudeProcess: { ...s.claudeProcess, [event.session_id]: { alive: event.alive, pid: event.pid, runner: event.runner } } }))
+        set(s => ({ claudeProcess: { ...s.claudeProcess, [event.session_id]: { alive: event.alive, pid: event.pid, runner: event.runner, workspace: s.claudeProcess[event.session_id]?.workspace } } }))
+        break
+      }
+
+      case 'claude_workspace': {
+        const { type: _t, session_id, ...workspace } = event
+        set(s => ({ claudeProcess: { ...s.claudeProcess, [session_id]: { ...s.claudeProcess[session_id], alive: s.claudeProcess[session_id]?.alive ?? false, workspace } } }))
         break
       }
 
@@ -1199,6 +1243,7 @@ export const useStore = create<AppState>((set, get) => ({
                 output_tokens: prev.output_tokens + event.output_tokens,
                 cache_creation_input_tokens: (prev.cache_creation_input_tokens ?? 0) + event.cache_creation_input_tokens,
                 cache_read_input_tokens: (prev.cache_read_input_tokens ?? 0) + event.cache_read_input_tokens,
+                cache_creation_1h_input_tokens: (prev.cache_creation_1h_input_tokens ?? 0) + (event.cache_creation_1h_input_tokens ?? 0),
               },
             },
             messages: { ...s.messages, [tuSessId]: updatedMsgs },

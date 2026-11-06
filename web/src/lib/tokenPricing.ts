@@ -29,7 +29,9 @@ function getModelPricing(model: string): ModelPricing {
 /**
  * Estimate cost in USD for a set of token counts and a model.
  * Cache read tokens cost 10% of input price.
- * Cache write (creation) tokens cost 25% of input price.
+ * Cache write (creation) tokens cost 125% of input price (the 5-minute cache). The 1-hour
+ * cache writes at 200%: pass those apart in cacheWrite1hTokens when they are known (the
+ * per-call usage of the runners splits them; the per-turn rows do not).
  */
 export function estimateCost(
   model: string,
@@ -37,6 +39,7 @@ export function estimateCost(
   outputTokens: number,
   cacheReadTokens = 0,
   cacheWriteTokens = 0,
+  cacheWrite1hTokens = 0,
 ): number {
   const pricing = getModelPricing(model)
   const perTok = pricing.inputPerMTok / 1_000_000
@@ -45,8 +48,33 @@ export function estimateCost(
     inputTokens     * perTok +
     outputTokens    * outPerTok +
     cacheReadTokens  * perTok * 0.10 +
-    cacheWriteTokens * perTok * 0.25
+    cacheWriteTokens * perTok * 1.25 +
+    cacheWrite1hTokens * perTok * 2
   )
+}
+
+export interface UsageTokens {
+  input_tokens: number
+  output_tokens: number
+  cache_read_input_tokens?: number
+  cache_creation_input_tokens?: number
+  // of cache_creation_input_tokens, the ones written to the 1 hour cache; the rest are priced as
+  // 5 minute writes (also what rows from before it was reported get)
+  cache_creation_1h_input_tokens?: number
+}
+
+// Cost of a usage row, pricing each kind of cache write with its own TTL.
+export function estimateUsageCost(model: string, u: UsageTokens): number {
+  const written = u.cache_creation_input_tokens ?? 0
+  const oneHour = Math.min(u.cache_creation_1h_input_tokens ?? 0, written)
+  return estimateCost(model, u.input_tokens, u.output_tokens, u.cache_read_input_tokens ?? 0, written - oneHour, oneHour)
+}
+
+// 950, 12.3k, 4.2M
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
+  return String(n)
 }
 
 export function formatCost(usd: number): string {

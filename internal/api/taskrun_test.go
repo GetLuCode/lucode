@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	dbpkg "claude-orchestrator/internal/db"
+	"claude-orchestrator/internal/flows"
+	natspkg "claude-orchestrator/internal/natsbus"
 
 	"github.com/google/uuid"
 )
@@ -33,7 +35,7 @@ func newTaskTestHandler(t *testing.T) (*Handler, string, map[string]dbpkg.Kanban
 	for _, l := range all {
 		lists[l.Kind] = l
 	}
-	return &Handler{db: db}, proj.ID, lists
+	return &Handler{db: db, bus: natspkg.NewBus(nil)}, proj.ID, lists
 }
 
 func newCard(t *testing.T, h *Handler, pid string, list dbpkg.KanbanList, title string, deps ...string) dbpkg.KanbanCard {
@@ -54,13 +56,13 @@ func newCard(t *testing.T, h *Handler, pid string, list dbpkg.KanbanList, title 
 
 func TestDefaultKanbanLists(t *testing.T) {
 	_, _, lists := newTaskTestHandler(t)
-	for _, kind := range []string{"backlog", "todo", "inprogress", "done", "blocked"} {
+	for _, kind := range []string{"backlog", "todo", "inprogress", "review", "done", "blocked"} {
 		if _, ok := lists[kind]; !ok {
 			t.Errorf("missing default list %q", kind)
 		}
 	}
-	if len(lists) != 5 {
-		t.Errorf("want 5 default lists, got %d", len(lists))
+	if len(lists) != 6 {
+		t.Errorf("want 6 default lists, got %d", len(lists))
 	}
 }
 
@@ -135,10 +137,16 @@ func TestTaskDoneMovesCardPostsSummaryAndReleasesDependents(t *testing.T) {
 	}
 	sess := taskSession(t, h, dep)
 
+	// where a finished task goes is the "Task finished" blueprint's call
+	h.flows = flows.NewEngine(h.db, flowHost{h})
+	if err := flows.SeedBlueprints(h.db, pid); err != nil {
+		t.Fatal(err)
+	}
 	msg, err := h.HandleTaskTool(sess.ID, "task_done", []byte(`{"summary":"built it"}`))
 	if err != nil || msg == "" {
 		t.Fatalf("task_done failed: %q %v", msg, err)
 	}
+	settle(h)
 
 	got, _ := dbpkg.GetKanbanCard(h.db, dep.ID)
 	if got.ListID != lists["done"].ID {
@@ -356,4 +364,35 @@ func TestTaskCreateDefaultsToTodoOrInProgressWhenTheAgentIsFree(t *testing.T) {
 		t.Errorf("the free agent should have started a turn, got %d", len(c.opts))
 	}
 	_ = carol
+}
+
+func TestMoveBlocker(t *testing.T) {
+	h, pid, lists := newTaskTestHandler(t)
+	dep := newCard(t, h, pid, lists["todo"], "dep")
+	task := newCard(t, h, pid, lists["todo"], "task")
+
+	toProgress := task
+	toProgress.ListID = lists["inprogress"].ID
+	if h.moveBlocker(toProgress, lists["todo"].ID) == "" {
+		t.Error("moving a task without agent to In Progress should be refused")
+	}
+	toProgress.AgentID = "a1"
+	if r := h.moveBlocker(toProgress, lists["todo"].ID); r != "" {
+		t.Errorf("task with an agent should move from Todo, got %q", r)
+	}
+
+	toProgress.DependsOn = []string{dep.ID}
+	if h.moveBlocker(toProgress, lists["blocked"].ID) == "" {
+		t.Error("leaving Blocked with an unfinished dependency should be refused")
+	}
+	toProgress.DependsOn = nil
+
+	dbpkg.InsertCardComment(h.db, dbpkg.CardComment{ID: uuid.New().String(), CardID: task.ID, Author: "Dev", Kind: "error", Body: "boom"})
+	if h.moveBlocker(toProgress, lists["blocked"].ID) == "" {
+		t.Error("unreviewed blocker should refuse the move")
+	}
+	dbpkg.InsertCardComment(h.db, dbpkg.CardComment{ID: uuid.New().String(), CardID: task.ID, Author: "me", Kind: "comment", Body: "fixed"})
+	if r := h.moveBlocker(toProgress, lists["blocked"].ID); r != "" {
+		t.Errorf("reviewed blocker should allow the move, got %q", r)
+	}
 }

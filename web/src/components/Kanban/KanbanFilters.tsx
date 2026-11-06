@@ -1,24 +1,24 @@
 import { useRef, useState } from 'react'
 import { DayPicker, type DateRange } from 'react-day-picker'
 import { format } from 'date-fns'
-import { IconArchive, IconBolt, IconBookmark, IconBug, IconCircleCheck, IconPlayerPlay, IconChecklist, IconCategory, IconFilterOff, IconFlask, IconTag, IconTool, IconSearch, IconUserOff, IconUsers, IconX } from '@tabler/icons-react'
+import { IconArchive, IconArchiveOff, IconCheck, IconDotsVertical, IconLayoutKanban, IconList, IconBolt, IconBookmark, IconBug, IconCalendar, IconChecklist, IconCategory, IconFilterOff, IconFlask, IconTag, IconTool, IconSearch, IconUserOff, IconUsers, IconX } from '@tabler/icons-react'
 import 'react-day-picker/style.css'
 import './KanbanFilters.css'
 import type { Agent, KanbanCard } from '../../types'
 import { AgentAvatar } from '../Agents/AgentAvatar'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 export interface KanbanFilterState {
   q: string                        // free text: title, description, tags
   type: string                     // 'all' | card type
   agent: string                    // 'all' | 'none' | agent id
-  started: DateRange | undefined   // real start (entered In Progress)
-  finished: DateRange | undefined  // real end (entered Done)
+  date: DateRange | undefined      // a card matches when it started (entered In Progress) or finished (entered Done) inside the range
 }
 
 export const NO_FILTERS: KanbanFilterState = {
-  q: '', type: 'all', agent: 'all', started: undefined, finished: undefined,
+  q: '', type: 'all', agent: 'all', date: undefined,
 }
 
 const DAY = 86_400_000
@@ -47,19 +47,27 @@ export function matchesFilters(card: KanbanCard, f: KanbanFilterState) {
   if (q && !`${card.title} ${card.description} ${(card.tags ?? []).join(' ')}`.toLowerCase().includes(q)) return false
   if (f.type !== 'all' && card.card_type !== f.type) return false
   if (f.agent === 'none' ? card.agent_id !== '' : f.agent !== 'all' && card.agent_id !== f.agent) return false
-  return inRange(card.started_at, f.started) && inRange(card.finished_at, f.finished)
+  return inRange(card.started_at, f.date) || inRange(card.finished_at, f.date)
 }
 
 export function countActiveFilters(f: KanbanFilterState) {
   return (f.q.trim() ? 1 : 0) + (f.type !== 'all' ? 1 : 0) + (f.agent !== 'all' ? 1 : 0)
-    + (f.started?.from ? 1 : 0) + (f.finished?.from ? 1 : 0)
+    + (f.date?.from ? 1 : 0)
 }
 
 function rangeLabel(r: DateRange | undefined) {
   if (!r?.from) return 'Any date'
-  if (!r.to || r.from.getTime() === r.to.getTime()) return format(r.from, 'MMM d, yyyy')
+  // The year is left out when it is the current one.
+  const thisYear = new Date().getFullYear()
+  const day = (d: Date) => format(d, d.getFullYear() === thisYear ? 'MMM d' : 'MMM d, yyyy')
+  if (!r.to || r.from.getTime() === r.to.getTime()) return day(r.from)
+  // Same month: the month goes once ("Nov 12–28"), with the year at the end if it is not this one.
+  if (r.from.getFullYear() === r.to.getFullYear() && r.from.getMonth() === r.to.getMonth()) {
+    return `${format(r.from, 'MMM d')}–${format(r.to, r.to.getFullYear() === thisYear ? 'd' : 'd, yyyy')}`
+  }
+  // Same year but not the current one: the year goes once, at the end.
   const sameYear = r.from.getFullYear() === r.to.getFullYear()
-  return `${format(r.from, sameYear ? 'MMM d' : 'MMM d, yyyy')} – ${format(r.to, 'MMM d, yyyy')}`
+  return `${sameYear && r.to.getFullYear() !== thisYear ? format(r.from, 'MMM d') : day(r.from)} – ${day(r.to)}`
 }
 
 const TYPE_INFO: Record<string, { icon: typeof IconTag; hint: string }> = {
@@ -81,19 +89,66 @@ function TypeBadge({ type, color, large }: { type: string; color: string; large?
   )
 }
 
-// A date-range filter: a pill that opens a popover with presets and a two-month calendar.
+// Three-dot menu of the board: List | Kanban view and the archived toggle.
+function BoardMenu({ view, onViewChange, showArchived, onToggleArchived }: {
+  view: 'list' | 'kanban'
+  onViewChange: (v: 'list' | 'kanban') => void
+  showArchived: boolean
+  onToggleArchived: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const pick = (fn: () => void) => () => { fn(); setOpen(false) }
+  return (
+    <div className="header-menu">
+      <button type="button" className="header-icon-btn" onClick={() => setOpen(v => !v)} title="Board options" aria-label="Board options" aria-expanded={open}>
+        <IconDotsVertical size={16} />
+      </button>
+      {open && (
+        <>
+          <div className="header-menu__backdrop" onClick={() => setOpen(false)} />
+          <div className="nav-tree__dropdown header-menu__dropdown" style={{ minWidth: 170 }}>
+            <button type="button" className="nav-tree__menu-item" onClick={pick(() => onViewChange('list'))}>
+              <IconList size={14} /><span>List</span>{view === 'list' && <IconCheck size={14} style={{ marginLeft: 'auto' }} />}
+            </button>
+            <button type="button" className="nav-tree__menu-item" onClick={pick(() => onViewChange('kanban'))}>
+              <IconLayoutKanban size={14} /><span>Kanban</span>{view === 'kanban' && <IconCheck size={14} style={{ marginLeft: 'auto' }} />}
+            </button>
+            <button type="button" className="nav-tree__menu-item" onClick={pick(onToggleArchived)}>
+              {showArchived ? <IconArchiveOff size={14} /> : <IconArchive size={14} />}
+              <span>{showArchived ? 'Hide archived' : 'Show archived'}</span>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// A date-range filter: a pill that opens a popover with two tabs. The first is the
+// calendar (one month on a phone, two on wider screens); the second has the quick ranges.
+type RangeTab = 'calendar' | 'quick'
+
 function DateRangeFilter({ label, value, onChange }: {
   label: string; value: DateRange | undefined; onChange: (r: DateRange | undefined) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<RangeTab>('calendar')
+  const isMobile = useIsMobile()
   const on = !!value?.from
+  const tabs: [RangeTab, string][] = [['calendar', 'Calendar'], ['quick', 'Quick ranges']]
+  const current = PRESETS.find(([, get]) => {
+    const r = get()
+    return value?.from && startOfDay(value.from).getTime() === startOfDay(r.from!).getTime()
+      && startOfDay(value.to ?? value.from).getTime() === startOfDay(r.to ?? r.from!).getTime()
+  })?.[0]
+
   return (
     <div className="kf-field">
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={o => { setOpen(o); if (o) setTab('calendar') }}>
         <div className={`kf-pill${on ? ' kf-pill--on' : ''}`}>
           <PopoverTrigger asChild>
             <button type="button" className="kf-pill__main" aria-label={`${label} date range`}>
-              {label === 'Started' ? <IconPlayerPlay size={13} /> : <IconCircleCheck size={14} />}
+              {!on && <IconCalendar size={14} />}
               <span>{on ? rangeLabel(value) : label}</span>
             </button>
           </PopoverTrigger>
@@ -103,27 +158,49 @@ function DateRangeFilter({ label, value, onChange }: {
             </button>
           )}
         </div>
-        <PopoverContent align="start" className="kf-popover">
+        <PopoverContent align="start" collisionPadding={8} className="kf-popover">
           <div className="kf-range">
-            <div className="kf-range__presets">
-              {PRESETS.map(([name, get]) => (
-                <button key={name} type="button" className="kf-range__preset" onClick={() => { onChange(get()); setOpen(false) }}>
+            <div className="kf-range__tabs" role="tablist" aria-label={`${label} date range`}>
+              {tabs.map(([id, name]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === id}
+                  className={`kf-range__tab${tab === id ? ' kf-range__tab--on' : ''}`}
+                  onClick={() => setTab(id)}
+                >
                   {name}
                 </button>
               ))}
-              <button type="button" className="kf-range__preset kf-range__preset--clear" onClick={() => { onChange(undefined); setOpen(false) }}>
-                Any date
-              </button>
             </div>
-            <DayPicker
-              mode="range"
-              numberOfMonths={2}
-              weekStartsOn={1}
-              selected={value}
-              onSelect={r => onChange(r)}
-              defaultMonth={value?.from ?? new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)}
-              className="kf-daypicker"
-            />
+            {tab === 'calendar' ? (
+              <DayPicker
+                mode="range"
+                numberOfMonths={isMobile ? 1 : 2}
+                weekStartsOn={1}
+                selected={value}
+                onSelect={r => onChange(r)}
+                defaultMonth={value?.from ?? new Date(new Date().getFullYear(), new Date().getMonth() - (isMobile ? 0 : 1), 1)}
+                className="kf-daypicker"
+              />
+            ) : (
+              <div className="kf-range__quick" role="tabpanel">
+                {PRESETS.map(([name, get]) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`kf-range__preset${current === name ? ' kf-range__preset--on' : ''}`}
+                    onClick={() => { onChange(get()); setOpen(false) }}
+                  >
+                    {name}
+                  </button>
+                ))}
+                <button type="button" className={`kf-range__preset${!on ? ' kf-range__preset--on' : ''}`} onClick={() => { onChange(undefined); setOpen(false) }}>
+                  Any date
+                </button>
+              </div>
+            )}
           </div>
         </PopoverContent>
       </Popover>
@@ -131,7 +208,9 @@ function DateRangeFilter({ label, value, onChange }: {
   )
 }
 
-export function KanbanFilters({ filters, onChange, types, typeColor, agents, showArchived, onToggleArchived, shown, total }: {
+export function KanbanFilters({ filters, onChange, types, typeColor, agents, showArchived, onToggleArchived, view, onViewChange }: {
+  view: 'list' | 'kanban'
+  onViewChange: (v: 'list' | 'kanban') => void
   filters: KanbanFilterState
   onChange: (f: KanbanFilterState) => void
   types: string[]
@@ -145,6 +224,10 @@ export function KanbanFilters({ filters, onChange, types, typeColor, agents, sho
   const set = (patch: Partial<KanbanFilterState>) => onChange({ ...filters, ...patch })
   const active = countActiveFilters(filters)
   const [searchOpen, setSearchOpen] = useState(false)
+  const isMobile = useIsMobile()
+  // Desktop: stays open while it has text. Phone: it only opens on tap, floats over the other
+  // filters (no layout shift) and folds back on blur, tinted when a search is active.
+  const searchShown = searchOpen || (!isMobile && !!filters.q)
   const searchRef = useRef<HTMLInputElement>(null)
   const selectedAgent = agents.find(a => a.id === filters.agent)
   const agentTitle = filters.agent === 'all' ? 'All agents' : filters.agent === 'none' ? 'Unassigned' : (selectedAgent?.name ?? 'Agent')
@@ -152,7 +235,8 @@ export function KanbanFilters({ filters, onChange, types, typeColor, agents, sho
   return (
     <section className="kf" aria-label="Board filters">
       <div className="kf-row">
-        <div className={`kf-search${searchOpen || filters.q ? ' kf-search--open' : ''}`}>
+        <div className="kf-search-slot">
+        <div className={`kf-search${searchShown ? ' kf-search--open' : ''}${isMobile && filters.q && !searchShown ? ' kf-search--active' : ''}`}>
           <button
             type="button"
             className="kf-search__icon"
@@ -166,17 +250,22 @@ export function KanbanFilters({ filters, onChange, types, typeColor, agents, sho
             ref={searchRef}
             value={filters.q}
             onChange={e => set({ q: e.target.value })}
-            onBlur={() => { if (!filters.q) setSearchOpen(false) }}
-            onKeyDown={e => { if (e.key === 'Escape') { set({ q: '' }); setSearchOpen(false); searchRef.current?.blur() } }}
+            onBlur={() => { if (isMobile || !filters.q) setSearchOpen(false) }}
+            onKeyDown={e => {
+              // Enter applies the search and folds the field (blur does the rest on a phone).
+              if (e.key === 'Enter') { setSearchOpen(false); searchRef.current?.blur() }
+              if (e.key === 'Escape') { set({ q: '' }); setSearchOpen(false); searchRef.current?.blur() }
+            }}
             placeholder="Search title, description, tag…"
             aria-label="Search cards"
-            tabIndex={searchOpen || filters.q ? 0 : -1}
+            tabIndex={searchShown ? 0 : -1}
           />
-          {filters.q && (
+          {filters.q && searchShown && (
             <button type="button" className="kf-search__clear" onClick={() => { set({ q: '' }); searchRef.current?.focus() }} aria-label="Clear search">
               <IconX size={13} />
             </button>
           )}
+        </div>
         </div>
 
         <div className="kf-field">
@@ -256,21 +345,18 @@ export function KanbanFilters({ filters, onChange, types, typeColor, agents, sho
           </Select>
         </div>
 
-        <DateRangeFilter label="Started" value={filters.started} onChange={r => set({ started: r })} />
-        <DateRangeFilter label="Finished" value={filters.finished} onChange={r => set({ finished: r })} />
+        <DateRangeFilter label="Date" value={filters.date} onChange={r => set({ date: r })} />
 
         <div className="kf-end">
-          <span className="kf-count"><b>{shown}</b> of {total} cards</span>
-          <button type="button" role="switch" aria-checked={showArchived} className={`kf-switch${showArchived ? ' kf-switch--on' : ''}`} onClick={onToggleArchived}>
-            <span className="kf-switch__track"><span className="kf-switch__thumb" /></span>
-            <IconArchive size={13} /> Archived
-          </button>
           {active > 0 && (
-            <button type="button" className="kf-clear" onClick={() => onChange(NO_FILTERS)}>
-              <IconFilterOff size={13} /> Clear <span className="kf-clear__n">{active}</span>
+            <button type="button" className="kf-clear" onClick={() => onChange(NO_FILTERS)} title="Clear filters" aria-label={`Clear ${active} filter${active > 1 ? 's' : ''}`}>
+              <IconFilterOff size={14} /> <span className="kf-clear__n">{active}</span>
             </button>
           )}
         </div>
+      </div>
+      <div className="kf-menu">
+        <BoardMenu view={view} onViewChange={onViewChange} showArchived={showArchived} onToggleArchived={onToggleArchived} />
       </div>
     </section>
   )

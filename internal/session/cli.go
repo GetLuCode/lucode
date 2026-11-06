@@ -117,6 +117,7 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 	sessID := ps.SessionID
 	defer m.finishTurn(sessID, ps)
 
+	opts.WorkDirs = m.ResolveWorkDirs(opts.WorkDirs)
 	if len(opts.WorkDirs) > 0 {
 		m.SetWorkDir(sessID, opts.WorkDirs[0])
 	}
@@ -139,6 +140,8 @@ func (m *Manager) runWithCLI(ctx context.Context, ps *ProcessState, opts TurnOpt
 		ClaudeConfigDir:    opts.ClaudeConfigDir,
 		ClaudeSettings:     m.claudeSettings,
 		PermissionMode:     permissionModeOf(opts),
+		Worktree:           opts.Worktree,
+		WorktreeBaseRef:    opts.WorktreeBaseRef,
 		NATSSettings:       m.backendNATSURL,
 		NATSCreds:          m.natsCreds,
 		ImageBase64:        opts.ImageBase64,
@@ -184,8 +187,8 @@ func (m *Manager) runLiveTurn(ctx context.Context, req execpkg.TurnRequest, opts
 
 	select {
 	case <-done:
-	case <-ctx.Done(): // turn cancelled by the user: stop the process
-		live.Kill()
+	case <-ctx.Done(): // turn cancelled by the user: interrupt it, keep the process
+		live.Stop(done)
 	}
 }
 
@@ -237,6 +240,7 @@ func (m *Manager) CloseLive(sessID string) {
 	delete(m.lives, sessID)
 	runner := m.remoteRunnerOf[sessID]
 	delete(m.remoteRunnerOf, sessID)
+	delete(m.remotePID, sessID)
 	m.liveMu.Unlock()
 	if runner != "" {
 		m.bus.RunnerClose(runner, sessID) // the process lives on that runner
@@ -252,6 +256,9 @@ func (m *Manager) CloseLive(sessID string) {
 // shared by one-shot runs and live processes (which keep calling it across turns).
 func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]any) {
 	return func(ev map[string]any) {
+		if m.saveToolEvent(sessID, opts.ProjectID, ev) {
+			return // for the cost of tools only: not for the chat stream nor raw_events
+		}
 		evType, _ := ev["type"].(string)
 		switch evType {
 		case "message_ready":
@@ -271,14 +278,42 @@ func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]
 				"session_id": sessID,
 				"message":    map[string]any{"role": role, "content": content},
 			}
+		case "claude_command":
+			// the command a claude process was started with, here or on the runner
+			if err := dbpkg.InsertClaudeCommand(m.db, dbpkg.ClaudeCommandFromEvent(ev, opts.RunnerID)); err != nil {
+				log.Printf("[session] save command of %s: %v", sessID, err)
+			}
+			return // it can carry the whole system prompt: not for the chat stream
+		case "claude_workspace":
+			// each turn's init reports the start cwd; once the agent entered a worktree
+			// that one stays the session's workspace (resuming does not leave it)
+			if old := m.WorkspaceOf(sessID); old != nil {
+				if wt, _ := old["worktree"].(bool); wt {
+					if nw, _ := ev["worktree"].(bool); !nw {
+						return
+					}
+				}
+			}
+			m.liveMu.Lock()
+			if m.workspaces == nil {
+				m.workspaces = map[string]map[string]any{}
+			}
+			m.workspaces[sessID] = ev
+			m.liveMu.Unlock()
+			if err := dbpkg.SaveSessionWorkspace(m.db, sessID, ev); err != nil {
+				log.Printf("[session] save workspace of %s: %v", sessID, err)
+			}
 		case "session_status":
 			if status, _ := ev["status"].(string); status != "" {
 				dbpkg.UpdateSessionStatus(m.db, sessID, status)
 			}
 		case "error":
+			msg, _ := ev["message"].(string)
 			if code, _ := ev["code"].(string); code != "" && m.OnTurnFailed != nil {
-				msg, _ := ev["message"].(string)
 				go m.OnTurnFailed(sessID, code, msg)
+			} else if msg != "" {
+				// keep the reason on the task: the event only reaches the chat that is open
+				m.noteTaskError(sessID, msg)
 			}
 		case "turn_usage":
 			tu := dbpkg.TurnUsage{
@@ -298,6 +333,7 @@ func (m *Manager) cliPublisher(sessID string, opts TurnOptions) func(map[string]
 			tu.OutputTokens = num("output_tokens")
 			tu.CacheCreationInputTokens = num("cache_creation_input_tokens")
 			tu.CacheReadInputTokens = num("cache_read_input_tokens")
+			tu.CacheCreation1hInputTokens = num("cache_creation_1h_input_tokens")
 			if err := dbpkg.InsertTurnUsage(m.db, tu); err != nil {
 				log.Printf("[cli] turn_usage insert sess=%s: %v", sessID[:8], err)
 			}

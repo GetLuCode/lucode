@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 )
 
@@ -26,6 +27,53 @@ func Init(path string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+const supervisorPersonality = `You are the Supervisor of lucode: the agent that runs the work of the project for the user.
+
+What you do:
+- Understand the goal, split it into tasks and put them on the board (task_create). Check task_list first so you do not duplicate.
+- Delegate: assign each task to the agent whose role fits (agent_list). If none fits, create one (agent_create) with a clear personality; change or remove agents with agent_update / agent_delete.
+- Follow progress: task_list and task_info show where each task is; look at them before reporting, never guess.
+- Talk to agents with send_to_agent (give the task_id the message is about); their answers arrive later as messages.
+- Use project_info to learn the project's folders, runner, AI and board.
+
+Rules:
+- Do not do the project's work yourself unless it is tiny: delegate it.
+- Ask the user before something large or hard to undo (deleting agents, starting many tasks at once).
+- Report briefly what you did and what is running; do not wait for agents inside a turn.
+- If a tool is denied, do not retry it: adapt or say what you need.`
+
+// SeedDefaults creates the data a fresh hub starts with. Only the hub calls it (not
+// the runner, and not Init, so tests start from an empty database).
+func SeedDefaults(db *sql.DB) error { return seedSupervisor(db) }
+
+// seedSupervisor creates the default global "Supervisor" agent once. A marker row
+// keeps it from coming back if the user deletes it.
+func seedSupervisor(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS seeds (name TEXT PRIMARY KEY)`); err != nil {
+		return err
+	}
+	var done int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seeds WHERE name='supervisor'`).Scan(&done); err != nil || done > 0 {
+		return err
+	}
+	var exists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agents WHERE project_id='' AND LOWER(name)='supervisor'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		err := InsertAgent(db, Agent{
+			ID: uuid.New().String(), Name: "Supervisor", Model: "sonnet", Executor: "claude", Persistent: true,
+			Personality: supervisorPersonality, Tools: []string{"Read", "Bash"},
+			LucodeTools: append([]string{}, DefaultLucodeTools...),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(`INSERT INTO seeds (name) VALUES ('supervisor')`)
+	return err
 }
 
 func migrate(db *sql.DB) error {
@@ -271,6 +319,9 @@ CREATE TABLE IF NOT EXISTS ai_profiles (
 	// sessions.current_at — when an older orchestrator chat was brought back as the current one
 	// (idempotent); empty = never, the creation time decides
 	db.Exec(`ALTER TABLE sessions ADD COLUMN current_at TEXT NOT NULL DEFAULT ''`)
+	// sessions.worktree_removed — 1 once merging its task deleted the worktree the agent
+	// worked in (idempotent): a new turn would start claude in a directory that is gone
+	db.Exec(`ALTER TABLE sessions ADD COLUMN worktree_removed INTEGER NOT NULL DEFAULT 0`)
 
 	// aimode_conversations — the Google AI Mode conversations of the local model, by the url
 	// that reopens them (idempotent). The url works with the browser profile that made it.
@@ -315,6 +366,10 @@ CREATE INDEX IF NOT EXISTS idx_turn_usage_created   ON turn_usage(created_at);
 	if err := migrateTurnUsageDropCascade(db); err != nil {
 		return fmt.Errorf("migrate turn_usage cascade: %w", err)
 	}
+	// How much of the cache writes used the 1 hour cache (billed at twice the input price instead
+	// of 1.25). After the migration above, whose SELECT * is positional. Rows from before the
+	// runners reported it hold 0: they are priced as 5 minute writes. Idempotent.
+	db.Exec(`ALTER TABLE turn_usage ADD COLUMN cache_creation_1h_input_tokens INTEGER NOT NULL DEFAULT 0`)
 
 	// raw_events — WS events persisted for debugging/inspection per session per turn
 	if _, err := db.Exec(`
@@ -342,6 +397,41 @@ CREATE TABLE IF NOT EXISTS kanban_lists (
 CREATE INDEX IF NOT EXISTS idx_kanban_lists_project ON kanban_lists(project_id, position);
 `); err != nil {
 		return fmt.Errorf("create kanban_lists: %w", err)
+	}
+
+	// api_calls / tool_calls — what each API call used and how big each tool result was,
+	// reported by the runner; they tell what every tool costs (see toolcost.go)
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS api_calls (
+    id                          TEXT PRIMARY KEY,
+    session_id                  TEXT NOT NULL,
+    project_id                  TEXT NOT NULL DEFAULT '',
+    parent                      TEXT NOT NULL DEFAULT '',
+    first_in_turn               INTEGER NOT NULL DEFAULT 0,
+    model                       TEXT NOT NULL DEFAULT '',
+    input_tokens                INTEGER NOT NULL DEFAULT 0,
+    output_tokens               INTEGER NOT NULL DEFAULT 0,
+    cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_input_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_creation_1h_tokens    INTEGER NOT NULL DEFAULT 0,
+    cache_creation_5m_tokens    INTEGER NOT NULL DEFAULT 0,
+    created_at                  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session_id);
+CREATE INDEX IF NOT EXISTS idx_api_calls_created ON api_calls(created_at);
+CREATE TABLE IF NOT EXISTS tool_calls (
+    tool_use_id   TEXT PRIMARY KEY,
+    session_id    TEXT NOT NULL,
+    call_id       TEXT NOT NULL DEFAULT '',
+    name          TEXT NOT NULL DEFAULT '',
+    has_result    INTEGER NOT NULL DEFAULT 0,
+    result_chars  INTEGER NOT NULL DEFAULT 0,
+    result_images INTEGER NOT NULL DEFAULT 0,
+    is_error      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_call ON tool_calls(call_id);
+`); err != nil {
+		return fmt.Errorf("create api_calls: %w", err)
 	}
 
 	// kanban_cards — cards belonging to a list
@@ -418,9 +508,58 @@ CREATE TABLE IF NOT EXISTS card_images (
 		return fmt.Errorf("create card_images: %w", err)
 	}
 
+	// claude_commands — every claude command line this instance started or was told about:
+	// runner_id '' = started here, otherwise the runner that reported it
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS claude_commands (
+    id         TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    runner_id  TEXT NOT NULL DEFAULT '',
+    at         TEXT NOT NULL,
+    exe        TEXT NOT NULL DEFAULT '',
+    args       TEXT NOT NULL DEFAULT '[]',
+    cwd        TEXT NOT NULL DEFAULT '',
+    pid        INTEGER NOT NULL DEFAULT 0,
+    error      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_claude_commands_session ON claude_commands(session_id, at);
+CREATE INDEX IF NOT EXISTS idx_claude_commands_runner ON claude_commands(runner_id, at);
+`); err != nil {
+		return fmt.Errorf("create claude_commands: %w", err)
+	}
+
+	// session_workspaces — where claude last worked in a session (cwd, branch, worktree...), as JSON
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS session_workspaces (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    data       TEXT NOT NULL
+);
+`); err != nil {
+		return fmt.Errorf("create session_workspaces: %w", err)
+	}
+
+	// card_reviews — the git branch/worktree of a task sitting in the Review list
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS card_reviews (
+    card_id       TEXT PRIMARY KEY REFERENCES kanban_cards(id) ON DELETE CASCADE,
+    branch        TEXT NOT NULL,
+    worktree_path TEXT NOT NULL DEFAULT '',
+    repo_path     TEXT NOT NULL
+);
+`); err != nil {
+		return fmt.Errorf("create card_reviews: %w", err)
+	}
+
+	if err := migrateFlows(db); err != nil {
+		return err
+	}
+
 	// Column additions for tables created above (idempotent).
+	// card_reviews.runner_id — the runner whose disk holds the repository and worktree;
+	// git runs there, never on the hub. "" = this instance (legacy rows)
+	db.Exec(`ALTER TABLE card_reviews ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
 	// kanban_lists.kind — the workflow role of a list ("backlog", "todo", "inprogress",
-	// "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
+	// "review", "done", "blocked"; empty for custom lists). Moving a card into "inprogress" runs it.
 	db.Exec(`ALTER TABLE kanban_lists ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
 	// kanban_cards.started_at / finished_at — real timestamps, set when the card enters
 	// an "inprogress" / "done" list (start_date / end_date are the planned dates).
@@ -439,7 +578,7 @@ CREATE TABLE IF NOT EXISTS card_images (
 		return err
 	}
 	// agents.lucode_tools — which lucode tools (task_*, agent_list, send_to_agent, task_info) the agent has
-	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info","get_task_image","task_list","task_create","task_update","agent_create","agent_update","agent_delete","project_info"]'`)
+	db.Exec(`ALTER TABLE agents ADD COLUMN lucode_tools TEXT NOT NULL DEFAULT '["task_comment","task_done","task_blocked","agent_list","send_to_agent","task_info","get_task_image","task_list","task_create","task_update","agent_create","agent_update","agent_delete","project_info","git_diff"]'`)
 	// get_task_image came after task_info: agents that already look tasks up get it too.
 	db.Exec(`UPDATE agents SET lucode_tools = REPLACE(lucode_tools, '"task_info"', '"task_info","get_task_image"') WHERE lucode_tools LIKE '%"task_info"%' AND lucode_tools NOT LIKE '%get_task_image%'`)
 
@@ -449,6 +588,23 @@ CREATE TABLE IF NOT EXISTS card_images (
 	db.Exec(`ALTER TABLE agents ADD COLUMN ai_profile_id TEXT NOT NULL DEFAULT ''`)
 	// agents.auto_mode — run claude with --permission-mode auto instead of asking through the PreToolUse hook
 	db.Exec(`ALTER TABLE agents ADD COLUMN auto_mode INTEGER NOT NULL DEFAULT 0`)
+	// agents.worktree / worktree_base_ref — run claude in its own git worktree (--worktree) and the worktree.baseRef setting ("head" | "fresh")
+	db.Exec(`ALTER TABLE agents ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0`)
+	db.Exec(`ALTER TABLE agents ADD COLUMN worktree_base_ref TEXT NOT NULL DEFAULT 'head'`)
+
+	// runner_turns — turns this hub has in flight on a runner, to pick them up again after a restart
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS runner_turns (
+    session_id TEXT PRIMARY KEY,
+    runner_id  TEXT NOT NULL,
+    turn_id    TEXT NOT NULL,
+    last_seq   INTEGER NOT NULL DEFAULT 0,
+    opts       TEXT NOT NULL DEFAULT '{}',
+    started_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+)`); err != nil {
+		return fmt.Errorf("create runner_turns: %w", err)
+	}
 
 	return nil
 }

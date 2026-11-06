@@ -11,6 +11,19 @@ export function setDeviceId(kind: keyof typeof KEYS, id: string) {
   try { localStorage.setItem(KEYS[kind], id) } catch { /* private mode */ }
 }
 
+// Speech recognition engine. "worker": the local Parakeet worker, streaming, with hotword and phrase-end
+// rules. "orchard": Orchard Run in the cloud, push to talk (click the mic, speak, click again; the whole
+// recording is transcribed at once). Kept per browser.
+export type SttEngine = 'worker' | 'orchard'
+
+export function getSttEngine(): SttEngine {
+  try { return localStorage.getItem('orch_stt_engine') === 'orchard' ? 'orchard' : 'worker' } catch { return 'worker' }
+}
+
+export function setSttEngine(e: SttEngine) {
+  try { localStorage.setItem('orch_stt_engine', e) } catch { /* private mode */ }
+}
+
 // Hotword: keep the microphone open and only transcribe after the wake word.
 export interface Hotword { enabled: boolean; backend: 'vosk' | 'oww'; phrase: string }
 

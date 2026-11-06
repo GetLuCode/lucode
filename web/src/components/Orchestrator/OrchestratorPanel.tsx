@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX } from '@tabler/icons-react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX, IconCode, IconHistory } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
@@ -9,15 +10,17 @@ import { ThinkingIndicator } from '../Chat/ThinkingIndicator'
 import { ContextBar } from '../Chat/ContextBar'
 import { CacheBadge, useCacheCountdown } from '../Chat/CacheBadge'
 import { ClaudeProcess } from '../Chat/ClaudeProcess'
-import { AIModeHistory } from './AIModeHistory'
+import { HistoryPopover, HistorySidebar, latestConversation } from './ConversationHistory'
 import { OrchestratorEdit } from './OrchestratorEdit'
 import { ModelIcon } from './ModelIcon'
 import { EnvPicker } from './EnvPicker'
-import { useWorkerMic } from '@/hooks/useWorkerMic'
+import { useMic } from '@/hooks/useMic'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { playListenCue, playSendCue } from '@/lib/cues'
 import { useWorkerTTS } from '@/hooks/useWorkerTTS'
 import { markSpoken, wasSpoken } from '@/lib/spokenLog'
 import { VoiceSettingsDialog } from './VoiceSettingsDialog'
-import { getAutoSend, getHotword } from '@/lib/audioDevices'
+import { getAutoSend, getHotword, getSttEngine } from '@/lib/audioDevices'
 import type { AIProfile, Message, Runner, Session } from '../../types'
 import './OrchestratorPanel.css'
 
@@ -26,18 +29,25 @@ const EMPTY_MESSAGES: Message[] = []
 // AI belongs to its runner); a project without a choice starts from the last runner used.
 const LS = {
   autoRead: 'orch_autoread',
+  historyOpen: 'orch_history_open',
   runner: (pid: string) => `orch_runner:${pid}`,
   lastRunner: 'orch_runner',
   ai: (pid: string, runner: string) => `orch_ai:${pid}:${runner}`,
   model: (pid: string) => `orch_model:${pid}`,
 }
 
-const MODELS = [
+const CLAUDE_MODELS = [
   { value: 'haiku', label: 'Haiku 5.5' },
   { value: 'sonnet', label: 'Sonnet 5.5' },
   { value: 'opus', label: 'Opus 5.5' },
-  // Local: Google's AI Mode in an Edge that lucode drives. No claude, no tools, no tokens.
-  { value: 'local:aimode', label: 'Google AI Mode (Edge)' },
+]
+// Gemini mode: Google's AI Mode in an Edge that lucode drives. No runner, no model choice,
+// no claude, no tools, no tokens.
+const GEMINI_MODEL = 'local:aimode'
+const MODELS = [...CLAUDE_MODELS, { value: GEMINI_MODEL, label: 'Google AI Mode (Edge)' }]
+const MODES = [
+  { value: 'supervisor', label: 'Supervisor', hint: 'Claude, on a runner' },
+  { value: 'gemini', label: 'Gemini', hint: 'Google AI Mode (Edge)' },
 ]
 
 const lsGet = (k: string, def: string) => {
@@ -67,7 +77,6 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const open = full || storedOpen
   const setOpen = useStore(s => s.setOrchOpen)
   const setOrchCache = useStore(s => s.setOrchCache)
-  const onKanban = useLocation().pathname.includes('/kanban')
   const navigate = useNavigate()
   const [session, setSession] = useState<{ id: string; last_active: string } | null>(null)
   const [error, setError] = useState('')
@@ -75,22 +84,29 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const [image, setImage] = useState<{ base64: string; mediaType: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [input, setInput] = useState('')
+  // References sent from other tabs wait here for the question that goes with them.
+  const allRefs = useStore(s => s.orchRefs)
+  const refs = allRefs.filter(r => r.projectId === projectId)
+  const removeRef = useStore(s => s.removeOrchRef)
+  const clearRefs = useStore(s => s.clearOrchRefs)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => { if (refs.length > 0) textareaRef.current?.focus() }, [refs.length, storedOpen])
   // Dictation: what was typed before is kept; the phrase being spoken follows it.
   const dictBase = useRef('')
   const joinText = (a: string, b: string) => (a && b ? `${a.replace(/\s+$/, '')} ${b}` : a || b)
-  const mic = useWorkerMic({
+  const mic = useMic({
     onRealtime: text => setInput(joinText(dictBase.current, text)),
     onFinal: (text, viaHotword) => {
       if (!text.trim()) return
       // a command said after the hotword is sent on its own; if the agent is busy it waits in the box
-      if (viaHotword && !runningRef.current) { sendText(text.trim()); return }
+      if (viaHotword && !runningRef.current) { playSendCue(); sendText(text.trim()); return }
       dictBase.current = joinText(dictBase.current, text)
       setInput(dictBase.current)
       // plain dictation with "auto-send" on: the finished phrase turns the mic off and goes out
       // (if the agent is busy it stays in the box, mic off, to be sent by hand)
       if (!viaHotword && getAutoSend()) {
         mic.stop()
-        if (!runningRef.current) sendText(dictBase.current.trim())
+        if (!runningRef.current) { playSendCue(); sendText(dictBase.current.trim()) }
       }
     },
   })
@@ -110,13 +126,21 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   useEffect(() => { if (tts.state === 'idle') setSpeakingId(null) }, [tts.state])
   // the dictation must not hear the answer being spoken
   useEffect(() => { mic.setMuted(tts.state !== 'idle') }, [tts.state, mic])
+  // The hotword was heard and the mic now listens: a cue says so.
+  const prevMicState = useRef(mic.state)
+  useEffect(() => {
+    if (mic.state === 'awake' && prevMicState.current !== 'awake') playListenCue()
+    prevMicState.current = mic.state
+  }, [mic.state])
   const hotword = getHotword()
+  const pushToTalk = getSttEngine() === 'orchard'
   const micTitle = {
-    off: hotword.enabled ? `Listen for the hotword${hotword.backend === 'vosk' ? ` “${hotword.phrase}”` : ' “hey jarvis”'}` : 'Dictate (Parakeet, local)',
+    off: pushToTalk ? 'Dictate (Orchard): click, speak, click again' : hotword.enabled ? `Listen for the hotword${hotword.backend === 'vosk' ? ` “${hotword.phrase}”` : ' “hey jarvis”'}` : 'Dictate (Parakeet, local)',
     loading: 'Loading the voice model…',
-    listening: 'Stop dictating',
+    listening: mic.engine === 'orchard' ? 'Recording: click to stop and transcribe' : 'Stop dictating',
     armed: 'Waiting for the hotword (click to stop)',
     awake: 'Listening for your command…',
+    processing: 'Transcribing…',
   }[mic.state]
   const toggleMic = () => {
     if (mic.state === 'off') { dictBase.current = input; void mic.start() } else mic.stop()
@@ -128,6 +152,11 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const [runnerId, setRunnerId] = useState('local')
   const [aiId, setAiId] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  // The Supervisor tab shows the history beside the chat (it can be hidden); elsewhere it is a popover.
+  const isMobile = useIsMobile()
+  const hasSidebar = full && !isMobile
+  const [historyOpen, setHistoryOpen] = useState(() => lsGet(LS.historyOpen, '1') === '1')
+  const [historyVersion, setHistoryVersion] = useState(0)
 
   const sid = session?.id ?? null
   const messages = useStore(s => (sid ? s.messages[sid] : undefined) ?? EMPTY_MESSAGES)
@@ -202,6 +231,13 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     setModel(v)
     if (projectId) lsSet(LS.model(projectId), v)
   }
+  // The Claude model to come back to when leaving Gemini mode.
+  const lastClaudeModel = useRef('sonnet')
+  if (!isLocalModel) lastClaudeModel.current = model
+  const [modeOpen, setModeOpen] = useState(false)
+  const [switchingMode, setSwitchingMode] = useState(false)
+  // An empty chat left behind by changing mode, used again instead of creating one per change.
+  const emptyChat = useRef<{ projectId: string; id: string } | null>(null)
   const pickAI = (id: string) => {
     setAiId(id)
     if (projectId) lsSet(LS.ai(projectId, runnerId), id)
@@ -215,6 +251,12 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   }, [peersVersion])
   // this machine is shown by its own name
   const selfName = runners.find(r => r.self)?.hostname || 'this'
+  // A hub (--hub-only) is not in the list: it runs no claude, so "local" is not an option
+  // and the chat starts on the first runner.
+  const canRunLocally = !runnersLoaded || runners.some(r => r.self)
+  useEffect(() => {
+    if (runnersLoaded && runnerId === 'local' && !runners.some(r => r.self) && runners.length > 0) setRunnerId(runners[0].id)
+  }, [runnersLoaded, runners, runnerId])
   const runnerPath = runnerId
   // A saved remote runner that is not (yet) on the network: say so and do not send.
   const runnerOffline = runnerId !== 'local' && runnersLoaded && !runners.some(r => r.id === runnerId)
@@ -234,14 +276,35 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   // A saved AI that was deleted behaves as "default" (the saved id stays until the user picks another).
   const effectiveAi = aiId && profilesLoaded && !profiles.some(p => p.id === aiId) ? '' : aiId
 
-  // Keep the newest message in view.
+  // Keep the newest message in view, except when older ones were just added above.
+  const heightBeforeOlder = useRef<number | null>(null)
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length, streamingText, open])
+    if (!el) return
+    if (heightBeforeOlder.current !== null) {
+      el.scrollTop += el.scrollHeight - heightBeforeOlder.current
+      heightBeforeOlder.current = null
+      return
+    }
+    el.scrollTop = el.scrollHeight
+  }, [sid, messages.length, streamingText, open])
+
+  // A conversation opens on its latest messages; the older ones come on request.
+  const hasOlder = useStore(s => (sid ? s.messagePagination[sid]?.hasMore : false) ?? false)
+  const loadingOlder = useStore(s => (sid ? s.messagePagination[sid]?.isLoadingMore : false) ?? false)
+  const loadMoreMessages = useStore(s => s.loadMoreMessages)
+  const loadOlder = () => {
+    if (!sid) return
+    heightBeforeOlder.current = scrollRef.current?.scrollHeight ?? 0
+    loadMoreMessages(sid).catch(e => {
+      heightBeforeOlder.current = null
+      useStore.setState(s => ({ messagePagination: { ...s.messagePagination, [sid]: { ...s.messagePagination[sid], isLoadingMore: false } } }))
+      setError(String(e?.message ?? e))
+    })
+  }
 
   const runningRef = useRef(false)
-  runningRef.current = running
+  runningRef.current = running || switchingMode
   const imageRef = useRef(image)
   imageRef.current = image
   const attachFile = (file: File | null | undefined) => {
@@ -254,12 +317,15 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     reader.onload = () => setImage({ base64: String(reader.result).split(',')[1] ?? '', mediaType: file.type })
     reader.readAsDataURL(file)
   }
-  const sendText = (text: string) => {
+  const sendText = (typed: string) => {
     const img = imageRef.current
-    // an image alone is a message too
-    if ((!text && !img) || !sid || running || (runnerOffline && !isLocalModel)) return
+    const pending = useStore.getState().orchRefs.filter(r => r.projectId === projectId)
+    // an image or a reference alone is a message too
+    if ((!typed && !img && pending.length === 0) || !sid || running || switchingMode || (runnerOffline && !isLocalModel)) return
+    const text = [...pending.map(r => r.text), typed].filter(Boolean).join('\n\n')
     setInput('')
     setImage(null)
+    if (projectId) clearRefs(projectId)
     dictBase.current = ''
     useStore.setState(s => ({ pendingSend: { ...s.pendingSend, [sid]: true } }))
     api.sendOrchestratorTurn(sid, text || '(see the attached image)', { runnerId, aiProfileId: effectiveAi, model }, img).catch(e => {
@@ -271,24 +337,66 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     })
   }
   const send = () => sendText(input.trim())
-  const canSend = !!(input.trim() || image)
+  const canSend = !!(input.trim() || image || refs.length > 0)
 
   const cancel = () => { if (sid) api.cancelTurn(sid).catch(console.error) }
 
-  // A Google AI Mode conversation picked from the history: its chat comes back with its
-  // messages (or, if it was an ordinary chat, it is opened); the next message goes to the same page.
+  // A conversation picked from the history: its chat comes back with its messages (or, if it
+  // was an ordinary chat, it is opened). The next message continues it: on the same Google page
+  // in Gemini mode, resuming the same claude conversation in Supervisor mode.
   const continueConversation = async (s: Session) => {
     if (s.kind !== 'orchestrator') { navigate(`/projects/${s.project_id}/sessions/${s.id}`); return }
-    tts.stop()
     setError('')
     try {
-      await loadMessages(s.id)
-      seedContextUsage(s)
+      await showChat(s)
       setInput('')
       dictBase.current = ''
-      setSession({ id: s.id, last_active: s.message_count > 0 ? s.last_active : '' })
     } catch (e) {
       setError(String((e as Error)?.message ?? e))
+    }
+  }
+  const showChat = async (s: Session) => {
+    tts.stop()
+    await loadMessages(s.id)
+    seedContextUsage(s)
+    setSession({ id: s.id, last_active: s.message_count > 0 ? s.last_active : '' })
+  }
+
+  // Each mode has its own conversations: changing mode brings back the latest one of the new
+  // mode, or an empty chat if it has none, so claude and Google never answer in the same chat
+  // by accident. What is typed in the box stays, to be sent in the new mode.
+  const pickMode = async (v: string) => {
+    setModeOpen(false)
+    const gemini = v === 'gemini'
+    if (gemini === isLocalModel) return
+    const nextModel = gemini ? GEMINI_MODEL : lastClaudeModel.current
+    if (!projectId || !sid) { pickModel(nextModel); return } // still loading: nothing to leave
+    const leavingEmpty = messages.length === 0
+    const stale = () => useStore.getState().activeProjectId !== projectId
+    setSwitchingMode(true)
+    setError('')
+    try {
+      const latest = await latestConversation(projectId, gemini)
+      let next: Session | null = null
+      if (latest) {
+        if (latest.sessionId !== sid) next = await latest.open()
+      } else if (!leavingEmpty) {
+        const empty = emptyChat.current?.projectId === projectId ? emptyChat.current.id : ''
+        emptyChat.current = null
+        next = empty
+          ? await api.openOrchestratorChat(empty).catch(() => api.newOrchestratorSession(projectId))
+          : await api.newOrchestratorSession(projectId)
+      }
+      if (stale()) return
+      if (next) {
+        await showChat(next)
+        if (leavingEmpty) emptyChat.current = { projectId, id: sid }
+      }
+      pickModel(nextModel)
+    } catch (e) {
+      setError(String((e as Error)?.message ?? e)) // the mode stays as it was, with its chat
+    } finally {
+      setSwitchingMode(false)
     }
   }
 
@@ -311,27 +419,81 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
 
   if (!projectId) return null
 
-  if (!open) {
-    if (onKanban) return null // the board has its own button, after "Add list"
-    return (
-      <button className="orch-tab" onClick={() => toggle(true)} title="Open the orchestrator chat">
-        <ModelIcon model={model} size={16} />
-        <IconLayoutSidebarRightExpand size={16} />
-        <span>Orchestrator</span>
-        {!isLocalModel && <CacheBadge cache={cache} compact />}
-      </button>
-    )
+  // collapsed: the opener button is drawn by App (OrchestratorOpenButton), inside <main>
+  if (!open) return null
+
+  // Wheel outside the message column (side margins, header, input) scrolls the messages too,
+  // unless the pointer is over something that scrolls by itself.
+  const forwardWheel = (e: React.WheelEvent<HTMLElement>) => {
+    const list = scrollRef.current
+    if (!list || e.ctrlKey || list.contains(e.target as Node)) return
+    for (let el = e.target as HTMLElement | null; el && el !== e.currentTarget; el = el.parentElement) {
+      const oy = getComputedStyle(el).overflowY
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return
+    }
+    list.scrollTop += e.deltaY
+  }
+
+  const historyProps = {
+    projectId,
+    gemini: isLocalModel,
+    currentId: sid,
+    disabled: running || switchingMode,
+    // a new chat enters the list with its first message, and its count changes when a turn ends
+    reloadKey: `${sid}|${messages.length > 0}|${running}|${historyVersion}`,
+    onContinue: continueConversation,
   }
 
   return (
-    <aside className={`orch${full ? ' orch--full' : ''}`}>
+    <aside className={`orch${full ? ' orch--full' : ''}`} onWheel={forwardWheel}>
       <header className="orch__header">
         <ModelIcon model={model} size={17} className="orch__model-icon" />
-        <span className="orch__title">Orchestrator</span>
+        <span className="orch__title">
+          <Popover open={modeOpen} onOpenChange={setModeOpen}>
+            <PopoverTrigger asChild>
+              <button type="button" className="orch__mode-btn" disabled={running || switchingMode} title="Mode" aria-label="Mode">
+                {MODES.find(m => m.value === (isLocalModel ? 'gemini' : 'supervisor'))?.label}
+                <IconChevronDown size={14} />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent side="bottom" align="start" className="env-picker">
+              <div className="env-picker__section">
+                <div className="env-picker__title">Mode</div>
+                {MODES.map(m => {
+                  const active = m.value === (isLocalModel ? 'gemini' : 'supervisor')
+                  return (
+                    <button
+                      key={m.value}
+                      type="button"
+                      className={`env-picker__item${active ? ' env-picker__item--active' : ''}`}
+                      onClick={() => pickMode(m.value)}
+                    >
+                      <span className="env-picker__item-text">
+                        <span>{m.label}</span>
+                        <span className="env-picker__hint">{m.hint}</span>
+                      </span>
+                      {active && <IconCheck size={13} className="env-picker__check" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </span>
         {!isLocalModel && <CacheBadge cache={cache} />}
         {sid && !isLocalModel && <ClaudeProcess sessionId={sid} />}
-        {sid && <OrchestratorEdit projectId={projectId} sessionId={sid} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
-        {isLocalModel && projectId && <AIModeHistory projectId={projectId} onContinue={continueConversation} />}
+        {sid && <OrchestratorEdit projectId={projectId} sessionId={sid} onSaved={() => setHistoryVersion(v => v + 1)} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
+        {hasSidebar ? (
+          <button
+            className={`orch__icon-btn${historyOpen ? ' orch__icon-btn--on' : ''}`}
+            onClick={() => { const v = !historyOpen; setHistoryOpen(v); lsSet(LS.historyOpen, v ? '1' : '0') }}
+            title={historyOpen ? 'Hide the conversation history' : 'Show the conversation history'}
+            aria-label="Conversation history"
+            aria-pressed={historyOpen}
+          >
+            <IconHistory size={16} />
+          </button>
+        ) : <HistoryPopover {...historyProps} />}
         <button
           className="orch__icon-btn"
           onClick={startNewSession}
@@ -359,9 +521,17 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         )}
       </header>
 
-      {sid && !isLocalModel && <ContextBar sessionId={sid} placement="panel" />}
+      <div className="orch__body">
+      <div className="orch__main">
+      {/* the side panel is too narrow for the details: they open in the middle of the screen */}
+      {sid && !isLocalModel && <ContextBar sessionId={sid} placement={full ? 'panel' : 'viewport'} />}
 
       <div className="orch__messages" ref={scrollRef}>
+        {hasOlder && (
+          <button type="button" className="orch__older" onClick={loadOlder} disabled={loadingOlder}>
+            {loadingOlder ? 'Loading…' : 'Load earlier messages'}
+          </button>
+        )}
         {error && <div className="orch__error">{error}</div>}
         {!error && messages.length === 0 && !running && (
           <div className="orch__empty">Tell me what you want done. I plan it on the board and hand it to the agents.</div>
@@ -394,11 +564,23 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
             <button type="button" className="orch__image-remove" onClick={() => setImage(null)} title="Remove image" aria-label="Remove image"><IconX size={12} /></button>
           </div>
         )}
+        {refs.length > 0 && (
+          <ul className="orch__refs" aria-label="References to send">
+            {refs.map(r => (
+              <li key={r.id} className="orch__ref" title={`${r.label}\n${r.detail}`}>
+                <IconCode size={13} aria-hidden />
+                <span className="orch__ref-label">{r.label}</span>
+                <button type="button" className="orch__ref-remove" onClick={() => removeRef(r.id)} aria-label={`Remove the reference ${r.label}`}><IconX size={12} /></button>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
+          ref={textareaRef}
           className="orch__textarea"
           rows={3}
           value={input}
-          placeholder={sid ? 'Message the orchestrator…' : 'Loading…'}
+          placeholder={!sid ? 'Loading…' : refs.length > 0 ? 'What do you want to know about this?' : 'Message the orchestrator…'}
           disabled={!sid}
           onChange={e => {
             setInput(e.target.value)
@@ -416,10 +598,10 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         />
         <div className="orch__controls">
           {/* "default" stands for no preconfigured AI (stored as an empty id) */}
-          <EnvPicker
+          {!isLocalModel && <EnvPicker
             runner={runnerId}
             runners={[
-              { value: 'local', label: selfName },
+              ...(canRunLocally ? [{ value: 'local', label: selfName }] : []),
               ...runners.filter(r => !r.self).map(r => ({ value: r.id, label: r.hostname || r.id })),
               ...(runnerOffline ? [{ value: runnerId, label: `${runnerName} (offline)` }] : []),
             ]}
@@ -431,11 +613,13 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
             ]}
             onAI={v => pickAI(v === 'default' ? '' : v)}
             model={model}
-            models={MODELS}
+            models={CLAUDE_MODELS}
             onModel={pickModel}
-          />
-          <span className="orch__env-summary" title="Runner · AI · Model">
-            {runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'} · {MODELS.find(m => m.value === model)?.label ?? model}
+          />}
+          <span className="orch__env-summary" title={isLocalModel ? 'Google AI Mode (Edge)' : 'Runner · AI · Model'}>
+            {isLocalModel
+              ? 'Google AI Mode (Edge)'
+              : <>{runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'} · {MODELS.find(m => m.value === model)?.label ?? model}</>}
           </span>
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden onChange={e => { attachFile(e.target.files?.[0]); e.target.value = '' }} />
           <button className={`orch__icon-btn${image ? ' orch__icon-btn--on' : ''}`} onClick={() => fileRef.current?.click()} disabled={!sid || running} title="Attach an image (or paste one)" aria-label="Attach an image">
@@ -455,6 +639,9 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
             <button className="orch__send" onClick={send} disabled={!canSend || !sid || (runnerOffline && !isLocalModel)} title={runnerOffline && !isLocalModel ? 'The selected runner is offline' : 'Send (Enter)'}><IconSend size={15} /></button>
           )}
         </div>
+      </div>
+      </div>
+      {hasSidebar && historyOpen && <HistorySidebar {...historyProps} />}
       </div>
       {voiceOpen && <VoiceSettingsDialog onClose={() => setVoiceOpen(false)} onSaved={setTtsConfigured} />}
     </aside>

@@ -13,7 +13,7 @@ import * as api from '../../api'
 
 // The icon rail: projects, usage, task manager, settings and sign out.
 // Everything about the active project, and the search, live in the project header.
-export function NavPanel() {
+export function NavPanel({ mobileOpen = false, onMobileClose }: { mobileOpen?: boolean; onMobileClose?: () => void }) {
   const navigate = useNavigate()
   const projects = useStore(s => s.projects)
   const activeProjectId = useStore(s => s.activeProjectId)
@@ -26,7 +26,7 @@ export function NavPanel() {
 
   const handleSelectProject = async (id: string) => {
     await setActiveProject(id)
-    navigate(`/projects/${id}/kanban`)
+    navigate(`/projects/${id}/agent`)
   }
 
   const handleWorkspacePickerConfirm = async (name: string, path: string, env: { runnerId: string; aiProfileId: string }) => {
@@ -40,14 +40,15 @@ export function NavPanel() {
       ...(remote ? { runner_id: env.runnerId, env_dirs: { [env.runnerId]: [path] } } : {}),
     })
     await setActiveProject(p.id)
-    navigate(`/projects/${p.id}/kanban`)
+    navigate(`/projects/${p.id}/agent`)
   }
 
   return (
-    <aside className="nav-panel nav-panel--collapsed">
+    <aside className={`nav-panel nav-panel--collapsed${mobileOpen ? ' nav-panel--mobile-open' : ''}`}>
+      <div className="nav-panel__backdrop" onClick={onMobileClose} />
       <div className="nav-panel__rail">
         <button className="nav-panel__rail-logo" onClick={() => navigate('/')} title="Home" aria-label="Home" style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-          <img src="/logo-icon.svg" alt="LuCode" width="20" height="20" />
+          <img src={new URL('../../../public/logo-icon.svg', import.meta.url).href} alt="LuCode" width="20" height="20" />
         </button>
 
         {/* project icon buttons */}

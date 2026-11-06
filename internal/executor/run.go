@@ -32,7 +32,7 @@ func Run(ctx context.Context, req TurnRequest, publish func(event map[string]any
 // ─── Claude CLI path ──────────────────────────────────────────────────────────
 
 func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any)) {
-	sr, err := spawnClaude(ctx, req)
+	sr, err := spawnClaude(ctx, req, publish)
 	if err != nil {
 		publish(map[string]any{"type": "error", "session_id": req.SessionID, "message": err.Error()})
 		publish(map[string]any{"type": "session_status", "session_id": req.SessionID, "status": "error"})
@@ -54,6 +54,7 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	accum := newTurnAccum()
+	tracker := newToolTracker()
 	turnCompleted := false
 
 	for scanner.Scan() {
@@ -64,6 +65,12 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 
 		log.Printf("[executor/stdout] session=%s: %s", sid8, string(line))
 
+		if wt := EnteredWorktree(line); wt != "" {
+			publish(WorkspaceEvent(req.SessionID, wt))
+		}
+		for _, ev := range tracker.observe(req.SessionID, line) {
+			publish(ev)
+		}
 		event, isResult, err := ParseLine(req.SessionID, line)
 		if err != nil {
 			log.Printf("[executor] session=%s parse error: %v", sid8, err)
@@ -71,6 +78,10 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 		}
 		if event.EventType == "" {
 			continue
+		}
+
+		if event.Cwd != "" {
+			publish(WorkspaceEvent(req.SessionID, event.Cwd))
 		}
 
 		if event.EventType == "control_response" {
@@ -138,6 +149,7 @@ func runClaude(ctx context.Context, req TurnRequest, publish func(map[string]any
 					"output_tokens":               accum.outputTokens,
 					"cache_creation_input_tokens": accum.cacheCreationInputTokens,
 					"cache_read_input_tokens":     accum.cacheReadInputTokens,
+					"cache_creation_1h_input_tokens": accum.cacheCreation1hTokens,
 					"turn_start_seq":              req.TurnStartSeq,
 				})
 			}
@@ -290,6 +302,7 @@ type turnAccum struct {
 	outputTokens             int
 	cacheCreationInputTokens int
 	cacheReadInputTokens     int
+	cacheCreation1hTokens    int // of cacheCreationInputTokens, the ones written to the 1 hour cache
 
 	resetsAt int64 // unix seconds from the last rejected rate_limit event
 }
@@ -319,13 +332,19 @@ func (a *turnAccum) process(raw json.RawMessage, sessionID string) []accumMessag
 					InputTokens              int `json:"input_tokens"`
 					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+					CacheCreation            struct {
+						OneHour int `json:"ephemeral_1h_input_tokens"`
+					} `json:"cache_creation"`
 				} `json:"usage"`
 			} `json:"message"`
 		}
 		if err := json.Unmarshal(outer.Event, &msgStart); err == nil {
-			a.inputTokens = msgStart.Message.Usage.InputTokens
-			a.cacheCreationInputTokens = msgStart.Message.Usage.CacheCreationInputTokens
-			a.cacheReadInputTokens = msgStart.Message.Usage.CacheReadInputTokens
+			// a turn makes several API calls (one per tool round) and each bills its own
+			// input and cache: the turn's usage is the sum, not the last call
+			a.inputTokens += msgStart.Message.Usage.InputTokens
+			a.cacheCreationInputTokens += msgStart.Message.Usage.CacheCreationInputTokens
+			a.cacheReadInputTokens += msgStart.Message.Usage.CacheReadInputTokens
+			a.cacheCreation1hTokens += msgStart.Message.Usage.CacheCreation.OneHour
 		}
 
 	case "message_delta":
@@ -335,7 +354,7 @@ func (a *turnAccum) process(raw json.RawMessage, sessionID string) []accumMessag
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal(outer.Event, &msgDelta); err == nil {
-			a.outputTokens = msgDelta.Usage.OutputTokens
+			a.outputTokens += msgDelta.Usage.OutputTokens
 		}
 
 	case "content_block_start":

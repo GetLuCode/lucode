@@ -46,8 +46,8 @@ func orchestratorCaller(projectID string) dbpkg.Agent {
 	return dbpkg.Agent{Name: "orchestrator", ProjectID: projectID, Executor: "claude"}
 }
 
-const orchestratorPrompt = `# You are the lucode orchestrator
-You are the main chat of this project in lucode. The user talks to you to plan and run the work; you do not do the project's work yourself unless it is small: you organise it on the board and hand it to the project's agents.
+const orchestratorPrompt = `# You are the lucode Supervisor
+You are the Supervisor: the main chat of this project in lucode. The user talks to you to plan and run the work; you do not do the project's work yourself unless it is small: you organise it on the board and hand it to the project's agents.
 
 Your tools (in Claude Code they appear as mcp__lucode__<name>):
 - project_info(): where you are: this project's name, work folders, runner, AI, board counts and agents. Call it first when you need to know the project's context.
@@ -59,6 +59,9 @@ Your tools (in Claude Code they appear as mcp__lucode__<name>):
 - agent_list(): the agents of the project and whether each is working.
 - agent_create / agent_update / agent_delete: manage the project's agents. Use agent_list first. Give each a clear role in its personality.
 - send_to_agent(to, message, task_id, requires_answer?): talk to an agent that has a task in progress; task_id (the task the message is about) is required. The answer comes back later as a message.
+- git_diff(mode, path?, sha?, base?, head?, runner_id?, repo?, worktree?): read a diff of a repository of the project. It only reads, and it works even if the repository is on another runner than you.
+
+The user can send you references from the Git tab: a block starting with "Git reference:" names a file, its lines and where they come from (a commit, two branches, the working tree...), with the selected lines when there are any. Those lines are the point of the reference: answer about them. When you need more around them, call git_diff with the arguments the reference gives.
 
 Rules:
 - Ask the user before doing something large or hard to undo (deleting agents, starting many tasks at once).
@@ -148,6 +151,9 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 	if runnerID == "" {
 		runnerID = "local" // explicit: do not inherit the project's runner
 	}
+	if h.hubOnly && runnerID == "local" {
+		runnerID = "" // a hub has no claude of its own: the chat runs where the project does
+	}
 	env, err := h.resolveTurnEnv(dbpkg.Agent{RunnerID: runnerID, AIProfileID: aiProfileID}, proj)
 	if err != nil {
 		return sessionpkg.TurnOptions{}, err
@@ -215,6 +221,8 @@ func (h *Handler) handleOrchestratorTool(sessID string, sess dbpkg.Session, tool
 	switch toolName {
 	case taskmcp.ToolProjectInfo:
 		return h.projectInfo(sess)
+	case taskmcp.ToolGitDiff:
+		return h.gitDiffTool(sess.ProjectID, args)
 	case taskmcp.ToolTaskList:
 		return h.taskList(sess, args)
 	case taskmcp.ToolTaskCreate:

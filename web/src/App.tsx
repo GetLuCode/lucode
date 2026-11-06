@@ -17,10 +17,16 @@ import { ProjectHeader } from './components/Header/ProjectHeader'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { HomeView } from './components/Home/HomeView'
 import { RunningView } from './components/Running/RunningView'
+import { FlowsView } from './components/Flows/FlowsView'
+import { GitView } from './components/Git/GitView'
+import { RunnersView } from './components/Runners/RunnersView'
+import { UsagePage } from './components/Usage/UsagePage'
 import { OrchestratorPanel } from './components/Orchestrator/OrchestratorPanel'
+import { OrchestratorOpenButton } from './components/Orchestrator/OrchestratorOpenButton'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
+  const [navOpen, setNavOpen] = useState(false) // left bar as an overlay (phone width only)
   const loadProjects = useStore(s => s.loadProjects)
   const setActiveProject = useStore(s => s.setActiveProject)
   const setActiveSession = useStore(s => s.setActiveSession)
@@ -100,23 +106,30 @@ export default function App() {
   }, [projectId, sessionId])
 
   // Sync store changes to URL — skip if already on a sub-route like /agents or /kanban.
-  // A bare /projects/:id lands on the board; "/" is the start page.
+  // A bare /projects/:id lands on the Supervisor tab; "/" is the start page.
   useEffect(() => {
     const path = location.pathname
     if (path === '/') return // the start page
-    if (['/agents', '/agent', '/kanban', '/running', '/checkpoints'].some(p => path.includes(p))) return
+    if (['/agents', '/agent', '/kanban', '/running', '/flows', '/git', '/runners', '/checkpoints', '/usage'].some(p => path.includes(p))) return
     if (!activeProjectId) return
     if (path.includes('/sessions/')) {
       if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
       return // a deep link: wait for the store to pick the session up
     }
-    navigate(`/projects/${activeProjectId}/kanban`, { replace: true })
+    navigate(`/projects/${activeProjectId}/agent`, { replace: true })
   }, [activeProjectId, activeSessionId, navigate, location.pathname])
 
+  // Any navigation closes the overlay.
+  useEffect(() => { setNavOpen(false) }, [location.pathname])
+
+  const isUsage = location.pathname === '/usage' // account-wide: no project header, no supervisor panel
   const isHome = location.pathname === '/'
   const isAgentsRoute = location.pathname.includes('/agents')
   const isKanbanRoute = location.pathname.includes('/kanban')
   const isRunningRoute = location.pathname.includes('/running')
+  const isFlowsRoute = location.pathname.includes('/flows')
+  const isGitRoute = /\/git\/?$/.test(location.pathname)
+  const isRunnersRoute = location.pathname.includes('/runners')
   const isAgentTab = /\/agent\/?$/.test(location.pathname)
   const isCheckpointsOpen = location.pathname.includes('/checkpoints')
 
@@ -126,19 +139,27 @@ export default function App() {
       <HookToastContainer />
       <SpotlightSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
       <RawEventsModal />
+      <div className="mobile-bar">
+        <button className="mobile-bar__logo" onClick={() => setNavOpen(v => !v)} aria-label="Menu" aria-expanded={navOpen}>
+          <img src={new URL('../public/logo-icon.svg', import.meta.url).href} alt="LuCode" width="24" height="24" />
+        </button>
+        <div id="mobile-bar-actions" className="mobile-bar__actions" />
+      </div>
       <div className={`app-content${isAgentTab ? ' app-content--agent' : ''}`}>
-        <NavPanel />
+        <NavPanel mobileOpen={navOpen} onMobileClose={() => setNavOpen(false)} />
         <main className={`main${isCheckpointsOpen ? ' main--with-drawer' : ''}`}>
-          {!isHome && <ProjectHeader onOpenSearch={() => setSearchOpen(true)} />}
+          {!isHome && !isUsage && <ProjectHeader onOpenSearch={() => setSearchOpen(true)} />}
           {/* Agents, Kanban and Running replace the chat (full-page views). */}
           <div className="main__content">
             {/* a render error stays inside the page and clears when the route changes */}
             <ErrorBoundary key={location.pathname}>
-              {isHome ? <HomeView /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isAgentTab ? null : <ChatView />}
+              {isHome ? <HomeView /> : isUsage ? <UsagePage /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isFlowsRoute ? <FlowsView /> : isGitRoute ? <GitView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
             </ErrorBoundary>
           </div>
+          {/* same button on every tab except the chat; the Agent tab already shows the panel */}
+          {!isHome && !isUsage && !isAgentTab && (isAgentsRoute || isKanbanRoute || isRunningRoute || isFlowsRoute || isGitRoute) && <OrchestratorOpenButton />}
         </main>
-        {!isHome && <OrchestratorPanel full={isAgentTab} />}
+        {!isHome && !isUsage && <OrchestratorPanel full={isAgentTab} />}
         <aside
           className={`checkpoints-drawer${isCheckpointsOpen ? ' checkpoints-drawer--open' : ''}`}
           aria-hidden={!isCheckpointsOpen}

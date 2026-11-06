@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	dbpkg "claude-orchestrator/internal/db"
+	"claude-orchestrator/internal/flows"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
 
@@ -62,6 +63,53 @@ func (h *Handler) afterCardSaved(card dbpkg.KanbanCard) dbpkg.KanbanCard {
 		h.releaseDependents(card)
 	}
 	return card
+}
+
+// moveBlocker checks whether a manual move of card from list oldListID to its
+// current list is allowed. It returns the reason when it is not ("" = allowed).
+// Rules: a task cannot enter In Progress without an agent, and a task cannot
+// leave Blocked for In Progress while its blockers (unfinished dependencies or
+// an error/blocked note nobody answered) are still there.
+func (h *Handler) moveBlocker(card dbpkg.KanbanCard, oldListID string) string {
+	if card.ListID == oldListID {
+		return ""
+	}
+	to, err := dbpkg.GetKanbanList(h.db, card.ListID)
+	if err != nil {
+		return ""
+	}
+	fromKind := ""
+	if from, err := dbpkg.GetKanbanList(h.db, oldListID); err == nil {
+		fromKind = from.Kind
+	}
+	guard := flows.CardGuard(flows.CardState(fromKind), flows.CardState(to.Kind))
+	if guard == "" {
+		return ""
+	}
+	if card.AgentID == "" {
+		return "Assign an agent to this task before moving it to In Progress."
+	}
+	if guard != flows.GuardCanRestart {
+		return ""
+	}
+	if unmet := h.unmetDependencies(card); len(unmet) > 0 {
+		return "Still blocked by unfinished dependencies: " + strings.Join(unmet, ", ") + "."
+	}
+	if comments, err := dbpkg.ListCardComments(h.db, card.ID); err == nil {
+		pending := false
+		for _, c := range comments {
+			switch {
+			case c.Kind == "error":
+				pending = true
+			case c.Author != "lucode":
+				pending = false // someone reviewed it and answered
+			}
+		}
+		if pending {
+			return "Review the blocker first: add a comment on the task saying it is fixed (or reset the task), then move it to In Progress."
+		}
+	}
+	return ""
 }
 
 // startTask runs a card that entered "In Progress". With unmet dependencies it
@@ -145,20 +193,26 @@ func contains(ids []string, id string) bool {
 
 // moveCardToKind moves a card to the end of the project's list with that role.
 func (h *Handler) moveCardToKind(card dbpkg.KanbanCard, kind string) (dbpkg.KanbanCard, error) {
+	return h.moveCardToKindCause(card, kind, dbpkg.EventCause{Source: "system"})
+}
+
+// moveCardToKindCause is moveCardToKind saying who asked for the move.
+func (h *Handler) moveCardToKindCause(card dbpkg.KanbanCard, kind string, cause dbpkg.EventCause) (dbpkg.KanbanCard, error) {
 	target, err := dbpkg.FindKanbanListByKind(h.db, card.ProjectID, kind)
 	if err != nil {
 		return card, fmt.Errorf("no %q list: %w", kind, err)
 	}
-	pos := 0
-	if all, err := dbpkg.ListKanbanCards(h.db, card.ProjectID, false); err == nil {
+	// the card goes on top of the list (most recent first): one before the first card
+	pos, first := 0, true
+	if all, err := dbpkg.ListKanbanCards(h.db, card.ProjectID, true); err == nil {
 		for _, c := range all {
-			if c.ListID == target.ID && c.Position >= pos {
-				pos = c.Position + 1
+			if c.ID != card.ID && c.ListID == target.ID && (first || c.Position-1 < pos) {
+				pos, first = c.Position-1, false
 			}
 		}
 	}
 	card.ListID, card.Position = target.ID, pos
-	if err := dbpkg.UpdateKanbanCard(h.db, card); err != nil {
+	if err := dbpkg.UpdateKanbanCardCause(h.db, card, cause); err != nil {
 		return card, err
 	}
 	return dbpkg.GetKanbanCard(h.db, card.ID)
@@ -166,7 +220,11 @@ func (h *Handler) moveCardToKind(card dbpkg.KanbanCard, kind string) (dbpkg.Kanb
 
 // runTask starts a turn for the card on its agent. The first run sends the
 // task itself; a re-run (card moved back to In Progress) asks to continue.
-func (h *Handler) runTask(card dbpkg.KanbanCard) error {
+func (h *Handler) runTask(card dbpkg.KanbanCard) error { return h.runTaskNote(card, "") }
+
+// runTaskNote is runTask with an instruction for the agent put before the task
+// (used when the user sends a task back from Review).
+func (h *Handler) runTaskNote(card dbpkg.KanbanCard, note string) error {
 	agent, err := dbpkg.GetAgent(h.db, card.AgentID)
 	if err != nil {
 		return fmt.Errorf("assigned agent not found: %w", err)
@@ -181,7 +239,9 @@ func (h *Handler) runTask(card dbpkg.KanbanCard) error {
 	}
 
 	message := h.taskPrompt(card)
-	if sess.MessageCount > 0 {
+	if note != "" {
+		message = note + "\n\n" + message
+	} else if sess.MessageCount > 0 {
 		message = "This task was moved back to In Progress. Review the current state of the work and continue.\n\n" + message
 	}
 
@@ -254,28 +314,35 @@ func hasBuiltinTool(agent dbpkg.Agent, name string) bool {
 	return len(agent.Tools) == 0 || contains(agent.Tools, name)
 }
 
-// worktreePrompt tells the agent to do its edits in a private git worktree, so
-// several agents on the same repo never step on each other or on the user's
-// checkout. It names only what the agent can actually use; with neither
-// EnterWorktree nor Bash it says nothing.
+// worktreeAgent reports whether lucode runs this agent in its own git worktree
+// (claude --worktree, the agent's "worktree" option). That is the only way agents
+// get one: lucode creates it, the agent never does.
+func worktreeAgent(agent dbpkg.Agent) bool {
+	return agent.Worktree && agent.Executor == "claude"
+}
+
+// agentTools are the built-in tools the agent may use. An agent that runs in a
+// worktree loses EnterWorktree / ExitWorktree: it is already in its own one.
+func agentTools(agent dbpkg.Agent) []string {
+	if !worktreeAgent(agent) || len(agent.Tools) == 0 {
+		return agent.Tools
+	}
+	out := make([]string, 0, len(agent.Tools))
+	for _, t := range agent.Tools {
+		if t != "EnterWorktree" && t != "ExitWorktree" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// worktreePrompt tells an agent that runs in a worktree where it is working. It is
+// empty for the others: they work in the checkout they were started in.
 func worktreePrompt(agent dbpkg.Agent) string {
-	enter := hasBuiltinTool(agent, "EnterWorktree")
-	bash := hasBuiltinTool(agent, "Bash")
-	if !enter && !bash {
+	if !worktreeAgent(agent) {
 		return ""
 	}
-	var how string
-	switch {
-	case enter && hasBuiltinTool(agent, "ExitWorktree"):
-		how = "Call EnterWorktree before your first edit and work only inside it; ExitWorktree when you finish."
-	case enter:
-		how = "Call EnterWorktree before your first edit and work only inside it."
-	default:
-		how = "Create one before your first edit with `git worktree add ../<repo>-<short-task-id> -b task/<short-task-id>` and work only inside that folder."
-	}
-	return "\n\nWork in a git worktree: never edit files in the main checkout, the user and other agents are using it. " + how +
-		" Commit your work on that branch as you go. Do not merge into the main branch, push, or delete the worktree; the user reviews and integrates it, so say in your final report the branch and the worktree path." +
-		" If the folder is not a git repository, work in place."
+	return "\n\nYou work in your own git worktree, which lucode already created for this task: the folder you start in is that worktree and its current branch is yours. Never edit files outside it (the main checkout belongs to the user and other agents). Do not create other worktrees and do not use EnterWorktree or ExitWorktree. Commit your work on the current branch as you go. Do not merge into the main branch, push, or delete the worktree: when you finish, the task goes to the Review list and the user merges your branch (or sends it back to you if it conflicts, in which case you merge the main branch INTO your branch and resolve it there). Say in your final report the branch and the worktree path."
 }
 
 // agentSystemPrompt is what gets appended to the agent's system prompt: its own
@@ -297,8 +364,14 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 	if has("task_comment") {
 		report = append(report, "- task_comment(text): post a short progress note when you reach something worth telling the user. It does not change the status.")
 	}
+	// agents that work in a worktree never land in Done with unmerged work: it goes to Review
+	reviewNote, reviewRule := "", ""
+	if worktreePrompt(agent) != "" {
+		reviewNote = " If you worked in a git worktree and your branch is not merged yet, lucode moves the task to Review instead of Done (you are not allowed to merge: the user does it from Review) and the tasks that depend on it stay blocked until it is merged."
+		reviewRule = "\n- Never move your task to Done yourself and never merge your branch into the main branch: when your work is committed on a branch that is not merged, task_done sends it to Review and the user decides. Do not try to reach Done by another route (task_update on your own task, or merging)."
+	}
 	if has("task_done") {
-		report = append(report, "- task_done(summary): call it ONLY when the work is finished and you verified it. The summary says what you did and where the result is. It moves the task to Done and unblocks the tasks that depend on it.")
+		report = append(report, "- task_done(summary): call it ONLY when the work is finished and you verified it. The summary says what you did and where the result is. It moves the task to Done and unblocks the tasks that depend on it."+reviewNote)
 	}
 	if has("task_blocked") {
 		report = append(report, "- task_blocked(reason): call it when you cannot continue without the user (missing information, a decision, access, or a tool they denied). It moves the task to Blocked.")
@@ -313,6 +386,7 @@ func agentSystemPrompt(agent dbpkg.Agent, card dbpkg.KanbanCard, supervisor stri
 	sb.WriteString("\n\nRules:")
 	if has("task_done") {
 		sb.WriteString("\n- Never say the task is finished without calling task_done; do not call it for unfinished work.")
+		sb.WriteString(reviewRule)
 	}
 	if has("task_done") || has("task_blocked") {
 		sb.WriteString("\n- After task_done or task_blocked, stop: end your turn with one short closing message.")
@@ -459,16 +533,29 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		if err := comment("done", a.Summary); err != nil {
 			return "", err
 		}
-		moved, err := h.moveCardToKind(card, dbpkg.KanbanDone)
-		if err != nil {
-			return "", fmt.Errorf("could not move the task to Done: %w", err)
+		// Where a finished task goes is decided by a flow (the "Task finished" blueprint).
+		if h.flows != nil && h.flows.Handles(card.ProjectID, flows.TypeTaskDone) {
+			if err := dbpkg.RecordFlowEvent(h.db, card.ProjectID, dbpkg.EventTaskDone, card.ID, sessID, map[string]any{"summary": a.Summary, "agent": author}); err != nil {
+				return "", fmt.Errorf("could not report the task as finished: %w", err)
+			}
+			h.notifyFlows()
+			return "Task reported as finished. lucode now moves it: to Review if your branch waits to be merged, otherwise to Done. End your turn now with a short closing message.", nil
 		}
-		h.releaseDependents(moved)
+		// No flow would look at it (removed, disabled or paused): a person does. Review is the
+		// safe place, because Done could bury work that was never merged.
+		if err := dbpkg.EnsureReviewList(h.db, card.ProjectID); err != nil {
+			return "", fmt.Errorf("could not move the task to Review: %w", err)
+		}
+		h.reviewRowFor(card)
+		moved, err := h.moveCardToKind(card, dbpkg.KanbanReview)
+		if err != nil {
+			return "", fmt.Errorf("could not move the task to Review: %w", err)
+		}
 		h.notifyTaskUpdated(sessID, moved)
 		if agentErr == nil {
-			h.notifySupervisor(agent, moved, fmt.Sprintf("Task %q is done: %s", moved.Title, a.Summary))
+			h.notifySupervisor(agent, moved, fmt.Sprintf("Task %q is done and waits in Review: %s", moved.Title, a.Summary))
 		}
-		return "Task marked as done. Dependent tasks were released. End your turn now with a short closing message.", nil
+		return "Task sent to Review for the user to look at. End your turn now with a short closing message.", nil
 
 	case taskmcp.ToolAgentList:
 		if agentErr != nil {
@@ -486,16 +573,25 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		if agentErr != nil {
 			return "", errNoAgent
 		}
+		// A global agent (such as the Supervisor) belongs to no project: it manages the
+		// agents of the project its task is in.
+		caller := agent
+		if caller.ProjectID == "" {
+			caller.ProjectID = card.ProjectID
+		}
 		switch toolName {
 		case taskmcp.ToolAgentCreate:
-			return h.agentCreate(agent, args)
+			return h.agentCreate(caller, args)
 		case taskmcp.ToolAgentUpdate:
-			return h.agentUpdate(agent, args)
+			return h.agentUpdate(caller, args)
 		}
-		return h.agentDelete(agent, args)
+		return h.agentDelete(caller, args)
 
 	case taskmcp.ToolProjectInfo:
 		return h.projectInfo(sess)
+
+	case taskmcp.ToolGitDiff:
+		return h.gitDiffTool(sess.ProjectID, args)
 
 	case taskmcp.ToolTaskList:
 		return h.taskList(sess, args)

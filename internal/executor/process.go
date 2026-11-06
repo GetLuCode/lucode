@@ -28,7 +28,7 @@ type spawnResult struct {
 	req    TurnRequest
 }
 
-func spawnClaude(ctx context.Context, req TurnRequest) (*spawnResult, error) {
+func spawnClaude(ctx context.Context, req TurnRequest, publish func(map[string]any)) (*spawnResult, error) {
 	claudePath, err := findClaude()
 	if err != nil {
 		return nil, err
@@ -43,6 +43,12 @@ func spawnClaude(ctx context.Context, req TurnRequest) (*spawnResult, error) {
 	if len(req.WorkDirs) > 0 {
 		cmd.Dir = req.WorkDirs[0]
 		log.Printf("[executor] session=%s cwd=%s", req.SessionID[:8], cmd.Dir)
+	}
+	// tell the hub what was launched, whether or not the process starts
+	announce := func(pid int, err error) {
+		if publish != nil {
+			publish(CommandEvent(req.SessionID, claudePath, args, cmd.Dir, pid, err))
+		}
 	}
 
 	stdinPipe, err := cmd.StdinPipe()
@@ -65,10 +71,12 @@ func spawnClaude(ctx context.Context, req TurnRequest) (*spawnResult, error) {
 		stdinPipe.Close()
 		stdoutPipe.Close()
 		stderrPipe.Close()
+		announce(0, err)
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 
 	log.Printf("[executor] session=%s pid=%d started", req.SessionID[:8], cmd.Process.Pid)
+	announce(cmd.Process.Pid, nil)
 
 	go func() {
 		buf := make([]byte, 4096)
@@ -171,8 +179,12 @@ func buildArgs(req TurnRequest) []string {
 	}
 	if req.PermissionMode != "" {
 		args = append(args, "--permission-mode="+req.PermissionMode)
-	} else if req.ClaudeSettings != "" {
-		args = append(args, "--settings="+req.ClaudeSettings)
+	}
+	if settings := settingsArg(req); settings != "" {
+		args = append(args, "--settings="+settings)
+	}
+	if req.Worktree {
+		args = append(args, "--worktree=lucode-"+shortID(req.SessionID))
 	}
 	if len(req.Tools) > 0 {
 		args = append(args, "--tools="+strings.Join(withToolSearch(req.Tools), ","))
@@ -185,6 +197,40 @@ func buildArgs(req TurnRequest) []string {
 	}
 
 	return args
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// settingsArg is the value of --settings. Normally the path of the lucode hook
+// settings (not passed with --permission-mode, where claude decides by itself).
+// With a worktree it is a JSON string, because --settings takes only one value:
+// the hook settings, if any, plus worktree.baseRef ("head" unless "fresh").
+func settingsArg(req TurnRequest) string {
+	path := req.ClaudeSettings
+	if req.PermissionMode != "" {
+		path = ""
+	}
+	if !req.Worktree {
+		return path
+	}
+	settings := map[string]any{}
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			_ = json.Unmarshal(data, &settings)
+		}
+	}
+	baseRef := "head"
+	if req.WorktreeBaseRef == "fresh" {
+		baseRef = "fresh"
+	}
+	settings["worktree"] = map[string]any{"baseRef": baseRef}
+	data, _ := json.Marshal(settings)
+	return string(data)
 }
 
 // withToolSearch appends ToolSearch: claude needs it to load the schemas of the

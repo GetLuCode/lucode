@@ -124,7 +124,12 @@ func (b *Bus) RPCRequest(instanceID string, r *http.Request) (*http.Response, er
 	}
 	data, _ := json.Marshal(env)
 
-	msg, err := b.nc.Request(rpcSubject(instanceID), data, rpcTimeout)
+	// A caller that waits for a slow job (a git push) says so with its context's deadline.
+	timeout := rpcTimeout
+	if dl, ok := r.Context().Deadline(); ok {
+		timeout = time.Until(dl)
+	}
+	msg, err := b.nc.Request(rpcSubject(instanceID), data, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("nats request: %w", err)
 	}

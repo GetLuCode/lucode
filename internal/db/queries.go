@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -140,6 +141,18 @@ type Session struct {
 	// Kind is "" for an ordinary chat and SessionKindOrchestrator for the project's
 	// main chat (the right-hand panel), which is not listed with the other sessions.
 	Kind string `json:"kind,omitempty"`
+	// Worktree and Branch are where the agent works on its task, read from its transcript
+	// (EnterWorktree / git worktree add); only listSessions fills them.
+	Worktree string `json:"worktree,omitempty"`
+	Branch   string `json:"branch,omitempty"`
+	// WorktreeRemoved: merging the task deleted the worktree, so the chat is closed.
+	WorktreeRemoved bool `json:"worktree_removed,omitempty"`
+}
+
+// MarkCardSessionsWorktreeRemoved closes the chats of a task whose worktree was deleted.
+func MarkCardSessionsWorktreeRemoved(db *sql.DB, cardID string) error {
+	_, err := db.Exec(`UPDATE sessions SET worktree_removed=1 WHERE card_id=?`, cardID)
+	return err
 }
 
 const SessionKindOrchestrator = "orchestrator"
@@ -166,24 +179,32 @@ type OrchestratorChat struct {
 	Session
 	ProjectName string `json:"project_name"`
 	FirstUser   string `json:"-"` // raw content of the first user message, for the preview
+	// OnlyAIMode: Google AI Mode answered it and claude never did, so claude has no
+	// conversation to resume. AI Mode reports no token usage; every claude turn does.
+	OnlyAIMode bool `json:"-"`
 }
 
 // ListOrchestratorChats lists the orchestrator conversations that have messages, the latest
 // first. projectID "" lists every project's, so an old chat can be found again by name.
 func ListOrchestratorChats(db *sql.DB, projectID string) ([]OrchestratorChat, error) {
 	rows, err := db.Query(`SELECT s.id, COALESCE(p.name,''),
-		COALESCE((SELECT content FROM messages m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.seq LIMIT 1),'')
+		COALESCE((SELECT content FROM messages m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.seq LIMIT 1),''),
+		EXISTS(SELECT 1 FROM aimode_conversations a WHERE a.session_id=s.id)
+			AND NOT EXISTS(SELECT 1 FROM turn_usage u WHERE u.session_id=s.id)
 		FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
 		WHERE s.kind=? AND (?='' OR s.project_id=?) AND s.message_count>0
 		ORDER BY s.last_active DESC`, SessionKindOrchestrator, projectID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	type row struct{ id, project, first string }
+	type row struct {
+		id, project, first string
+		onlyAIMode         bool
+	}
 	var found []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.project, &r.first); err != nil {
+		if err := rows.Scan(&r.id, &r.project, &r.first, &r.onlyAIMode); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -196,7 +217,7 @@ func ListOrchestratorChats(db *sql.DB, projectID string) ([]OrchestratorChat, er
 		if err != nil {
 			continue
 		}
-		out = append(out, OrchestratorChat{Session: s, ProjectName: r.project, FirstUser: r.first})
+		out = append(out, OrchestratorChat{Session: s, ProjectName: r.project, FirstUser: r.first, OnlyAIMode: r.onlyAIMode})
 	}
 	return out, nil
 }
@@ -235,8 +256,8 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 	var parentID sql.NullString
 	var createdAt, lastActive string
 	err := db.QueryRow(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, kind FROM sessions WHERE id=?`, id,
-	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID, &s.Kind)
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, kind, worktree_removed FROM sessions WHERE id=?`, id,
+	).Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID, &s.Kind, &s.WorktreeRemoved)
 	if err != nil {
 		return s, err
 	}
@@ -250,7 +271,7 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 
 func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id FROM sessions WHERE project_id=? AND kind<>? ORDER BY last_active DESC`,
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, worktree_removed FROM sessions WHERE project_id=? AND kind<>? ORDER BY last_active DESC`,
 		projectID, SessionKindOrchestrator,
 	)
 	if err != nil {
@@ -262,7 +283,7 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		var s Session
 		var parentID sql.NullString
 		var createdAt, lastActive string
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Name, &s.Model, &s.Status, &parentID, &s.MessageCount, &createdAt, &lastActive, &s.AccountID, &s.ContextUsage, &s.CardID, &s.AgentID, &s.WorktreeRemoved); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -273,6 +294,29 @@ func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+var (
+	enterWorktreeRe = regexp.MustCompile(`Created worktree at "([^"]+)" on branch "([^"]+)"`)
+	gitWorktreeRe   = regexp.MustCompile(`git worktree add (\S+) -b ([^\s"\\]+)`)
+	quoteNorm       = strings.NewReplacer(`“`, `"`, `”`, `"`, "“", `"`, "”", `"`, `\"`, `"`)
+)
+
+// SessionWorktree finds the git worktree path and branch a session's agent created, from its
+// newest EnterWorktree result or `git worktree add -b` command; empty when it has none.
+func SessionWorktree(db *sql.DB, sessionID string) (path, branch string) {
+	var content string
+	if db.QueryRow(`SELECT content FROM messages WHERE session_id=? AND content LIKE '%Created worktree at%' ORDER BY seq DESC LIMIT 1`, sessionID).Scan(&content) == nil {
+		if m := enterWorktreeRe.FindStringSubmatch(quoteNorm.Replace(content)); m != nil {
+			return m[1], m[2]
+		}
+	}
+	if db.QueryRow(`SELECT content FROM messages WHERE session_id=? AND role='tool_use' AND content LIKE '%git worktree add%' ORDER BY seq DESC LIMIT 1`, sessionID).Scan(&content) == nil {
+		if m := gitWorktreeRe.FindStringSubmatch(content); m != nil {
+			return m[1], m[2]
+		}
+	}
+	return "", ""
 }
 
 // UpdateSessionContextUsage persists the last known context window breakdown for a session.
@@ -916,27 +960,50 @@ func DeleteAPIKey(db *sql.DB, id, userID string) error {
 // ---- TurnUsage ----
 
 type TurnUsage struct {
-	ID                       string    `json:"id"`
-	SessionID                string    `json:"session_id"`
-	ProjectID                string    `json:"project_id"`
-	AccountID                string    `json:"account_id"`
-	Model                    string    `json:"model"`
-	InputTokens              int       `json:"input_tokens"`
-	OutputTokens             int       `json:"output_tokens"`
-	CacheCreationInputTokens int       `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int       `json:"cache_read_input_tokens"`
-	CreatedAt                time.Time `json:"created_at"`
+	ID                       string `json:"id"`
+	SessionID                string `json:"session_id"`
+	ProjectID                string `json:"project_id"`
+	AccountID                string `json:"account_id"`
+	Model                    string `json:"model"`
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	// Of CacheCreationInputTokens, the ones written to the 1 hour cache (0 when not reported).
+	CacheCreation1hInputTokens int       `json:"cache_creation_1h_input_tokens"`
+	CreatedAt                  time.Time `json:"created_at"`
 }
 
 func InsertTurnUsage(db *sql.DB, u TurnUsage) error {
 	_, err := db.Exec(
 		`INSERT INTO turn_usage (id, session_id, project_id, account_id, model,
-		 input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)
-		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		 input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, cache_creation_1h_input_tokens)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		u.ID, u.SessionID, u.ProjectID, u.AccountID, u.Model,
-		u.InputTokens, u.OutputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens,
+		u.InputTokens, u.OutputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens, u.CacheCreation1hInputTokens,
 	)
 	return err
+}
+
+// FirstTurnUsage is the session's first turn that used any tokens: what the initial
+// context (system prompt, tools, skills...) really cost, written to or read from the cache.
+// sql.ErrNoRows when the session has none yet.
+func FirstTurnUsage(db *sql.DB, sessionID string) (TurnUsage, error) {
+	var u TurnUsage
+	var createdAt string
+	err := db.QueryRow(
+		`SELECT id, session_id, project_id, account_id, model, input_tokens, output_tokens,
+		        cache_creation_input_tokens, cache_read_input_tokens, created_at
+		 FROM turn_usage
+		 WHERE session_id=? AND input_tokens+cache_creation_input_tokens+cache_read_input_tokens > 0
+		 ORDER BY created_at ASC, rowid ASC LIMIT 1`, sessionID,
+	).Scan(&u.ID, &u.SessionID, &u.ProjectID, &u.AccountID, &u.Model, &u.InputTokens, &u.OutputTokens,
+		&u.CacheCreationInputTokens, &u.CacheReadInputTokens, &createdAt)
+	if err != nil {
+		return u, err
+	}
+	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	return u, nil
 }
 
 // UpdateToolExecutionTokens embeds turn-level token usage into tool_execution messages
@@ -995,19 +1062,41 @@ type DailyUsageRow struct {
 	OutputTokens             int    `json:"output_tokens"`
 	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	CacheCreation1h          int    `json:"cache_creation_1h_input_tokens"` // of the written ones, the 1 hour cache
 	TurnCount                int    `json:"turn_count"`
 }
 
-func AggregateDailyUsage(db *sql.DB, since time.Time) ([]DailyUsageRow, error) {
+// tsBound formats a time like the created_at columns (UTC, milliseconds, "Z") so that it
+// compares correctly as text.
+func tsBound(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
+
+// timeCond is `col >= since [AND col < until]`; a zero until means no upper limit.
+func timeCond(col string, since, until time.Time) (string, []any) {
+	cond, args := col+` >= ?`, []any{tsBound(since)}
+	if !until.IsZero() {
+		cond += ` AND ` + col + ` < ?`
+		args = append(args, tsBound(until))
+	}
+	return cond, args
+}
+
+// AggregateDailyUsage groups by UTC day, or by UTC hour ("YYYY-MM-DDTHH") when hourly.
+func AggregateDailyUsage(db *sql.DB, since, until time.Time, hourly bool) ([]DailyUsageRow, error) {
+	bucket := `date(created_at)`
+	if hourly {
+		bucket = `strftime('%Y-%m-%dT%H', created_at)`
+	}
+	cond, args := timeCond("created_at", since, until)
 	rows, err := db.Query(`
-SELECT date(created_at) as day, model,
+SELECT `+bucket+` as day, model,
        SUM(input_tokens), SUM(output_tokens),
        SUM(cache_creation_input_tokens), SUM(cache_read_input_tokens),
+       SUM(cache_creation_1h_input_tokens),
        COUNT(*) as turn_count
 FROM turn_usage
-WHERE created_at >= ?
+WHERE `+cond+`
 GROUP BY day, model
-ORDER BY day`, since.Format(time.RFC3339))
+ORDER BY day`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1016,7 +1105,7 @@ ORDER BY day`, since.Format(time.RFC3339))
 	for rows.Next() {
 		var r DailyUsageRow
 		if err := rows.Scan(&r.Date, &r.Model, &r.InputTokens, &r.OutputTokens,
-			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.TurnCount); err != nil {
+			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.CacheCreation1h, &r.TurnCount); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1031,19 +1120,22 @@ type ModelUsageRow struct {
 	OutputTokens             int    `json:"output_tokens"`
 	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	CacheCreation1h          int    `json:"cache_creation_1h_input_tokens"`
 	TurnCount                int    `json:"turn_count"`
 }
 
-func AggregateModelUsage(db *sql.DB, since time.Time) ([]ModelUsageRow, error) {
+func AggregateModelUsage(db *sql.DB, since, until time.Time) ([]ModelUsageRow, error) {
+	cond, args := timeCond("created_at", since, until)
 	rows, err := db.Query(`
 SELECT model,
        SUM(input_tokens), SUM(output_tokens),
        SUM(cache_creation_input_tokens), SUM(cache_read_input_tokens),
+       SUM(cache_creation_1h_input_tokens),
        COUNT(*) as turn_count
 FROM turn_usage
-WHERE created_at >= ?
+WHERE `+cond+`
 GROUP BY model
-ORDER BY SUM(input_tokens + output_tokens) DESC`, since.Format(time.RFC3339))
+ORDER BY SUM(input_tokens + output_tokens) DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,7 +1144,7 @@ ORDER BY SUM(input_tokens + output_tokens) DESC`, since.Format(time.RFC3339))
 	for rows.Next() {
 		var r ModelUsageRow
 		if err := rows.Scan(&r.Model, &r.InputTokens, &r.OutputTokens,
-			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.TurnCount); err != nil {
+			&r.CacheCreationInputTokens, &r.CacheReadInputTokens, &r.CacheCreation1h, &r.TurnCount); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1070,23 +1162,25 @@ type SessionUsageRow struct {
 	OutputTokens             int     `json:"output_tokens"`
 	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
+	CacheCreation1h          int     `json:"cache_creation_1h_input_tokens"`
 	TurnCount                int     `json:"turn_count"`
 	DurationMinutes          float64 `json:"duration_minutes"`
 	CreatedAt                string  `json:"created_at"`
 }
 
-func AggregateSessionUsage(db *sql.DB, since time.Time, projectID string) ([]SessionUsageRow, error) {
+func AggregateSessionUsage(db *sql.DB, since, until time.Time, projectID string) ([]SessionUsageRow, error) {
+	cond, args := timeCond("tu.created_at", since, until)
 	query := `
 SELECT tu.session_id, s.name, tu.project_id, tu.model,
        SUM(tu.input_tokens), SUM(tu.output_tokens),
        SUM(tu.cache_creation_input_tokens), SUM(tu.cache_read_input_tokens),
+       SUM(tu.cache_creation_1h_input_tokens),
        COUNT(*) as turn_count,
        ROUND((julianday(s.last_active) - julianday(s.created_at)) * 1440, 1) as duration_minutes,
        s.created_at
 FROM turn_usage tu
 JOIN sessions s ON s.id = tu.session_id
-WHERE tu.created_at >= ?`
-	args := []any{since.Format(time.RFC3339)}
+WHERE ` + cond
 	if projectID != "" {
 		query += ` AND tu.project_id = ?`
 		args = append(args, projectID)
@@ -1103,7 +1197,7 @@ WHERE tu.created_at >= ?`
 		var r SessionUsageRow
 		if err := rows.Scan(&r.SessionID, &r.SessionName, &r.ProjectID, &r.Model,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationInputTokens, &r.CacheReadInputTokens,
-			&r.TurnCount, &r.DurationMinutes, &r.CreatedAt); err != nil {
+			&r.CacheCreation1h, &r.TurnCount, &r.DurationMinutes, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1387,32 +1481,40 @@ type Agent struct {
 	// LucodeTools are the lucode tools (task_*, agent_list, send_to_agent,
 	// task_info) the agent has. nil in memory means all of them; an empty list
 	// means none.
-	LucodeTools []string  `json:"lucode_tools"`
-	Executor    string    `json:"executor"`   // "aiapi" | "claude"
-	Persistent  bool      `json:"persistent"` // keep the claude -p process alive between turns
-	ReportsTo   string    `json:"reports_to"` // id of the supervising agent ("" = none)
+	LucodeTools []string `json:"lucode_tools"`
+	Executor    string   `json:"executor"`   // "aiapi" | "claude"
+	Persistent  bool     `json:"persistent"` // keep the claude -p process alive between turns
+	ReportsTo   string   `json:"reports_to"` // id of the supervising agent ("" = none)
 	// RunnerID and AIProfileID override the project's environment for this agent
 	// ("" = use the project's). The AI belongs to the runner it is set with.
-	RunnerID    string    `json:"runner_id"`
-	AIProfileID string    `json:"ai_profile_id"`
+	RunnerID    string `json:"runner_id"`
+	AIProfileID string `json:"ai_profile_id"`
 	// AutoMode runs claude with --permission-mode auto: it decides on its own which
 	// tools are safe, so lucode's approval hook is not installed for this agent.
-	AutoMode  bool      `json:"auto_mode"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	AutoMode bool `json:"auto_mode"`
+	// Worktree makes claude work in its own git worktree (--worktree). WorktreeBaseRef
+	// is the worktree.baseRef setting passed through --settings: "head" (the
+	// current branch/commit, the default) or "fresh" (the remote default branch).
+	Worktree        bool      `json:"worktree"`
+	WorktreeBaseRef string    `json:"worktree_base_ref"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // DefaultLucodeTools is every lucode tool; new agents start with all of them.
-var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete", "project_info"}
+var DefaultLucodeTools = []string{"task_comment", "task_done", "task_blocked", "agent_list", "send_to_agent", "task_info", "get_task_image", "task_list", "task_create", "task_update", "agent_create", "agent_update", "agent_delete", "project_info", "git_diff"}
 
-const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, created_at, updated_at`
+const agentCols = `id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, worktree, worktree_base_ref, created_at, updated_at`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var toolsJSON, lucodeJSON, createdAt, updatedAt string
 	if err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Model, &a.AccountID, &a.Personality, &toolsJSON, &lucodeJSON,
-		&a.Executor, &a.Persistent, &a.ReportsTo, &a.RunnerID, &a.AIProfileID, &a.AutoMode, &createdAt, &updatedAt); err != nil {
+		&a.Executor, &a.Persistent, &a.ReportsTo, &a.RunnerID, &a.AIProfileID, &a.AutoMode, &a.Worktree, &a.WorktreeBaseRef, &createdAt, &updatedAt); err != nil {
 		return a, err
+	}
+	if a.WorktreeBaseRef != "fresh" {
+		a.WorktreeBaseRef = "head"
 	}
 	json.Unmarshal([]byte(toolsJSON), &a.Tools)
 	if err := json.Unmarshal([]byte(lucodeJSON), &a.LucodeTools); err != nil || a.LucodeTools == nil {
@@ -1438,10 +1540,18 @@ func lucodeToolsJSON(tools []string) string {
 func InsertAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode,
+		`INSERT INTO agents (id, project_id, name, model, account_id, personality, tools, lucode_tools, executor, persistent, reports_to, runner_id, ai_profile_id, auto_mode, worktree, worktree_base_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.Worktree, worktreeBaseRef(a.WorktreeBaseRef),
 	)
 	return err
+}
+
+// worktreeBaseRef normalizes the stored worktree.baseRef: anything but "fresh" is "head".
+func worktreeBaseRef(v string) string {
+	if v == "fresh" {
+		return v
+	}
+	return "head"
 }
 
 // ListAgents returns the agents available in a project: its own plus the global ones.
@@ -1472,8 +1582,8 @@ func GetAgent(db *sql.DB, id string) (Agent, error) {
 func UpdateAgent(db *sql.DB, a Agent) error {
 	tools, _ := json.Marshal(a.Tools)
 	_, err := db.Exec(
-		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, runner_id=?, ai_profile_id=?, auto_mode=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.ID,
+		`UPDATE agents SET project_id=?, name=?, model=?, account_id=?, personality=?, tools=?, lucode_tools=?, executor=?, persistent=?, reports_to=?, runner_id=?, ai_profile_id=?, auto_mode=?, worktree=?, worktree_base_ref=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		a.ProjectID, a.Name, a.Model, a.AccountID, a.Personality, string(tools), lucodeToolsJSON(a.LucodeTools), a.Executor, a.Persistent, a.ReportsTo, a.RunnerID, a.AIProfileID, a.AutoMode, a.Worktree, worktreeBaseRef(a.WorktreeBaseRef), a.ID,
 	)
 	return err
 }
@@ -1501,6 +1611,7 @@ const (
 	KanbanInProgress = "inprogress"
 	KanbanDone       = "done"
 	KanbanBlocked    = "blocked"
+	KanbanReview     = "review" // work finished in a git worktree, waiting for the user to merge it
 )
 
 func InsertKanbanList(db *sql.DB, l KanbanList) error {
@@ -1522,6 +1633,7 @@ func EnsureDefaultKanbanLists(db *sql.DB, projectID string) error {
 		{"Backlog", KanbanBacklog},
 		{"Todo", KanbanTodo},
 		{"In Progress", KanbanInProgress},
+		{"Review", KanbanReview},
 		{"Done", KanbanDone},
 		{"Blocked", KanbanBlocked},
 	}
@@ -1531,6 +1643,101 @@ func EnsureDefaultKanbanLists(db *sql.DB, projectID string) error {
 		}
 	}
 	return nil
+}
+
+// EnsureReviewList adds the Review list to a project that predates it, right before
+// Done (or at the end when it has no Done list). It does nothing when one exists, or
+// when the project has no lists yet (the defaults will include it).
+func EnsureReviewList(db *sql.DB, projectID string) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM kanban_lists WHERE project_id=?`, projectID).Scan(&n); err != nil || n == 0 {
+		return err
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM kanban_lists WHERE project_id=? AND kind=?`, projectID, KanbanReview).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	pos := -1
+	if err := db.QueryRow(`SELECT position FROM kanban_lists WHERE project_id=? AND kind=? ORDER BY position ASC LIMIT 1`, projectID, KanbanDone).Scan(&pos); err != nil {
+		if err := db.QueryRow(`SELECT COALESCE(MAX(position)+1,0) FROM kanban_lists WHERE project_id=?`, projectID).Scan(&pos); err != nil {
+			return err
+		}
+	} else if _, err := db.Exec(`UPDATE kanban_lists SET position=position+1 WHERE project_id=? AND position>=?`, projectID, pos); err != nil {
+		return err
+	}
+	return InsertKanbanList(db, KanbanList{ID: uuid.New().String(), ProjectID: projectID, Name: "Review", Position: pos, Kind: KanbanReview})
+}
+
+// SaveSessionWorkspace keeps the last claude_workspace event of a session so it
+// survives a restart of the hub.
+func SaveSessionWorkspace(db *sql.DB, sessionID string, ws map[string]any) error {
+	b, err := json.Marshal(ws)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO session_workspaces (session_id, data) VALUES (?,?)
+		ON CONFLICT(session_id) DO UPDATE SET data=excluded.data`, sessionID, string(b))
+	return err
+}
+
+// GetSessionWorkspace returns the saved workspace of a session (nil if none).
+func GetSessionWorkspace(db *sql.DB, sessionID string) map[string]any {
+	var data string
+	if db.QueryRow(`SELECT data FROM session_workspaces WHERE session_id=?`, sessionID).Scan(&data) != nil {
+		return nil
+	}
+	var ws map[string]any
+	if json.Unmarshal([]byte(data), &ws) != nil {
+		return nil
+	}
+	return ws
+}
+
+// CardReview is the git work a task left waiting for review: the branch of the
+// agent's worktree, where that worktree is and the main checkout it belongs to.
+type CardReview struct {
+	CardID       string `json:"card_id"`
+	Branch       string `json:"branch"`
+	WorktreePath string `json:"worktree_path"`
+	RepoPath     string `json:"repo_path"`
+	// RunnerID is the runner that holds RepoPath and WorktreePath: it is the one that
+	// runs git on them. "" = this instance.
+	RunnerID string `json:"runner_id,omitempty"`
+}
+
+func SaveCardReview(db *sql.DB, r CardReview) error {
+	_, err := db.Exec(`INSERT INTO card_reviews (card_id, branch, worktree_path, repo_path, runner_id) VALUES (?,?,?,?,?)
+		ON CONFLICT(card_id) DO UPDATE SET branch=excluded.branch, worktree_path=excluded.worktree_path, repo_path=excluded.repo_path, runner_id=excluded.runner_id`,
+		r.CardID, r.Branch, r.WorktreePath, r.RepoPath, r.RunnerID)
+	return err
+}
+
+func GetCardReview(db *sql.DB, cardID string) (CardReview, error) {
+	var r CardReview
+	err := db.QueryRow(`SELECT card_id, branch, worktree_path, repo_path, runner_id FROM card_reviews WHERE card_id=?`, cardID).
+		Scan(&r.CardID, &r.Branch, &r.WorktreePath, &r.RepoPath, &r.RunnerID)
+	return r, err
+}
+
+// CardReviewWorktreePaths are the worktrees of every task waiting in Review.
+func CardReviewWorktreePaths(db *sql.DB) []string {
+	rows, err := db.Query(`SELECT worktree_path FROM card_reviews`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func DeleteCardReview(db *sql.DB, cardID string) error {
+	_, err := db.Exec(`DELETE FROM card_reviews WHERE card_id=?`, cardID)
+	return err
 }
 
 // FindKanbanListByKind returns the project's list with the given workflow role.
@@ -1608,6 +1815,9 @@ type KanbanCard struct {
 	ParentID    string    `json:"parent_id"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// LastError is why the task's session is in error (its newest error note); only
+	// listKanbanCards fills it, nothing is stored on the card.
+	LastError string `json:"last_error,omitempty"`
 }
 
 func scanKanbanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
@@ -1634,15 +1844,41 @@ func scanKanbanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
 const kanbanCardCols = `id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, started_at, finished_at, position, archived, parent_id, created_at, updated_at`
 
 func InsertKanbanCard(db *sql.DB, c KanbanCard) error {
+	return InsertKanbanCardCause(db, c, EventCause{Source: "system"})
+}
+
+// InsertKanbanCardCause creates a card and logs card.created in the same transaction.
+func InsertKanbanCardCause(db *sql.DB, c KanbanCard, cause EventCause) error {
 	tags, _ := json.Marshal(c.Tags)
 	depends, _ := json.Marshal(c.DependsOn)
-	_, err := db.Exec(
+	// New cards go on top of their list (most recent first): one before the
+	// current first card.
+	var minPos sql.NullInt64
+	if err := db.QueryRow(`SELECT MIN(position) FROM kanban_cards WHERE list_id=?`, c.ListID).Scan(&minPos); err == nil && minPos.Valid {
+		c.Position = int(minPos.Int64) - 1
+	} else {
+		c.Position = 0
+	}
+	var kind string
+	db.QueryRow(`SELECT kind FROM kanban_lists WHERE id=?`, c.ListID).Scan(&kind)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
 		`INSERT INTO kanban_cards (id, list_id, project_id, title, description, card_type, tags, agent_id, depends_on, start_date, end_date, position, archived, parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.ListID, c.ProjectID, c.Title, c.Description, c.CardType,
 		string(tags), c.AgentID, string(depends),
 		c.StartDate, c.EndDate, c.Position, boolToInt(c.Archived), c.ParentID,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	payload := map[string]any{"to_list": c.ListID, "to_kind": kind}
+	if err := insertFlowEvent(tx, c.ProjectID, EventCardCreated, c.ID, "", payload, cause, cause.Depth); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func ListKanbanCards(db *sql.DB, projectID string, includeArchived bool) ([]KanbanCard, error) {
@@ -1673,10 +1909,30 @@ func GetKanbanCard(db *sql.DB, id string) (KanbanCard, error) {
 }
 
 func UpdateKanbanCard(db *sql.DB, c KanbanCard) error {
+	return UpdateKanbanCardCause(db, c, EventCause{Source: "system"})
+}
+
+// UpdateKanbanCardCause saves a card. A change of list is logged as card.moved in the
+// same transaction: this is the one place every move of a card goes through.
+func UpdateKanbanCardCause(db *sql.DB, c KanbanCard, cause EventCause) error {
 	tags, _ := json.Marshal(c.Tags)
 	depends, _ := json.Marshal(c.DependsOn)
+	var oldList, projectID, fromKind, toKind string
+	db.QueryRow(`SELECT list_id, project_id FROM kanban_cards WHERE id=?`, c.ID).Scan(&oldList, &projectID)
+	moved := oldList != "" && oldList != c.ListID
+	depth := cause.Depth
+	if moved {
+		db.QueryRow(`SELECT kind FROM kanban_lists WHERE id=?`, oldList).Scan(&fromKind)
+		db.QueryRow(`SELECT kind FROM kanban_lists WHERE id=?`, c.ListID).Scan(&toKind)
+		depth = inheritedDepth(db, c.ID, cause)
+	}
 	stampKanbanCardDates(db, &c)
-	_, err := db.Exec(`UPDATE kanban_cards SET
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE kanban_cards SET
 		list_id=?, title=?, description=?, card_type=?, tags=?, agent_id=?,
 		depends_on=?, start_date=?, end_date=?, started_at=?, finished_at=?, position=?, archived=?, parent_id=?,
 		updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -1684,8 +1940,16 @@ func UpdateKanbanCard(db *sql.DB, c KanbanCard) error {
 		c.ListID, c.Title, c.Description, c.CardType, string(tags), c.AgentID,
 		string(depends), c.StartDate, c.EndDate, c.StartedAt, c.FinishedAt, c.Position, boolToInt(c.Archived),
 		c.ParentID, c.ID,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	if moved {
+		payload := map[string]any{"from_list": oldList, "from_kind": fromKind, "to_list": c.ListID, "to_kind": toKind}
+		if err := insertFlowEvent(tx, projectID, EventCardMoved, c.ID, "", payload, cause, depth); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // stampKanbanCardDates keeps the real dates: entering an In Progress list starts the
@@ -1828,7 +2092,7 @@ func backfillKanbanListKinds(db *sql.DB) {
 	for _, r := range todo {
 		key := strings.NewReplacer(" ", "", "-", "", "_", "").Replace(strings.ToLower(r.name))
 		switch key {
-		case "backlog", "todo", "inprogress", "done", "blocked":
+		case "backlog", "todo", "inprogress", "review", "done", "blocked":
 			db.Exec(`UPDATE kanban_lists SET kind=? WHERE id=?`, key, r.id)
 		}
 	}
@@ -1930,6 +2194,27 @@ func InsertCardComment(db *sql.DB, c CardComment) error {
 		c.ID, c.CardID, c.SessionID, c.Author, c.Kind, c.Body,
 	)
 	return err
+}
+
+// LatestCardErrors maps each task of the project whose session is in error to its
+// newest error note.
+func LatestCardErrors(db *sql.DB, projectID string) map[string]string {
+	out := map[string]string{}
+	rows, err := db.Query(`SELECT c.card_id, c.body FROM card_comments c
+		JOIN kanban_cards k ON k.id=c.card_id AND k.project_id=?
+		WHERE c.kind='error' AND EXISTS (SELECT 1 FROM sessions s WHERE s.card_id=c.card_id AND s.status='error')
+		ORDER BY c.created_at ASC, c.rowid ASC`, projectID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, body string
+		if rows.Scan(&id, &body) == nil {
+			out[id] = body
+		}
+	}
+	return out
 }
 
 func ListCardComments(db *sql.DB, cardID string) ([]CardComment, error) {

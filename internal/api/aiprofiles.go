@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	dbpkg "claude-orchestrator/internal/db"
+	versionpkg "claude-orchestrator/internal/version"
 
 	"github.com/google/uuid"
 )
@@ -190,22 +192,96 @@ func parseAnthropicProfile(body []byte) (email, display, org, plan string) {
 	return v.Account.Email, display, v.Organization.Name, plan
 }
 
+const anthropicUsageURL = "https://api.anthropic.com/api/oauth/usage"
+
+var (
+	usageMu    sync.Mutex
+	usageStore = map[string]usageCacheEntry{}
+)
+
+type usageCacheEntry struct {
+	body    []byte
+	expires time.Time
+}
+
+// aiProfileUsage returns the plan usage windows (5h, 7d...) of the account behind
+// the profile, as Anthropic's /api/oauth/usage reports them. Cached for a minute
+// so many open tabs do not hammer Anthropic.
+func (h *Handler) aiProfileUsage(w http.ResponseWriter, r *http.Request) {
+	p, err := dbpkg.GetAIProfile(h.db, r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ai profile not found", http.StatusNotFound)
+		return
+	}
+	usageMu.Lock()
+	if e, ok := usageStore[p.ID]; ok && time.Now().Before(e.expires) {
+		usageMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(e.body)
+		return
+	}
+	usageMu.Unlock()
+	_, token, _, expiresAt, err := dbpkg.ReadCredentials(p.ClaudeConfigDir)
+	if err != nil || token == "" {
+		http.Error(w, "no credentials in this dir", http.StatusUnprocessableEntity)
+		return
+	}
+	if expiresAt > 0 && expiresAt < time.Now().UnixMilli() {
+		http.Error(w, "the access token expired: use claude with this dir once to renew it", http.StatusUnprocessableEntity)
+		return
+	}
+	req, _ := http.NewRequest(http.MethodGet, anthropicUsageURL, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	req.Header.Set("User-Agent", "claude-code/2.x")
+	client := http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "could not reach Anthropic: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("Anthropic answered %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+	usageMu.Lock()
+	usageStore[p.ID] = usageCacheEntry{body: body, expires: time.Now().Add(time.Minute)}
+	usageMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
 // ---- hub side: the same actions on any runner ----
 
 type runnerInfo struct {
-	ID       string `json:"id"`
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Self     bool   `json:"self"`
+	ID         string `json:"id"`
+	Hostname   string `json:"hostname"`
+	OS         string `json:"os"`
+	Self       bool   `json:"self"`
+	Version    string `json:"version,omitempty"`    // short git commit it was built from
+	StartedAt  string `json:"started_at,omitempty"` // RFC3339
+	RunnerOnly bool   `json:"runner_only"`          // lucode-runner: no web, no API of a hub
 }
 
 // listRunners returns this instance first, then the lucode peers.
 func (h *Handler) listRunners(w http.ResponseWriter, r *http.Request) {
 	self := h.bus.SelfInfo()
-	out := []runnerInfo{{ID: self.ID, Hostname: self.Hostname, OS: self.OS, Self: true}}
+	out := []runnerInfo{}
+	if !h.hubOnly { // a hub runs nothing itself: it is not a place to send a project to
+		v := versionpkg.Current("hub")
+		out = append(out, runnerInfo{ID: self.ID, Hostname: self.Hostname, OS: self.OS, Self: true, Version: v.Short, StartedAt: v.StartedAt.Format(time.RFC3339)})
+	}
 	for _, p := range h.bus.Peers() {
-		if p.Type == "lucode" && p.ID != self.ID {
-			out = append(out, runnerInfo{ID: p.ID, Hostname: p.Hostname, OS: p.OS})
+		if p.Type == "lucode" && p.ID != self.ID && p.IsRunner() {
+			ver, _ := p.Extra["version"].(string)
+			only, _ := p.Extra["runner_only"].(bool)
+			started := ""
+			if !p.StartedAt.IsZero() {
+				started = p.StartedAt.Format(time.RFC3339)
+			}
+			out = append(out, runnerInfo{ID: p.ID, Hostname: p.Hostname, OS: p.OS, Version: ver, StartedAt: started, RunnerOnly: only})
 		}
 	}
 	jsonResp(w, http.StatusOK, out)
@@ -288,8 +364,13 @@ func (h *Handler) resolveTurnEnv(agent dbpkg.Agent, p dbpkg.Project) (turnEnv, e
 	}
 	if agent.AIProfileID != "" {
 		aiID = agent.AIProfileID
+	} else if act := loadActiveAI(); act.AIProfileID != "" && norm(act.RunnerID) == runner {
+		aiID = act.AIProfileID // "Project's AI" / default: the account picked in the usage container
 	}
 	env := turnEnv{RunnerID: runner, AIProfileID: aiID}
+	if runner == "" && h.hubOnly {
+		return env, fmt.Errorf("this instance only orchestrates (--hub-only) and runs no claude: choose a runner for project %q in its settings", p.Name)
+	}
 	if runner != "" {
 		env.WorkDirs = p.EnvDirs[runner]
 		if len(env.WorkDirs) == 0 {

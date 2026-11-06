@@ -22,6 +22,8 @@ import { ContextBar } from './ContextBar'
 import { CacheBadge, useCacheCountdown } from './CacheBadge'
 import { ClaudeProcess } from './ClaudeProcess'
 import { TaskStatus } from './TaskStatus'
+import { CopyIdItems } from './CopyIdsMenu'
+import { SessionInfoModal } from './SessionInfoModal'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import { listOllamaModels, cancelTurn } from '../../api'
 import type { Message } from '../../types'
@@ -151,6 +153,7 @@ function ChatViewFull() {
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
+  const [infoOpen, setInfoOpen] = useState(false)
   const headerMenuRef = useRef<HTMLDivElement>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -226,6 +229,7 @@ function ChatViewFull() {
               providerMode === 'api' ? 'anthropic' : undefined)
             setInput('')
             setAttachedImage(null)
+            forceScrollToBottom()
           }
         }, 0)
       }
@@ -287,6 +291,8 @@ function ChatViewFull() {
   // the 5-minute prompt cache only exists for Claude models (not Ollama or MiniMax)
   const isClaudeModel = /^(haiku|sonnet|opus|claude)/i.test(session?.model ?? model)
   const cache = useCacheCountdown(sessionStatus, session?.last_active, activeSessionId ?? '')
+  // the task was merged and its worktree deleted: claude would start in a directory that is gone
+  const chatClosed = !!session?.worktree_removed
   const isRunning =isSending || sessionStatus === 'running' || sessionStatus === 'waiting_hook'
   isRunningRef.current = isRunning
   const hasStreamingText = streamingText.length > 0
@@ -308,7 +314,7 @@ function ChatViewFull() {
     if (isAtBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [messages.length, streamingText])
+  }, [messages.length, streamingText, isRunning, hasStreamingThinking])
 
   // Preserve scroll position after prepend (runs synchronously before paint)
   useLayoutEffect(() => {
@@ -389,14 +395,25 @@ function ChatViewFull() {
     }
   }, [hasMore, triggerLoadMore])
 
+  // Sending a message always pins the chat to the bottom, without waiting for the agent's first event
+  function forceScrollToBottom() {
+    isAtBottomRef.current = true
+    requestAnimationFrame(() => {
+      const el = scrollRef.current
+      if (el) el.scrollTop = el.scrollHeight
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    })
+  }
+
   const handleSend = () => {
-    if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning) return
+    if (!input.trim() || (!activeSessionId && !pendingSession) || isRunning || chatClosed) return
     // For pending sessions, we pass a placeholder ID; sendMessage handles the actual creation
     const targetId = activeSessionId || 'pending'
     sendMessage(targetId, input.trim(), model, effort, thinking, attachedImage,
       providerMode === 'api' ? 'anthropic' : undefined)
     setInput('')
     setAttachedImage(null)
+    forceScrollToBottom()
   }
 
   const handleCancel = async () => {
@@ -557,17 +574,30 @@ function ChatViewFull() {
 
   const virtualItems = virtualizer.getVirtualItems()
 
+  // Wheel over the chat outside the message list (side margins, header, input area) scrolls the
+  // list too, unless the pointer is over something that scrolls by itself.
+  const forwardWheelToMessages = (e: React.WheelEvent<HTMLDivElement>) => {
+    const list = scrollRef.current
+    if (!list || e.ctrlKey || list.contains(e.target as Node)) return
+    for (let el = e.target as HTMLElement | null; el && el !== e.currentTarget; el = el.parentElement) {
+      const oy = getComputedStyle(el).overflowY
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return
+    }
+    list.scrollTop += e.deltaY
+  }
+
   const headerName = isPending ? 'New session' : (session?.name || 'Session')
 
   return (
-    <div className={`chat${filePreview ? ' chat--preview-open' : ''}${fileBrowserOpen ? ' chat--file-browser-open' : ''}`}>
+    <div className={`chat${filePreview ? ' chat--preview-open' : ''}${fileBrowserOpen ? ' chat--file-browser-open' : ''}`} onWheel={forwardWheelToMessages}>
+      {infoOpen && activeSessionId && <SessionInfoModal sessionId={activeSessionId} onClose={() => setInfoOpen(false)} />}
       <div className="chat__header">
         <div className="chat__header-menu" ref={headerMenuRef}>
           <button
             className={`chat__header-trigger${headerMenuOpen ? ' chat__header-trigger--open' : ''}`}
             onClick={() => setHeaderMenuOpen(v => !v)}
           >
-            <span className="chat__session-name">{headerName}</span>
+            <span className="chat__session-name" title={headerName}>{headerName}</span>
             {session?.card_id && activeProjectId && <TaskStatus projectId={activeProjectId} cardId={session.card_id} />}
             <span className="chat__header-model-badge">
               {[...CLAUDE_MODELS, ...MINIMAX_MODELS, ...LOCAL_MODELS].find(m => m.value === model)?.label
@@ -610,8 +640,13 @@ function ChatViewFull() {
 
               <div className="chat__header-dropdown-divider" />
 
-              {/* Claude models */}
-              {(() => {
+              {activeSessionId && !pendingSession ? (
+                <CopyIdItems
+                  sessionId={activeSessionId}
+                  taskId={session?.card_id}
+                  onInfo={() => { setHeaderMenuOpen(false); setInfoOpen(true) }}
+                />
+              ) : (() => {
                 const sessionIsOllama = activeSessionId != null && model.startsWith('ollama:')
                 const sessionIsClaude = activeSessionId != null && !model.startsWith('ollama:')
                 const claudeDisabled = sessionIsOllama
@@ -755,6 +790,7 @@ function ChatViewFull() {
           ))}
         </div>
 
+        <div className="chat__column">
         {/* Sending indicator: shown while message is in-flight to server */}
         {isSending && (
           <div className="msg msg--user" style={{ marginTop: '12px' }}>
@@ -793,6 +829,8 @@ function ChatViewFull() {
           <SessionErrorBanner error={sessionError} />
         )}
 
+        </div>
+
         <div ref={bottomRef} />
       </div>
 
@@ -826,7 +864,9 @@ function ChatViewFull() {
             ref={textareaRef}
             className="chat__input"
             placeholder={
-              commandProcessing
+              chatClosed
+                ? 'Chat closed: the task was merged and its worktree deleted'
+                : commandProcessing
                 ? 'Processing voice command…'
                 : isRunning
                   ? 'Claude is thinking…'
@@ -838,7 +878,7 @@ function ChatViewFull() {
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            disabled={isRunning}
+            disabled={isRunning || chatClosed}
             rows={1}
           />
           <InputControls
@@ -851,7 +891,7 @@ function ChatViewFull() {
             onSend={handleSend}
             onCancel={handleCancel}
             isRunning={isRunning}
-            canSend={input.trim().length > 0}
+            canSend={input.trim().length > 0 && !chatClosed}
             onMicToggle={handleMicToggle}
             isListening={isListening}
             onSettingsClick={() => setVoiceSettingsOpen(true)}
