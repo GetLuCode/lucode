@@ -44,7 +44,7 @@ export interface GitBranch {
 }
 
 export interface GitTag { name: string; sha: string; at: number; subject: string }
-export interface GitStash { ref: string; sha: string; message: string; at: number; author: string }
+export interface GitStash { ref: string; sha: string; message: string; at: number; author: string; email?: string }
 export interface GitWorktreeBrief { path: string; branch?: string; main?: boolean }
 
 export interface GitOverview {
@@ -89,6 +89,7 @@ export interface GitCommit {
   email: string
   at: number
   committer: string
+  committer_email?: string
   commit_at: number
   refs: GitRef[]
   subject: string
@@ -125,6 +126,7 @@ export interface GitMergeRef {
   sha?: string
   subject?: string
   author?: string
+  email?: string
   at?: number
   kind: 'merge' | 'contained' | 'squash'
 }
@@ -159,6 +161,7 @@ export interface GitWorktree {
   behind: number
   subject?: string
   author?: string
+  email?: string
   at?: number
   merge?: GitMergeRef
   task?: GitTaskLink

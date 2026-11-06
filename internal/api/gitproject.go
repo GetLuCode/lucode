@@ -341,7 +341,7 @@ func mergeOfTask(t gitTaskLink, wts *GitWorktrees) *GitMergeRef {
 			if c.Merge {
 				kind = "merge"
 			}
-			return &GitMergeRef{Into: into, SHA: c.SHA, Subject: c.Subject, Author: c.Author, At: c.At, Kind: kind}
+			return &GitMergeRef{Into: into, SHA: c.SHA, Subject: c.Subject, Author: c.Author, Email: c.Email, At: c.At, Kind: kind}
 		}
 	}
 	return nil

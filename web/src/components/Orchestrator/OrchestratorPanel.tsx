@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX, IconCode } from '@tabler/icons-react'
+import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX, IconCode, IconHistory } from '@tabler/icons-react'
 import { useStore } from '../../store'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
@@ -10,11 +10,12 @@ import { ThinkingIndicator } from '../Chat/ThinkingIndicator'
 import { ContextBar } from '../Chat/ContextBar'
 import { CacheBadge, useCacheCountdown } from '../Chat/CacheBadge'
 import { ClaudeProcess } from '../Chat/ClaudeProcess'
-import { AIModeHistory } from './AIModeHistory'
+import { HistoryPopover, HistorySidebar, latestConversation } from './ConversationHistory'
 import { OrchestratorEdit } from './OrchestratorEdit'
 import { ModelIcon } from './ModelIcon'
 import { EnvPicker } from './EnvPicker'
 import { useMic } from '@/hooks/useMic'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { playListenCue, playSendCue } from '@/lib/cues'
 import { useWorkerTTS } from '@/hooks/useWorkerTTS'
 import { markSpoken, wasSpoken } from '@/lib/spokenLog'
@@ -28,6 +29,7 @@ const EMPTY_MESSAGES: Message[] = []
 // AI belongs to its runner); a project without a choice starts from the last runner used.
 const LS = {
   autoRead: 'orch_autoread',
+  historyOpen: 'orch_history_open',
   runner: (pid: string) => `orch_runner:${pid}`,
   lastRunner: 'orch_runner',
   ai: (pid: string, runner: string) => `orch_ai:${pid}:${runner}`,
@@ -150,6 +152,11 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const [runnerId, setRunnerId] = useState('local')
   const [aiId, setAiId] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  // The Supervisor tab shows the history beside the chat (it can be hidden); elsewhere it is a popover.
+  const isMobile = useIsMobile()
+  const hasSidebar = full && !isMobile
+  const [historyOpen, setHistoryOpen] = useState(() => lsGet(LS.historyOpen, '1') === '1')
+  const [historyVersion, setHistoryVersion] = useState(0)
 
   const sid = session?.id ?? null
   const messages = useStore(s => (sid ? s.messages[sid] : undefined) ?? EMPTY_MESSAGES)
@@ -228,10 +235,9 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const lastClaudeModel = useRef('sonnet')
   if (!isLocalModel) lastClaudeModel.current = model
   const [modeOpen, setModeOpen] = useState(false)
-  const pickMode = (v: string) => {
-    setModeOpen(false)
-    pickModel(v === 'gemini' ? GEMINI_MODEL : lastClaudeModel.current)
-  }
+  const [switchingMode, setSwitchingMode] = useState(false)
+  // An empty chat left behind by changing mode, used again instead of creating one per change.
+  const emptyChat = useRef<{ projectId: string; id: string } | null>(null)
   const pickAI = (id: string) => {
     setAiId(id)
     if (projectId) lsSet(LS.ai(projectId, runnerId), id)
@@ -270,14 +276,35 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   // A saved AI that was deleted behaves as "default" (the saved id stays until the user picks another).
   const effectiveAi = aiId && profilesLoaded && !profiles.some(p => p.id === aiId) ? '' : aiId
 
-  // Keep the newest message in view.
+  // Keep the newest message in view, except when older ones were just added above.
+  const heightBeforeOlder = useRef<number | null>(null)
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length, streamingText, open])
+    if (!el) return
+    if (heightBeforeOlder.current !== null) {
+      el.scrollTop += el.scrollHeight - heightBeforeOlder.current
+      heightBeforeOlder.current = null
+      return
+    }
+    el.scrollTop = el.scrollHeight
+  }, [sid, messages.length, streamingText, open])
+
+  // A conversation opens on its latest messages; the older ones come on request.
+  const hasOlder = useStore(s => (sid ? s.messagePagination[sid]?.hasMore : false) ?? false)
+  const loadingOlder = useStore(s => (sid ? s.messagePagination[sid]?.isLoadingMore : false) ?? false)
+  const loadMoreMessages = useStore(s => s.loadMoreMessages)
+  const loadOlder = () => {
+    if (!sid) return
+    heightBeforeOlder.current = scrollRef.current?.scrollHeight ?? 0
+    loadMoreMessages(sid).catch(e => {
+      heightBeforeOlder.current = null
+      useStore.setState(s => ({ messagePagination: { ...s.messagePagination, [sid]: { ...s.messagePagination[sid], isLoadingMore: false } } }))
+      setError(String(e?.message ?? e))
+    })
+  }
 
   const runningRef = useRef(false)
-  runningRef.current = running
+  runningRef.current = running || switchingMode
   const imageRef = useRef(image)
   imageRef.current = image
   const attachFile = (file: File | null | undefined) => {
@@ -294,7 +321,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     const img = imageRef.current
     const pending = useStore.getState().orchRefs.filter(r => r.projectId === projectId)
     // an image or a reference alone is a message too
-    if ((!typed && !img && pending.length === 0) || !sid || running || (runnerOffline && !isLocalModel)) return
+    if ((!typed && !img && pending.length === 0) || !sid || running || switchingMode || (runnerOffline && !isLocalModel)) return
     const text = [...pending.map(r => r.text), typed].filter(Boolean).join('\n\n')
     setInput('')
     setImage(null)
@@ -314,20 +341,62 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
 
   const cancel = () => { if (sid) api.cancelTurn(sid).catch(console.error) }
 
-  // A Google AI Mode conversation picked from the history: its chat comes back with its
-  // messages (or, if it was an ordinary chat, it is opened); the next message goes to the same page.
+  // A conversation picked from the history: its chat comes back with its messages (or, if it
+  // was an ordinary chat, it is opened). The next message continues it: on the same Google page
+  // in Gemini mode, resuming the same claude conversation in Supervisor mode.
   const continueConversation = async (s: Session) => {
     if (s.kind !== 'orchestrator') { navigate(`/projects/${s.project_id}/sessions/${s.id}`); return }
-    tts.stop()
     setError('')
     try {
-      await loadMessages(s.id)
-      seedContextUsage(s)
+      await showChat(s)
       setInput('')
       dictBase.current = ''
-      setSession({ id: s.id, last_active: s.message_count > 0 ? s.last_active : '' })
     } catch (e) {
       setError(String((e as Error)?.message ?? e))
+    }
+  }
+  const showChat = async (s: Session) => {
+    tts.stop()
+    await loadMessages(s.id)
+    seedContextUsage(s)
+    setSession({ id: s.id, last_active: s.message_count > 0 ? s.last_active : '' })
+  }
+
+  // Each mode has its own conversations: changing mode brings back the latest one of the new
+  // mode, or an empty chat if it has none, so claude and Google never answer in the same chat
+  // by accident. What is typed in the box stays, to be sent in the new mode.
+  const pickMode = async (v: string) => {
+    setModeOpen(false)
+    const gemini = v === 'gemini'
+    if (gemini === isLocalModel) return
+    const nextModel = gemini ? GEMINI_MODEL : lastClaudeModel.current
+    if (!projectId || !sid) { pickModel(nextModel); return } // still loading: nothing to leave
+    const leavingEmpty = messages.length === 0
+    const stale = () => useStore.getState().activeProjectId !== projectId
+    setSwitchingMode(true)
+    setError('')
+    try {
+      const latest = await latestConversation(projectId, gemini)
+      let next: Session | null = null
+      if (latest) {
+        if (latest.sessionId !== sid) next = await latest.open()
+      } else if (!leavingEmpty) {
+        const empty = emptyChat.current?.projectId === projectId ? emptyChat.current.id : ''
+        emptyChat.current = null
+        next = empty
+          ? await api.openOrchestratorChat(empty).catch(() => api.newOrchestratorSession(projectId))
+          : await api.newOrchestratorSession(projectId)
+      }
+      if (stale()) return
+      if (next) {
+        await showChat(next)
+        if (leavingEmpty) emptyChat.current = { projectId, id: sid }
+      }
+      pickModel(nextModel)
+    } catch (e) {
+      setError(String((e as Error)?.message ?? e)) // the mode stays as it was, with its chat
+    } finally {
+      setSwitchingMode(false)
     }
   }
 
@@ -365,6 +434,16 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     list.scrollTop += e.deltaY
   }
 
+  const historyProps = {
+    projectId,
+    gemini: isLocalModel,
+    currentId: sid,
+    disabled: running || switchingMode,
+    // a new chat enters the list with its first message, and its count changes when a turn ends
+    reloadKey: `${sid}|${messages.length > 0}|${running}|${historyVersion}`,
+    onContinue: continueConversation,
+  }
+
   return (
     <aside className={`orch${full ? ' orch--full' : ''}`} onWheel={forwardWheel}>
       <header className="orch__header">
@@ -372,7 +451,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         <span className="orch__title">
           <Popover open={modeOpen} onOpenChange={setModeOpen}>
             <PopoverTrigger asChild>
-              <button type="button" className="orch__mode-btn" disabled={running} title="Mode" aria-label="Mode">
+              <button type="button" className="orch__mode-btn" disabled={running || switchingMode} title="Mode" aria-label="Mode">
                 {MODES.find(m => m.value === (isLocalModel ? 'gemini' : 'supervisor'))?.label}
                 <IconChevronDown size={14} />
               </button>
@@ -403,8 +482,18 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         </span>
         {!isLocalModel && <CacheBadge cache={cache} />}
         {sid && !isLocalModel && <ClaudeProcess sessionId={sid} />}
-        {sid && <OrchestratorEdit projectId={projectId} sessionId={sid} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
-        {isLocalModel && projectId && <AIModeHistory projectId={projectId} onContinue={continueConversation} />}
+        {sid && <OrchestratorEdit projectId={projectId} sessionId={sid} onSaved={() => setHistoryVersion(v => v + 1)} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
+        {hasSidebar ? (
+          <button
+            className={`orch__icon-btn${historyOpen ? ' orch__icon-btn--on' : ''}`}
+            onClick={() => { const v = !historyOpen; setHistoryOpen(v); lsSet(LS.historyOpen, v ? '1' : '0') }}
+            title={historyOpen ? 'Hide the conversation history' : 'Show the conversation history'}
+            aria-label="Conversation history"
+            aria-pressed={historyOpen}
+          >
+            <IconHistory size={16} />
+          </button>
+        ) : <HistoryPopover {...historyProps} />}
         <button
           className="orch__icon-btn"
           onClick={startNewSession}
@@ -432,9 +521,17 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         )}
       </header>
 
-      {sid && !isLocalModel && <ContextBar sessionId={sid} placement="panel" />}
+      <div className="orch__body">
+      <div className="orch__main">
+      {/* the side panel is too narrow for the details: they open in the middle of the screen */}
+      {sid && !isLocalModel && <ContextBar sessionId={sid} placement={full ? 'panel' : 'viewport'} />}
 
       <div className="orch__messages" ref={scrollRef}>
+        {hasOlder && (
+          <button type="button" className="orch__older" onClick={loadOlder} disabled={loadingOlder}>
+            {loadingOlder ? 'Loading…' : 'Load earlier messages'}
+          </button>
+        )}
         {error && <div className="orch__error">{error}</div>}
         {!error && messages.length === 0 && !running && (
           <div className="orch__empty">Tell me what you want done. I plan it on the board and hand it to the agents.</div>
@@ -542,6 +639,9 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
             <button className="orch__send" onClick={send} disabled={!canSend || !sid || (runnerOffline && !isLocalModel)} title={runnerOffline && !isLocalModel ? 'The selected runner is offline' : 'Send (Enter)'}><IconSend size={15} /></button>
           )}
         </div>
+      </div>
+      </div>
+      {hasSidebar && historyOpen && <HistorySidebar {...historyProps} />}
       </div>
       {voiceOpen && <VoiceSettingsDialog onClose={() => setVoiceOpen(false)} onSaved={setTtsConfigured} />}
     </aside>

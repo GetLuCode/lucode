@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { IconArchive, IconArrowBackUp, IconMinus, IconPlus, IconTrash } from '@tabler/icons-react'
-import { CopyButton, StatusLetter, PathLabel, Stat } from './gitParts'
+import { Avatar, CopyButton, StatusLetter, PathLabel, Stat } from './gitParts'
 import { DiffView } from './DiffView'
 import type { DiffRequest, GitChange } from './gitTypes'
 import type { GitUI } from './GitView'
@@ -167,7 +167,7 @@ export function ChangesPane({ ui, statusKey }: { ui: GitUI; statusKey: string })
           <button type="submit" className="git-btn git-btn--primary gc-commit__go" disabled={!canCommit}>
             {amend ? `Amend on ${where}` : staged.length ? `Commit ${staged.length} ${staged.length === 1 ? 'file' : 'files'} to ${where}` : `Commit to ${where}`}
           </button>
-          {ui.overview.user_name && <div className="gc-commit__who">as {ui.overview.user_name}{ui.overview.user_email ? ` <${ui.overview.user_email}>` : ''}</div>}
+          {ui.overview.user_name && <div className="gc-commit__who">as <Avatar name={ui.overview.user_name} email={ui.overview.user_email} size={14} /> {ui.overview.user_name}{ui.overview.user_email ? ` <${ui.overview.user_email}>` : ''}</div>}
         </form>
       </section>
       <section className="git-changes__diff" aria-label="Diff">

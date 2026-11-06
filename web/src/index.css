@@ -6920,7 +6920,7 @@ input[type="date"].kmodal__input { color-scheme: dark; }
   right: auto;
   bottom: auto;
   transform: translate(-50%, -50%);
-  width: 380px;
+  width: 900px;
   max-width: calc(100vw - 24px);
   max-height: min(80vh, 640px);
   display: flex;
@@ -6940,8 +6940,27 @@ input[type="date"].kmodal__input { color-scheme: dark; }
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
+/* what fills the window, with the free part as the background */
+.context-detail__meter {
+  display: flex;
+  flex: none;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--border);
+}
+/* newspaper columns: the sections have very different heights and a grid would leave holes */
+.context-detail__columns { columns: 260px; column-gap: 28px; }
+.context-detail__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+  break-inside: avoid;
+}
+.context-detail__group:last-child { margin-bottom: 0; }
 .context-detail__section {
-  margin-top: 6px;
+  margin-bottom: 2px;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -6963,10 +6982,11 @@ input[type="date"].kmodal__input { color-scheme: dark; }
   flex-shrink: 0;
 }
 .context-detail__dot--free { border: 1px solid var(--border); }
-.context-detail__name { flex: 1; }
+.context-detail__name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .context-detail__tokens, .context-detail__pct {
   font-family: var(--font-mono);
   text-align: right;
+  white-space: nowrap;
 }
 .context-detail__pct { min-width: 52px; color: var(--text-muted); }
 

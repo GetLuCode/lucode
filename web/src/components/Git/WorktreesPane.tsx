@@ -1,5 +1,6 @@
 import { IconAlertTriangle, IconArrowRight, IconFolder, IconGitCompare, IconGitMerge, IconListDetails, IconLock, IconMessage, IconTrash } from '@tabler/icons-react'
 import { ago, fullDate, shortSha } from './gitApi'
+import { Avatar } from './gitParts'
 import type { GitMergeRef, GitTaskLink, GitWorktree, GitWorktrees } from './gitTypes'
 import type { GitUI } from './GitView'
 
@@ -17,7 +18,7 @@ function MergeLine({ merge, onOpen }: { merge: GitMergeRef; onOpen: (sha: string
       <IconGitMerge size={13} />
       {merge.kind === 'squash' ? 'Squashed into ' : 'Merged into '}<b>{merge.into}</b>
       {merge.sha && <> at <button className="git-link git-mono" onClick={() => onOpen(merge.sha!)} title={merge.subject}>{shortSha(merge.sha)}</button></>}
-      {merge.author && <span className="git-dim"> by {merge.author}</span>}
+      {merge.author && <span className="git-dim git-byline"> by <Avatar name={merge.author} email={merge.email} size={15} />{merge.author}</span>}
       {merge.at ? <span className="git-dim" title={fullDate(merge.at)}> · {ago(merge.at)} ago</span> : null}
     </span>
   )
@@ -87,7 +88,7 @@ function WorktreeRow({ wt, main, ui, onCompare, onOpenCommit, onSession, onUse }
         <div className="gw-last">
           <button className="git-link git-mono" onClick={() => onOpenCommit(wt.head)}>{shortSha(wt.head)}</button>
           <span className="gw-last__subject">{wt.subject}</span>
-          {wt.author && <span className="git-dim">{wt.author}</span>}
+          {wt.author && <span className="git-dim git-byline"><Avatar name={wt.author} email={wt.email} size={15} />{wt.author}</span>}
           {wt.at ? <span className="git-dim" title={fullDate(wt.at)}>{ago(wt.at)}</span> : null}
         </div>
       )}

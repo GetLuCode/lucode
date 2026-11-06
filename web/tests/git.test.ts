@@ -3,8 +3,34 @@ import assert from 'node:assert/strict'
 import { layoutGraph } from '../src/components/Git/gitGraph.ts'
 import { languageOf, parseDiff, toSplitRows } from '../src/components/Git/gitDiff.ts'
 import { buildReference, codeOf, rangeOf, referenceLabel } from '../src/components/Git/gitRef.ts'
+import { githubAvatar, knownAvatar } from '../src/components/Git/gitAvatars.ts'
 
 const c = (sha: string, ...parents: string[]) => ({ sha, parents })
+
+test('an avatar is the picture of the account, or nothing for the generic image and on failure', async () => {
+  const realFetch = globalThis.fetch
+  const asked: string[] = []
+  globalThis.fetch = (async (url: string) => {
+    const email = decodeURIComponent(/email=([^&]*)/.exec(url)![1])
+    asked.push(email)
+    if (email === 'down@x.test') return new Response('', { status: 503 })
+    return new Response(email === 'real@x.test' ? 'picture' : 'generic')
+  }) as typeof fetch
+  try {
+    assert.equal(await githubAvatar(''), null)
+    assert.equal(asked.length, 0, 'no address, no request')
+    assert.equal(await githubAvatar('nobody@x.test'), null)
+    assert.equal(await githubAvatar('down@x.test'), null)
+    const url = await githubAvatar('Real@x.test')
+    assert.match(url ?? '', /^blob:/)
+    const before = asked.length
+    assert.equal(await githubAvatar(' real@X.test '), url, 'the same address, written differently')
+    assert.equal(asked.length, before, 'each address is asked once')
+    assert.equal(knownAvatar('real@x.test'), url)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
 
 test('a straight history stays on one lane', () => {
   const { rows, lanes } = layoutGraph([c('c', 'b'), c('b', 'a'), c('a')])

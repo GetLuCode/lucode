@@ -5,10 +5,22 @@ import { IconCheck, IconCopy } from '@tabler/icons-react'
 import { backdropClose } from '../../lib/backdropClose'
 import { copyText } from '../../lib/copyText'
 import { authorHue, initials, shortSha } from './gitApi'
+import { githubAvatar, knownAvatar } from './gitAvatars'
 import type { GitFileStat, GitRef } from './gitTypes'
 
-export function Avatar({ name, size = 18 }: { name: string; size?: number }) {
+// The author's GitHub picture when their address has one, their initials otherwise.
+export function Avatar({ name, email, size = 18 }: { name: string; email?: string; size?: number }) {
   const hue = authorHue(name)
+  const [src, setSrc] = useState(() => knownAvatar(email) ?? null)
+  useEffect(() => {
+    let cancelled = false
+    setSrc(knownAvatar(email) ?? null)
+    void githubAvatar(email).then(url => { if (!cancelled) setSrc(url) })
+    return () => { cancelled = true }
+  }, [email])
+  if (src) {
+    return <img className="git-avatar git-avatar--image" src={src} width={size} height={size} title={name} alt="" onError={() => setSrc(null)} />
+  }
   return (
     <span
       className="git-avatar"

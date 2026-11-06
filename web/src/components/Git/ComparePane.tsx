@@ -26,7 +26,7 @@ function RefSelect({ label, value, onChange, ui }: { label: string; value: strin
 function CompareCommit({ c, onOpen }: { c: GitCommit; onOpen: (sha: string) => void }) {
   return (
     <button className="gcmp-commit" onClick={() => onOpen(c.sha)} title="Open in History">
-      <Avatar name={c.author} size={18} />
+      <Avatar name={c.author} email={c.email} size={18} />
       <span className="gcmp-commit__text">
         <span className="gcmp-commit__subject">{c.refs.map(r => <RefChip key={r.name} r={r} />)}{c.subject}</span>
         <span className="gcmp-commit__meta">{c.author} · <span title={fullDate(c.at)}>{ago(c.at)}</span> · <span className="git-mono">{shortSha(c.sha)}</span></span>

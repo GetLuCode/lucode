@@ -398,6 +398,8 @@
   letter-spacing: 0;
   line-height: 1;
 }
+.git-avatar--image { object-fit: cover; }
+.git-byline { display: inline-flex; align-items: center; gap: 4px; }
 
 .git-sha {
   display: inline-flex;

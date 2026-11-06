@@ -176,8 +176,38 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
           <span>{contextUsage.model}</span>
           <span>{fmtTokens(totalTokens)} / {fmtTokens(maxTokens)} ({pctUsed.toFixed(1)}%)</span>
         </div>
+        <div className="context-detail__meter" aria-hidden>
+          {usedCategories.map(cat => (
+            <span
+              key={cat.name}
+              title={cat.name}
+              style={{ width: `${maxTokens > 0 ? (cat.tokens / maxTokens) * 100 : 0}%`, backgroundColor: COLOR_MAP[cat.color] ?? COLOR_MAP.primary }}
+            />
+          ))}
+        </div>
+        {/* as many columns as fit: three on a screen, one in a narrow place */}
+        <div className="context-detail__columns">
+        <section className="context-detail__group">
+          <div className="context-detail__section">Current context</div>
+          {usedCategories.map(cat => (
+            <div key={cat.name} className="context-detail__row">
+              <span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP[cat.color] ?? COLOR_MAP.primary }} />
+              <span className="context-detail__name">{cat.name}</span>
+              <span className="context-detail__tokens">{cat.tokens.toLocaleString()}</span>
+              <span className="context-detail__pct">{maxTokens > 0 ? ((cat.tokens / maxTokens) * 100).toFixed(2) : '0'}%</span>
+            </div>
+          ))}
+          {freeSpace && (
+            <div className="context-detail__row context-detail__row--muted">
+              <span className="context-detail__dot context-detail__dot--free" />
+              <span className="context-detail__name">Free space</span>
+              <span className="context-detail__tokens">{freeSpace.tokens.toLocaleString()}</span>
+              <span className="context-detail__pct">{maxTokens > 0 ? ((freeSpace.tokens / maxTokens) * 100).toFixed(1) : '0'}%</span>
+            </div>
+          )}
+        </section>
         {loaded.length > 0 && (
-          <>
+          <section className="context-detail__group">
             <div className="context-detail__section">Initial cost vs conversation</div>
             <div className="context-detail__row">
               <span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP.promptBorder }} />
@@ -191,7 +221,7 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
               <span className="context-detail__tokens">{messages.toLocaleString()}</span>
               <span className="context-detail__pct">{maxTokens > 0 ? ((messages / maxTokens) * 100).toFixed(2) : '0'}%</span>
             </div>
-          </>
+          </section>
         )}
         {firstTurn && (() => {
           const model = firstTurn.model || contextUsage.model
@@ -213,7 +243,7 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
             </div>
           )
           return (
-            <>
+            <section className="context-detail__group">
               <div
                 className="context-detail__section"
                 title={firstTurn.exact
@@ -227,28 +257,11 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
                 <span className="context-detail__name">Real cost / without cache</span>
                 <span className="context-detail__tokens">{formatCost(real)} / {formatCost(noCache)}</span>
               </div>
-            </>
+            </section>
           )
         })()}
-        <div className="context-detail__section">Current context</div>
-        {usedCategories.map(cat => (
-          <div key={cat.name} className="context-detail__row">
-            <span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP[cat.color] ?? COLOR_MAP.primary }} />
-            <span className="context-detail__name">{cat.name}</span>
-            <span className="context-detail__tokens">{cat.tokens.toLocaleString()}</span>
-            <span className="context-detail__pct">{maxTokens > 0 ? ((cat.tokens / maxTokens) * 100).toFixed(2) : '0'}%</span>
-          </div>
-        ))}
-        {freeSpace && (
-          <div className="context-detail__row context-detail__row--muted">
-            <span className="context-detail__dot context-detail__dot--free" />
-            <span className="context-detail__name">Free space</span>
-            <span className="context-detail__tokens">{freeSpace.tokens.toLocaleString()}</span>
-            <span className="context-detail__pct">{maxTokens > 0 ? ((freeSpace.tokens / maxTokens) * 100).toFixed(1) : '0'}%</span>
-          </div>
-        )}
         {tools.length > 0 && (
-          <>
+          <section className="context-detail__group">
             <div
               className="context-detail__section"
               title={'What each tool cost in this task: what the model wrote to ask for it, plus its result, written to the cache once and re-read by every later call.'}
@@ -269,10 +282,10 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
                 <span className="context-detail__name">+{tools.length - 8} more</span>
               </div>
             )}
-          </>
+          </section>
         )}
         {sessionUsage && (
-          <>
+          <section className="context-detail__group">
             <div className="context-detail__section">Session total (billed turns)</div>
             <div className="context-detail__row"><span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP.input }} /><span className="context-detail__name">Input</span><span className="context-detail__tokens">{sessionUsage.input_tokens.toLocaleString()}</span></div>
             <div className="context-detail__row"><span className="context-detail__dot" style={{ backgroundColor: COLOR_MAP.output }} /><span className="context-detail__name">Output</span><span className="context-detail__tokens">{sessionUsage.output_tokens.toLocaleString()}</span></div>
@@ -284,8 +297,9 @@ export function ContextDetailModal({ contextUsage, sessionUsage, placement = 'vi
                 {formatCost(estimateUsageCost(contextUsage.model, sessionUsage))}
               </span>
             </div>
-          </>
+          </section>
         )}
+        </div>
       </div>
     </div>
   )

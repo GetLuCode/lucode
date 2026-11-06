@@ -31,6 +31,11 @@ Cliente de git de un proyecto: cambios, historial con grafo, comparar ramas, sta
 - Mandar no gasta tokens: abre el panel, deja un chip junto a la caja y espera a la pregunta (`orchRefs` en el store). Al enviar, cada chip se convierte en un bloque delante del mensaje (`gitRef.ts`) con las lineas elegidas (200 como mucho), asi vale tambien en modo Gemini, que no tiene tools.
 - **Tool `git_diff`** (`gitDiffTool` en `gitproject.go`): solo lectura, se aprueba sola como los demas de `Names()`. El bloque trae sus argumentos exactos. Pasa por la misma comprobacion que la pestana, asi que solo lee directorios del proyecto, y funciona aunque el Supervisor este en otro runner que el repositorio. Se corta a 60 KB. Como la lista de tools la sirve el runner, un runner anterior no lo ofrece.
 
+## Avatares
+- El navegador pide la imagen a `avatars.githubusercontent.com/u/e?email=...` (`gitAvatars.ts`), un endpoint sin documentar. **Eso manda a GitHub el correo de cada autor que aparece y la IP de quien mira**; cada direccion se pide una vez por carga de pagina.
+- Una direccion sin cuenta recibe una imagen generica: se compara con la de una direccion inventada y entonces quedan las iniciales. Sin red, o si GitHub cambia el endpoint, tambien.
+- El runner manda los correos: uno anterior no los envia en stash y worktrees, y ahi salen iniciales hasta actualizarlo.
+
 ## Worktree, tarea y merge
 - **Tarea:** se busca por sesion (transcripcion, lo que reporto el proceso, fila de Review) y por la nota `Merged X into Y.` que deja un merge. Solo cuentan las sesiones que corrieron en ese runner.
 - **Merge de un worktree vivo:** el commit mas antiguo de la linea de primer padre de la rama principal que desciende de la punta de la rama. Si la punta esta en esa linea, no hay commit de merge (`contained`: fast-forward o rama sin commits propios). Se mira `main` y, si no, lo que tenga sacado el checkout principal, porque las tareas se fusionan ahi.

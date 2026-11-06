@@ -100,9 +100,9 @@ export const newOrchestratorSession = (pid: string) => req<Session>('POST', `/ap
 // History of the local Google AI Mode model: its conversations by url, and bringing one back to work on.
 export const listAIModeConversations = (pid: string) => req<AIModeConversation[]>('GET', `/api/projects/${pid}/aimode/conversations`)
 export const continueAIModeConversation = (id: string) => req<Session>('POST', `/api/aimode/conversations/${id}/continue`)
-// History of the orchestrator conversations (all projects unless `project`), to rename, move and find them.
-export const listOrchestratorChats = (q = '', project = '') =>
-  req<OrchestratorChat[]>('GET', `/api/orchestrator/chats?q=${encodeURIComponent(q)}&project=${encodeURIComponent(project)}`)
+// History of the Supervisor conversations of a project: the ones claude can pick up again.
+export const listSupervisorChats = (pid: string) =>
+  req<OrchestratorChat[]>('GET', `/api/orchestrator/chats?project=${encodeURIComponent(pid)}&mode=supervisor`)
 export const updateOrchestratorChat = (id: string, data: { name?: string; project_id?: string }) =>
   req<Session>('PATCH', `/api/orchestrator/chats/${id}`, data)
 export const openOrchestratorChat = (id: string) => req<Session>('POST', `/api/orchestrator/chats/${id}/open`)

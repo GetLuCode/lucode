@@ -93,7 +93,7 @@ const CommitRow = memo(function CommitRow({ c, row, width, selected, showFiles, 
             <span className="gl-subject">{c.subject}</span>
           </span>
           <span className="gl-meta">
-            <Avatar name={c.author} size={15} />
+            <Avatar name={c.author} email={c.email} size={15} />
             <span className="gl-author">{c.author}</span>
             <span className="gl-time" title={fullDate(c.at)}>{ago(c.at)}</span>
             <span className="gl-sha">{shortSha(c.sha)}</span>
@@ -192,10 +192,10 @@ function CommitDetail({ ui, sha, file, onFile, onSelect, onClose, resizer, narro
             {commit.body && <pre className="git-detail__body">{commit.body}</pre>}
             <dl className="git-facts">
               <dt>Author</dt>
-              <dd><Avatar name={commit.author} size={16} /> {commit.author} <span className="git-dim">{commit.email}</span></dd>
+              <dd><Avatar name={commit.author} email={commit.email} size={16} /> {commit.author} <span className="git-dim">{commit.email}</span></dd>
               <dt>Date</dt>
               <dd>{fullDate(commit.at)} <span className="git-dim">{ago(commit.at)} ago</span></dd>
-              {commit.committer !== commit.author && <><dt>Committer</dt><dd>{commit.committer}</dd></>}
+              {commit.committer !== commit.author && <><dt>Committer</dt><dd><Avatar name={commit.committer} email={commit.committer_email} size={16} /> {commit.committer}</dd></>}
               <dt>Commit</dt>
               <dd><Sha sha={commit.sha} full /></dd>
               {commit.parents.length > 0 && <>
