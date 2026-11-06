@@ -36,6 +36,20 @@ type fakeHost struct {
 	aiOutcome string
 	aiErr     error
 	aiHold    chan struct{} // when set, a call waits for it: an API that does not answer
+
+	pushes  []PushMessage
+	pushRes PushResult
+	pushErr error
+	// when set, a call waits for it: push services that do not answer
+	pushHold chan struct{}
+}
+
+func (f *fakeHost) SendPush(_ context.Context, m PushMessage) (PushResult, error) {
+	if f.pushHold != nil {
+		<-f.pushHold
+	}
+	f.pushes = append(f.pushes, m)
+	return f.pushRes, f.pushErr
 }
 
 func (f *fakeHost) CardScope(string) (map[string]any, error) { return f.card, nil }

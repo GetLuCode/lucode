@@ -50,8 +50,9 @@ const (
 
 	TypeNotifySupervisor = "action.notify_supervisor"
 	TypeToolDecision     = "action.tool_decision"
+	TypePushNotification = "action.push_notification"
 
-	PortNext     = "next"
+	PortNext      = "next"
 	PortTrue      = "true"
 	PortFalse     = "false"
 	PortAgain     = "again"
@@ -295,6 +296,17 @@ var nodeTypes = []NodeType{
 		Description: "Tells the agent the card's agent reports to. Does nothing if it reports to nobody.",
 		Ports:       []string{PortNext},
 		Fields:      []Field{{Name: "text", Label: "Message", Kind: FieldTemplate, Required: true}},
+	},
+	{
+		Type: TypePushNotification, Title: "Push notification", Category: CategoryAction,
+		Description: "Notifies every device that turned on \"Notifications on this device\" in this tab, even with lucode closed. Clicking it opens this run. Takes \"failed\" if no device could be reached. Reads as nodes.<id>.sent, .failed.",
+		Ports:       []string{PortNext, PortFailed},
+		Fields: []Field{
+			{Name: "body", Label: "Message", Kind: FieldTemplate, Required: true, Help: "For example: {{card.title}} is ready for review. Long messages are cut."},
+			{Name: "title", Label: "Title", Kind: FieldTemplate, Required: true, Default: "lucode"},
+		},
+		// sent again it replaces the first one on the device, because the tag is the step's
+		Repeatable: true,
 	},
 	{
 		Type: TypeRunAgent, Title: "Run agent", Category: CategoryAction,

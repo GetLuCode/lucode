@@ -13,6 +13,47 @@ self.addEventListener('activate', (event) => {
   )
 })
 
+// Una notificacion de un nodo Push notification. Se muestra siempre: el navegador castiga a
+// quien recibe un push sin ensenar nada. El tag hace que el mismo paso reenviado no se duplique.
+self.addEventListener('push', (event) => {
+  let data = {}
+  try {
+    data = event.data ? event.data.json() : {}
+  } catch {
+    // se muestra igualmente, con los textos por defecto
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'lucode', {
+      body: data.body || '',
+      icon: data.icon, // lo manda el hub: Parcel le pone un hash y aqui no se puede resolver
+      tag: data.tag,
+      data: { url: data.url || '/' },
+    }),
+  )
+})
+
+// Abre lo que dice la notificacion, reutilizando una ventana de la app si hay una.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const target = new URL(event.notification.data?.url || '/', self.location.origin)
+  const url = target.origin === self.location.origin ? target.href : self.location.origin + '/'
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (windows) => {
+      for (const w of windows) {
+        if (new URL(w.url).origin !== self.location.origin) continue
+        try {
+          await w.focus()
+          await w.navigate(url)
+          return
+        } catch {
+          // esta ventana no se deja (aun no la controla este worker): se abre otra
+        }
+      }
+      await self.clients.openWindow(url)
+    }),
+  )
+})
+
 self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET') return

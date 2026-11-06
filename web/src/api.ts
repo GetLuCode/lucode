@@ -535,3 +535,7 @@ export const decideFlowApproval = (seq: number, decision: 'approved' | 'rejected
 export const getFlowAISettings = () => req<{ configured: boolean; source: string }>('GET', '/api/flow-ai-settings')
 export const saveFlowAIKey = (apiKey: string) => req<{ configured: boolean; source: string }>('PUT', '/api/flow-ai-settings', { api_key: apiKey })
 export const clearFlowAIKey = () => req<{ configured: boolean; source: string }>('PUT', '/api/flow-ai-settings', { clear: true })
+export const getFlowPush = () => req<{ public_key: string }>('GET', '/api/flow-push')
+export const savePushSubscription = (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) => req<void>('PUT', '/api/flow-push/subscription', sub)
+export const removePushSubscription = (endpoint: string) => req<void>('DELETE', '/api/flow-push/subscription', { endpoint })
+export const testPushSubscription = (endpoint: string) => req<void>('POST', '/api/flow-push/test', { endpoint })

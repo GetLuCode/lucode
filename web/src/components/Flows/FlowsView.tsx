@@ -8,6 +8,7 @@ import { useIsMobile } from '../../hooks/useIsMobile'
 import * as api from '../../api'
 import type { Agent, Flow, FlowBlueprint, FlowGraph, FlowNodeField, FlowNodeType, FlowProblem, FlowRun, FlowStep, KanbanCard, KanbanList } from '../../types'
 import type { FlowCanvasHandle } from './FlowCanvas'
+import { PushDevice } from './PushDevice'
 import { editorMachine } from './editorMachine'
 import { STEP_COLORS, nodeStatuses, parseFlowGraph, unknownNodeTypes } from './flowGraph'
 import './Flows.css'
@@ -333,6 +334,7 @@ export function FlowsView() {
           {paused ? <IconPlayerPlay size={14} /> : <IconPlayerPause size={14} />}
           {paused ? 'All flows paused: resume' : 'Pause all flows'}
         </button>
+        <PushDevice />
         {editable && blueprints.some(b => !b.seeded) && (
           <div className="flows-blueprints">
             <div className="flows-palette__title">Start from a blueprint</div>
