@@ -20,6 +20,15 @@
         ],
         "createdAt": "2026-11-06T10:53:49.821Z",
         "reason": "Claude triage: only match in the file is the account usage meter fill, a determinate 6px bar in an overflow-hidden track; animating width is the literal meaning of the meter. Pre-existing, not part of the approval card work; user did not confirm"
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "tests/plugins.test.ts"
+        ],
+        "createdAt": "2026-11-07T10:05:25.868Z",
+        "reason": "Claude triage, not confirmed by the user: line 236 is an existing sanitizer test (commit 8753ad1) that feeds the HTML sanitizer the hostile string '<img onerror=x>' on purpose, to assert it is stripped. A test fixture, not UI."
       }
     ]
   }
