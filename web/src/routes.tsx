@@ -26,6 +26,7 @@ export function AppRoutes() {
         <Route path="/projects/:projectId/runners/:runnerId" element={<App />} />
         <Route path="/projects/:projectId/agent" element={<App />} />
         <Route path="/projects/:projectId/checkpoints" element={<App />} />
+        <Route path="/projects/:projectId/plugins" element={<App />} />
         <Route path="/projects/:projectId/plugins/:pluginId/:pageId" element={<App />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

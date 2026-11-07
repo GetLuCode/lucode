@@ -25,6 +25,7 @@ import { OrchestratorPanel } from './components/Orchestrator/OrchestratorPanel'
 import { OrchestratorOpenButton } from './components/Orchestrator/OrchestratorOpenButton'
 import { PluginHost } from './components/Plugins/PluginHost'
 import { PluginPage } from './components/Plugins/PluginPage'
+import { PluginsPage } from './components/Plugins/PluginsPage'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
@@ -112,7 +113,7 @@ export default function App() {
   useEffect(() => {
     const path = location.pathname
     if (path === '/') return // the start page
-    if (['/agents', '/agent', '/kanban', '/running', '/flows', '/git', '/runners', '/checkpoints', '/usage', '/plugins/'].some(p => path.includes(p))) return
+    if (['/agents', '/agent', '/kanban', '/running', '/flows', '/git', '/runners', '/checkpoints', '/usage', '/plugins'].some(p => path.includes(p))) return
     if (!activeProjectId) return
     if (path.includes('/sessions/')) {
       if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
@@ -128,6 +129,7 @@ export default function App() {
   const isHome = location.pathname === '/'
   // first: a plugin's page id could be any word, also one of the ones below
   const isPluginPage = /^\/projects\/[^/]+\/plugins\//.test(location.pathname)
+  const isPluginsList = /^\/projects\/[^/]+\/plugins\/?$/.test(location.pathname) // installed plugins and install
   const isAgentsRoute = !isPluginPage && location.pathname.includes('/agents')
   const isKanbanRoute = !isPluginPage && location.pathname.includes('/kanban')
   const isRunningRoute = !isPluginPage && location.pathname.includes('/running')
@@ -158,11 +160,11 @@ export default function App() {
           <div className="main__content">
             {/* a render error stays inside the page and clears when the route changes */}
             <ErrorBoundary key={location.pathname}>
-              {isHome ? <HomeView /> : isUsage ? <UsagePage /> : isPluginPage ? <PluginPage /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isFlowsRoute ? <FlowsView /> : isGitRoute ? <GitView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
+              {isHome ? <HomeView /> : isUsage ? <UsagePage /> : isPluginsList ? <PluginsPage /> : isPluginPage ? <PluginPage /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isFlowsRoute ? <FlowsView /> : isGitRoute ? <GitView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
             </ErrorBoundary>
           </div>
           {/* same button on every tab except the chat; the Agent tab already shows the panel */}
-          {!isHome && !isUsage && !isAgentTab && (isAgentsRoute || isKanbanRoute || isRunningRoute || isFlowsRoute || isGitRoute || isPluginPage) && <OrchestratorOpenButton />}
+          {!isHome && !isUsage && !isAgentTab && (isAgentsRoute || isKanbanRoute || isRunningRoute || isFlowsRoute || isGitRoute || isPluginPage || isPluginsList) && <OrchestratorOpenButton />}
         </main>
         {!isHome && !isUsage && <OrchestratorPanel full={isAgentTab} />}
         <aside
