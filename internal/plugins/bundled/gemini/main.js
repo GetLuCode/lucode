@@ -475,10 +475,6 @@ function askNode(input) {
   }
 }
 
-function renderMain() {
-  return { type: "conversation", conversationId: CONVERSATION_SOURCE, model: "aimode" };
-}
-
 // A chat that is gone (deleted, or replaced by a new Supervisor conversation) closes its tab. The
 // handler's 10 seconds cannot wait out a running turn, so that turn closes it.
 function sessionClosed(e) {
@@ -498,6 +494,5 @@ function sessionClosed(e) {
 module.exports = {
   models: { aimode: { turn } },
   nodes: { ask: askNode },
-  rpc: { renderMain },
   events: { sessionClosed },
 };

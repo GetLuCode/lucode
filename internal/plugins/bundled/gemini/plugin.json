@@ -40,9 +40,6 @@
         "showUrl": true
       }
     ],
-    "pages": [
-      { "id": "main", "label": "Gemini", "icon": "assets/gemini.svg", "render": "renderMain" }
-    ],
     "settings": [
       {
         "key": "primer",

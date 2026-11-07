@@ -513,11 +513,6 @@ test('a flow node failure has the same words', () => {
   failsWith(() => loadPlugin(w).nodes.ask({ config: { question: 'x' } }), 'Google AI Mode: AI Mode did not show a message box (it may not be available for this account or region)')
 })
 
-test('the page is its conversation', () => {
-  const page = loadPlugin(makeWorld()).rpc.renderMain({})
-  assert.deepEqual(JSON.parse(JSON.stringify(page)), { type: 'conversation', conversationId: 'aimode', model: 'aimode' })
-})
-
 test('the data files are the ones the Go package has, unchanged', () => {
   const go = join(root, '../../../aimode')
   if (!existsSync(go)) return // it goes away once this plugin takes over
