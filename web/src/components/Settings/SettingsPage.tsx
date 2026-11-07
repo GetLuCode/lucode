@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ComponentType } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { IconKey, IconMicrophone, IconPuzzle, IconServer2, IconX } from '@tabler/icons-react'
+import { IconKey, IconMicrophone, IconPlug, IconPuzzle, IconServer2, IconX } from '@tabler/icons-react'
 import type { Icon } from '@tabler/icons-react'
 import { ToolsTab } from './ToolsTab'
 import { SpacesTab } from './SpacesTab'
 import { PermissionsTab } from './PermissionsTab'
-import { PluginsTab } from '../Plugins/PluginsTab'
+import { PluginsTab, PluginSettingsPage, pluginSettingsPath } from '../Plugins/PluginsTab'
+import { usePlugins } from '../../store/plugins'
 import './SettingsTabs.css'
 import './SettingsPage.css'
 
@@ -15,7 +16,8 @@ interface Section {
   label: string
   description: string
   icon: Icon
-  Component: ComponentType
+  Component?: ComponentType
+  pluginId?: string // a plugin's own page: rendered by PluginSettingsPage
 }
 
 interface Group {
@@ -46,27 +48,50 @@ const GROUPS: Group[] = [
   },
 ]
 
-const ALL = GROUPS.flatMap(g => g.sections)
-const DEFAULT_SECTION = ALL[0].id
+const STATIC = GROUPS.flatMap(g => g.sections)
+const DEFAULT_SECTION = STATIC[0].id
 
 // /settings/:section — an account-wide page (no project), like Usage. Left menu with groups,
 // content on the right; Esc or the X goes back to where the user came from.
 export function SettingsPage() {
-  const { section } = useParams<{ section?: string }>()
+  const { section, pluginId } = useParams<{ section?: string; pluginId?: string }>()
   const navigate = useNavigate()
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from
   const [query, setQuery] = useState('')
+  const installed = usePlugins(s => s.installed)
+  const loadPlugins = usePlugins(s => s.load)
+  useEffect(() => { void loadPlugins() }, [loadPlugins])
 
-  const current = ALL.find(s => s.id === section) ?? ALL[0]
+  // Every installed plugin gets its own settings page under Extensions.
+  const pluginSections = useMemo<Section[]>(() => installed.map(p => ({
+    id: `plugin/${p.manifest.id}`,
+    label: p.manifest.name,
+    description: p.manifest.description || 'Settings, runners, logs and details of this plugin.',
+    icon: IconPlug,
+    pluginId: p.manifest.id,
+  })), [installed])
+
+  const allGroups = useMemo<Group[]>(() => GROUPS.map(g => (
+    g.label === 'Extensions' ? { ...g, sections: [...g.sections, ...pluginSections] } : g
+  )), [pluginSections])
+  const ALL = useMemo(() => allGroups.flatMap(g => g.sections), [allGroups])
+
+  const wanted = pluginId ? `plugin/${pluginId}` : section
+  const current: Section = ALL.find(s => s.id === wanted)
+    ?? (pluginId
+      ? { id: wanted!, label: 'Plugin', description: 'Settings, runners, logs and details of this plugin.', icon: IconPlug, pluginId }
+      : STATIC[0])
+  // A plugin page is valid while the list is still loading; an unknown static section is not.
+  const unknownStatic = !!section && !pluginId && !ALL.some(s => s.id === section)
 
   const close = () => navigate(from && !from.startsWith('/settings') ? from : '/')
 
   useEffect(() => {
-    if (section && !ALL.some(s => s.id === section)) {
+    if (unknownStatic) {
       navigate(`/settings/${DEFAULT_SECTION}`, { replace: true, state: location.state })
     }
-  }, [section, navigate, location.state])
+  }, [unknownStatic, navigate, location.state])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -83,11 +108,11 @@ export function SettingsPage() {
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return GROUPS
-    return GROUPS
+    if (!q) return allGroups
+    return allGroups
       .map(g => ({ ...g, sections: g.sections.filter(s => `${s.label} ${s.description}`.toLowerCase().includes(q)) }))
       .filter(g => g.sections.length > 0)
-  }, [query])
+  }, [query, allGroups])
 
   const Body = current.Component
 
@@ -114,7 +139,7 @@ export function SettingsPage() {
                     key={s.id}
                     className={`settings-page__item${active ? ' settings-page__item--active' : ''}`}
                     aria-current={active ? 'page' : undefined}
-                    onClick={() => navigate(`/settings/${s.id}`, { state: location.state })}
+                    onClick={() => navigate(s.pluginId ? pluginSettingsPath(s.pluginId) : `/settings/${s.id}`, { state: location.state })}
                   >
                     <SIcon size={16} />
                     <span>{s.label}</span>
@@ -140,7 +165,9 @@ export function SettingsPage() {
         </header>
         <div className="settings-page__scroll">
           <div className="settings-page__content">
-            <Body key={current.id} />
+            {current.pluginId
+              ? <PluginSettingsPage key={current.id} pluginId={current.pluginId} />
+              : Body && <Body key={current.id} />}
           </div>
         </div>
       </div>

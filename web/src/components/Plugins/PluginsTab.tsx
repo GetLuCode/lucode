@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
-import { IconAlertTriangle, IconCheck, IconChevronDown, IconCopy, IconExternalLink, IconLoader2, IconLock, IconPlug, IconPuzzle, IconRefresh, IconServer2, IconTerminal2, IconTrash, IconUpload } from '@tabler/icons-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { IconAlertTriangle, IconCheck, IconCopy, IconExternalLink, IconLoader2, IconLock, IconPlug, IconPuzzle, IconRefresh, IconServer2, IconSettings, IconTerminal2, IconTrash, IconUpload } from '@tabler/icons-react'
 import * as api from '../../api'
 import { httpStatusOf, pluginErrorMessage, pluginTargets, runnerPairing, runnerPolicyProblem, safeHttpUrl, targetsLabel } from '../../lib/plugins'
 import { copyText } from '../../lib/copyText'
@@ -28,7 +28,6 @@ export function PluginsTab() {
   const [dragging, setDragging] = useState(false)
   const [inspecting, setInspecting] = useState(false)
   const [error, setError] = useState('')
-  const [open, setOpen] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const dragDepth = useRef(0)
 
@@ -106,8 +105,6 @@ export function PluginsTab() {
               key={p.manifest.id}
               plugin={p}
               readOnly={readOnly}
-              expanded={open === p.manifest.id}
-              onToggle={() => setOpen(v => (v === p.manifest.id ? '' : p.manifest.id))}
               onRefused={() => setRefused(true)}
             />
           ))}
@@ -172,10 +169,84 @@ function CatalogRow({ entry, readOnly, onReview, onFail }: { entry: PluginCatalo
 
 type Pane = 'settings' | 'runners' | 'logs' | 'about'
 
-function PluginRow({ plugin, readOnly, expanded, onToggle, onRefused }: { plugin: InstalledPlugin; readOnly: boolean; expanded: boolean; onToggle: () => void; onRefused: () => void }) {
+function PluginRow({ plugin, readOnly, onRefused }: { plugin: InstalledPlugin; readOnly: boolean; onRefused: () => void }) {
   const { manifest, enabled, status, error } = plugin
+  const navigate = useNavigate()
+  const location = useLocation()
   const [toggling, setToggling] = useState(false)
   const [rowError, setRowError] = useState('')
+  const targets = pluginTargets(plugin)
+
+  const setEnabled = async (on: boolean) => {
+    setToggling(true)
+    setRowError('')
+    try {
+      await api.setPluginEnabled(manifest.id, on)
+      await usePlugins.getState().load()
+    } catch (e) {
+      if (httpStatusOf(e) === 403) onRefused()
+      else setRowError(pluginErrorMessage(e))
+    } finally {
+      setToggling(false)
+    }
+  }
+
+  const failed = status === 'error' || !!error
+  const state = failed ? 'Error' : enabled ? 'On' : 'Off'
+
+  return (
+    <div className={`plugin-row${enabled ? '' : ' plugin-row--off'}`}>
+      <div className="plugin-row__main">
+        <span className="plugin-tile"><PluginIcon pluginId={manifest.id} path={manifest.icon} size={22} fallback={<IconPuzzle size={20} stroke={1.5} aria-hidden />} /></span>
+        <div className="plugin-row__text">
+          <span className="plugin-row__name">
+            {manifest.name}
+            <span className="plugin-row__version">{manifest.version}</span>
+            <span className={`plugin-status plugin-status--${failed ? 'error' : enabled ? 'on' : 'off'}`}>{state}</span>
+            <TargetBadge targets={targets} />
+          </span>
+          {manifest.description && <span className="plugin-row__desc">{manifest.description}</span>}
+        </div>
+        <PluginSwitch checked={enabled} busy={toggling} disabled={readOnly} label={`${manifest.name} enabled`} onChange={setEnabled} />
+        <button
+          className="plugin-icon-btn"
+          onClick={() => navigate(pluginSettingsPath(manifest.id), { state: location.state })}
+          aria-label={`${manifest.name} settings`}
+          title="Settings"
+        >
+          <IconSettings size={16} aria-hidden />
+        </button>
+      </div>
+      {error && <p className="pv-error plugin-row__error" role="alert"><IconAlertTriangle size={14} aria-hidden /><span>{error}</span></p>}
+      {rowError && <p className="pv-error plugin-row__error" role="alert"><IconAlertTriangle size={14} aria-hidden /><span>{rowError}</span></p>}
+    </div>
+  )
+}
+
+export const pluginSettingsPath = (id: string) => `/settings/plugin/${encodeURIComponent(id)}`
+
+// /settings/plugin/:pluginId — the plugin's own settings page: its fields, runners, logs and about.
+export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
+  const installed = usePlugins(s => s.installed)
+  const loaded = usePlugins(s => s.loaded)
+  const load = usePlugins(s => s.load)
+  const isAdmin = useAuthStore(s => s.isAdmin)
+  const [refused, setRefused] = useState(false)
+  const readOnly = !isAdmin || refused
+  useEffect(() => { void load() }, [load])
+
+  const plugin = installed.find(p => p.manifest.id === pluginId)
+  if (!plugin) {
+    return loaded
+      ? <p className="plugins-tab__none">This plugin is not installed.</p>
+      : <div className="plugin-skeleton__block plugin-skeleton__block--row" aria-label="Loading" />
+  }
+  return <PluginDetail key={pluginId} plugin={plugin} readOnly={readOnly} onRefused={() => setRefused(true)} />
+}
+
+function PluginDetail({ plugin, readOnly, onRefused }: { plugin: InstalledPlugin; readOnly: boolean; onRefused: () => void }) {
+  const { manifest } = plugin
+  const navigate = useNavigate()
   const targets = pluginTargets(plugin)
   const settings = manifest.contributes?.settings ?? []
   const [pane, setPane] = useState<Pane>(settings.length > 0 ? 'settings' : 'about')
@@ -195,24 +266,8 @@ function PluginRow({ plugin, readOnly, expanded, onToggle, onRefused }: { plugin
         else setRunnersError(pluginErrorMessage(e))
       })
   }, [hasRunnerTarget, manifest.id])
-  useEffect(() => { if (expanded) loadRunners() }, [expanded, loadRunners])
+  useEffect(() => { loadRunners() }, [loadRunners])
 
-  const setEnabled = async (on: boolean) => {
-    setToggling(true)
-    setRowError('')
-    try {
-      await api.setPluginEnabled(manifest.id, on)
-      await usePlugins.getState().load()
-    } catch (e) {
-      if (httpStatusOf(e) === 403) onRefused()
-      else setRowError(pluginErrorMessage(e))
-    } finally {
-      setToggling(false)
-    }
-  }
-
-  const failed = status === 'error' || !!error
-  const state = failed ? 'Error' : enabled ? 'On' : 'Off'
   const panes: { id: Pane; label: string }[] = [
     ...(settings.length > 0 ? [{ id: 'settings' as const, label: 'Settings' }] : []),
     ...(hasRunnerTarget && !runnersAbsent ? [{ id: 'runners' as const, label: 'Runners' }] : []),
@@ -223,53 +278,20 @@ function PluginRow({ plugin, readOnly, expanded, onToggle, onRefused }: { plugin
   const blocked = (runners ?? []).some(r => runnerPolicyProblem(plugin, r))
 
   return (
-    <div className={`plugin-row${expanded ? ' plugin-row--open' : ''}${enabled ? '' : ' plugin-row--off'}`}>
-      <div className="plugin-row__main">
-        <span className="plugin-tile"><PluginIcon pluginId={manifest.id} path={manifest.icon} size={22} fallback={<IconPuzzle size={20} stroke={1.5} aria-hidden />} /></span>
-        <button className="plugin-row__text plugin-row__opener" onClick={onToggle} aria-expanded={expanded}>
-          <span className="plugin-row__name">
-            {manifest.name}
-            <span className="plugin-row__version">{manifest.version}</span>
-            <span className={`plugin-status plugin-status--${failed ? 'error' : enabled ? 'on' : 'off'}`}>{state}</span>
-            <TargetBadge targets={targets} />
-          </span>
-          {manifest.description && <span className="plugin-row__desc">{manifest.description}</span>}
-        </button>
-        <PluginSwitch checked={enabled} busy={toggling} disabled={readOnly} label={`${manifest.name} enabled`} onChange={setEnabled} />
-        <button className="plugin-icon-btn" onClick={onToggle} aria-label={expanded ? 'Hide details' : 'Show details'} aria-expanded={expanded}>
-          <IconChevronDown size={15} className={`plugin-chevron${expanded ? ' plugin-chevron--open' : ''}`} aria-hidden />
-        </button>
+    <div className="plugin-row__detail-inner">
+      <div className="plugin-panes" role="tablist">
+        {panes.map(p => (
+          <button key={p.id} role="tab" aria-selected={shown === p.id} className={`plugin-pane${shown === p.id ? ' plugin-pane--on' : ''}`} onClick={() => setPane(p.id)}>
+            {p.label}
+            {p.id === 'runners' && blocked && <IconAlertTriangle size={12} className="plugin-pane__warn" aria-label="A runner blocks this plugin" />}
+          </button>
+        ))}
       </div>
-      {error && <p className="pv-error plugin-row__error" role="alert"><IconAlertTriangle size={14} aria-hidden /><span>{error}</span></p>}
-      {rowError && <p className="pv-error plugin-row__error" role="alert"><IconAlertTriangle size={14} aria-hidden /><span>{rowError}</span></p>}
-
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <motion.div
-            className="plugin-row__detail"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <div className="plugin-row__detail-inner">
-              <div className="plugin-panes" role="tablist">
-                {panes.map(p => (
-                  <button key={p.id} role="tab" aria-selected={shown === p.id} className={`plugin-pane${shown === p.id ? ' plugin-pane--on' : ''}`} onClick={() => setPane(p.id)}>
-                    {p.label}
-                    {p.id === 'runners' && blocked && <IconAlertTriangle size={12} className="plugin-pane__warn" aria-label="A runner blocks this plugin" />}
-                  </button>
-                ))}
-              </div>
-              {shown === 'settings' && <PluginSettingsForm pluginId={manifest.id} defs={settings} readOnly={readOnly} onRefused={onRefused} />}
-              {shown === 'runners' && <PluginRunners plugin={plugin} runners={runners} error={runnersError} readOnly={readOnly} onRefused={onRefused} onRefresh={loadRunners} />}
-              {shown === 'logs' && <PluginLogs pluginId={manifest.id} />}
-              {shown === 'about' && <PluginAbout plugin={plugin} readOnly={readOnly} onUninstall={() => setUninstalling(true)} />}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {uninstalling && <UninstallDialog plugin={plugin} onClose={() => setUninstalling(false)} onRefused={onRefused} />}
+      {shown === 'settings' && <PluginSettingsForm pluginId={manifest.id} defs={settings} readOnly={readOnly} onRefused={onRefused} />}
+      {shown === 'runners' && <PluginRunners plugin={plugin} runners={runners} error={runnersError} readOnly={readOnly} onRefused={onRefused} onRefresh={loadRunners} />}
+      {shown === 'logs' && <PluginLogs pluginId={manifest.id} />}
+      {shown === 'about' && <PluginAbout plugin={plugin} readOnly={readOnly} onUninstall={() => setUninstalling(true)} />}
+      {uninstalling && <UninstallDialog plugin={plugin} onClose={() => setUninstalling(false)} onRefused={onRefused} onDone={() => navigate('/settings/plugins', { replace: true })} />}
     </div>
   )
 }
@@ -628,7 +650,7 @@ function PluginAbout({ plugin, readOnly, onUninstall }: { plugin: InstalledPlugi
   )
 }
 
-function UninstallDialog({ plugin, onClose, onRefused }: { plugin: InstalledPlugin; onClose: () => void; onRefused: () => void }) {
+function UninstallDialog({ plugin, onClose, onRefused, onDone }: { plugin: InstalledPlugin; onClose: () => void; onRefused: () => void; onDone: () => void }) {
   const [keepData, setKeepData] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -639,7 +661,7 @@ function UninstallDialog({ plugin, onClose, onRefused }: { plugin: InstalledPlug
       await api.uninstallPlugin(plugin.manifest.id, keepData)
       await usePlugins.getState().load()
       usePlugins.getState().toast(`${plugin.manifest.name} uninstalled`)
-      onClose()
+      onDone()
     } catch (e) {
       if (httpStatusOf(e) === 403) { onRefused(); onClose(); return }
       setError(pluginErrorMessage(e))

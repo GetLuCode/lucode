@@ -43,7 +43,6 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const base = `/projects/${project.id}`
   // a plugin's page id could be any word, also one of the ones below
   const onPlugin = pathname.includes(`${base}/plugins/`)
-  const onPluginsList = pathname === `${base}/plugins` || pathname === `${base}/plugins/`
   const onAgents = !onPlugin && pathname.includes('/agents')
   const onAgentTab = !onPlugin && /\/agent\/?$/.test(pathname)
   const onKanban = !onPlugin && pathname.includes('/kanban')
@@ -183,10 +182,6 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
             </button>
           )
         })}
-        <button
-          className={`project-tab${onPluginsList ? ' project-tab--active' : ''}`}
-          onClick={() => navigate(`${base}/plugins`)}
-        >Plugins</button>
       </nav>
 
       {isMobile ? (mobileSlot && createPortal(actions, mobileSlot)) : actions}
