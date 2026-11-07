@@ -65,6 +65,7 @@ type Handler struct {
 	flows *flows.Engine // nil until StartFlows (only the hub runs it)
 
 	plugins plugins.HubHost // nil until StartPlugins (only the hub runs it)
+	relay   plugins.RelayClient // the connection to the webhook relay; nil: this hub has none
 
 	pushIcon string // path of the icon of a notification; empty: the browser's own
 }
@@ -89,6 +90,10 @@ func (h *Handler) SetAuthURL(url string) {
 // SetHubOnly makes this instance refuse to run claude itself: it is not offered as a
 // runner and a turn without a runner fails with a clear message.
 func (h *Handler) SetHubOnly(v bool) { h.hubOnly = v }
+
+// SetRelay gives the plugins the hub's connection to the webhook relay. cmd/lucode makes it, so that
+// lucode-runner, which links this package, does not link the websocket client. Call it before StartPlugins.
+func (h *Handler) SetRelay(r plugins.RelayClient) { h.relay = r }
 
 func (h *Handler) SetAIAPIURL(url string) {
 	h.aiAPIURL = url

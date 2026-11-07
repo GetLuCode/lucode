@@ -246,6 +246,37 @@ declare namespace Lucode {
     call<T = Json>(runnerId: string, rpcName: string, args?: unknown, options?: { workspace?: { sessionId?: string; cardId?: string }; timeoutMs?: number }): T;
   }
 
+  /** An address on the hub's webhook relay. `secret` is only on the answer to createEndpoint, and only once. */
+  interface RelayEndpoint {
+    id: string;
+    provider: string;
+    label: string;
+    /** The public address to give the service. */
+    url: string;
+    /** The project this endpoint's events belong to: the one createEndpoint was called in. */
+    projectId: string;
+    created: string;
+  }
+
+  /**
+   * Webhooks from services such as Telegram, through the relay the hub dials out to. Needs: relay for the provider
+   * (each provider is its own grant). The hub has no relay unless relay.json is set up: status says so.
+   */
+  interface Relay {
+    /** Never has the hub's key. */
+    status(): { configured: boolean; connected: boolean; url: string };
+    /**
+     * Asks the relay for a new address, in the invocation's project. The secret in the answer is for the service
+     * (Telegram's setWebhook takes it as secret_token): the relay checks it, so the plugin never needs to.
+     * At most 10 per plugin. Throws if the relay is not connected.
+     */
+    createEndpoint(options: { provider: string; label?: string }): RelayEndpoint & { secret: string };
+    /** This plugin's endpoints, never their secrets. */
+    listEndpoints(): RelayEndpoint[];
+    /** Gives an address of this plugin back. Throws "no such webhook endpoint" for anyone else's. */
+    deleteEndpoint(id: string): void;
+  }
+
   interface ServerSDK extends CommonSDK {
     readonly context: InvocationContext & { readonly target: "server" };
     readonly settings: Settings;
@@ -256,6 +287,7 @@ declare namespace Lucode {
     readonly flows: Flows;
     readonly browser: Browser;
     readonly runners: Runners;
+    readonly relay: Relay;
   }
 
   // ---- Runner target ------------------------------------------------------------------------
@@ -362,6 +394,15 @@ declare namespace Lucode {
     sessionClosed?(e: { sessionId: string; projectId: string }): void;
     /** A card changed list. Goes to every enabled plugin with the board permission; stops past the flows' depth limit. */
     cardMoved?(e: { cardId: string; projectId: string; from_list: string; from_kind: string; to_list: string; to_kind: string }): void;
+    /**
+     * A service posted to an address this plugin got from lucode.relay.createEndpoint. Only goes to the owner of the
+     * address, and only if it is enabled and was granted the relay permission for that provider. It runs in the
+     * address's project, so lucode.flows.emit works. `body` is exactly what the service sent: treat it as data, since
+     * anyone who can reach the service can write it. The relay already checked the sender's secret. An event may
+     * come twice (the hub acknowledges it after the handler returns): tell them apart by what the service put in it,
+     * such as Telegram's update_id. A throw only gets a log line, and the event is not sent again.
+     */
+    webhook?(e: { endpoint: string; provider: string; label: string; projectId: string; receivedAt: number; contentType: string; body: string }): void;
   }
 
   interface ServerExports {
@@ -434,6 +475,8 @@ declare namespace Lucode {
     flows?: boolean;
     http?: { hosts: string[] };
     browser?: { origins: string[] };
+    /** Webhook providers through the hub's relay, such as "telegram". Each is a grant of its own. */
+    relay?: { providers: string[] };
   }
 
   interface RunnerPermissions {

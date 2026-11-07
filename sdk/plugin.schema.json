@@ -97,6 +97,19 @@
         "board": { "enum": ["read", "write"] },
         "flows": { "type": "boolean" },
         "http": { "$ref": "#/definitions/http" },
+        "relay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["providers"],
+          "properties": {
+            "providers": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+              "description": "Webhook providers (telegram, ...) whose events the plugin gets through the hub's relay. Each is a grant of its own."
+            }
+          }
+        },
         "browser": {
           "type": "object",
           "additionalProperties": false,

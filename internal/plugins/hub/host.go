@@ -96,6 +96,9 @@ func New(deps plugins.HubDeps) (plugins.HubHost, error) {
 		loaded: map[string]*loadedPlugin{}, staged: map[string]*stagedPackage{},
 	}
 	h.remote = newRemote(h)
+	if deps.Relay != nil {
+		deps.Relay.SetHandler(h.deliverWebhook)
+	}
 	return h, nil
 }
 
@@ -565,9 +568,14 @@ func (h *Host) Uninstall(id string, keepData bool) error {
 			return err
 		}
 	}
+	var endpoints []dbpkg.RelayEndpointRow
+	if !keepData {
+		endpoints, _ = dbpkg.ListRelayEndpoints(h.deps.DB, id)
+	}
 	if err := dbpkg.DeletePlugin(h.deps.DB, id, keepData); err != nil {
 		return err
 	}
+	h.forgetEndpoints(endpoints)
 	h.mu.Lock()
 	delete(h.loaded, id)
 	h.mu.Unlock()

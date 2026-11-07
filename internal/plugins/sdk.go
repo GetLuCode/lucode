@@ -45,6 +45,7 @@ var targetModules = map[string]map[string][]string{
 		"browser": {"launch", "close", "status", "tabs", "newTab", "switchTab", "closeTab", "info",
 			"navigate", "find", "click", "type", "press", "evalPage", "text"},
 		"runners": {"list", "call"},
+		"relay":   {"status", "createEndpoint", "listEndpoints", "deleteEndpoint"},
 	},
 	TargetRunner: {
 		"fs":     {"read", "write", "list", "exists", "stat"},

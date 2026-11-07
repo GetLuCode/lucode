@@ -447,6 +447,8 @@ func TestOtherTargetThrowsClearly(t *testing.T) {
 		{TargetRunner, "sessions", "get", "only works in the server target"},
 		{TargetRunner, "flows", "emit", "only works in the server target"},
 		{TargetRunner, "runners", "list", "only works in the server target"},
+		{TargetRunner, "relay", "status", "only works in the server target"},
+		{TargetRunner, "relay", "createEndpoint", "only works in the server target"},
 	}
 	for _, c := range cases {
 		t.Run(c.target+"/"+c.mod, func(t *testing.T) {

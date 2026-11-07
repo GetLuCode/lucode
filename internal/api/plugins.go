@@ -33,7 +33,7 @@ const pluginExecutor = "plugin"
 // the plugins' nodes from its first tick.
 func (h *Handler) StartPlugins(ctx context.Context, dataDir string, nc *nats.Conn, factory plugins.HubFactory) error {
 	// only this one installs by itself; the rest of the catalog waits for an admin
-	return h.startPluginHost(ctx, plugins.HubDeps{DataDir: dataDir, NATS: nc, AutoInstall: []string{plugins.GeminiID}}, factory)
+	return h.startPluginHost(ctx, plugins.HubDeps{DataDir: dataDir, NATS: nc, Relay: h.relay, AutoInstall: []string{plugins.GeminiID}}, factory)
 }
 
 func (h *Handler) startPluginHost(ctx context.Context, deps plugins.HubDeps, factory plugins.HubFactory) error {

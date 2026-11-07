@@ -59,6 +59,10 @@ Things worth reading before you tick:
 - **Browser** permissions name each origin. The plugin drives its own Edge and can only read or act on pages of
   those origins. Code it runs in such a page can still send what it reads anywhere, so this limits what the plugin
   reads, not where a page sends data. Treat it as handing the plugin your session on those sites.
+- **Webhooks from X through the relay** means the plugin can get public addresses on your webhook relay for that
+  service, and receives what the service posts to them, such as the messages people send a bot. Each service is its
+  own line. It is data from outside, written by anyone who can reach the service: a plugin that acts on it should
+  decide for itself whose messages count (see "Webhook relay").
 - **Run the command X** means that program, on your runners, in the workspace. A plugin that can start
   `npm` or `go` can run whatever those can run, so treat it as running code on that machine.
 
@@ -125,6 +129,34 @@ change.
 
 A flow node that runs on a runner uses the card's runner. If that runner is offline, not paired, or its policy refuses,
 the node takes its `failed` output with a message saying why.
+
+## Webhook relay
+
+lucode runs on your machine, and services such as Telegram can only post to a public address. A **webhook relay**
+(the `lucode-webhook-relay` server, run somewhere with a name and TLS) takes those posts and passes them to your hub over
+a websocket **your hub opens**: nothing ever connects to your machine. Plugins that need webhooks (the `relay` permission)
+use it through `lucode.relay`; without one, they are told so.
+
+Set it up once, as the operator of the relay and the hub:
+
+1. On the relay's server, make a tenant for this hub: `sudo relay-admin POST /admin/tenants '{"name":"my hub"}'`. The answer has
+   a key, `lrk_...`, shown only once. (This is the relay's admin, with its own token: not a lucode admin.)
+2. On the hub, put it in `relay.json` in the lucode data folder (`~/.lucode/relay.json`):
+
+   ```json
+   { "url": "wss://relay.example.com/ws", "tenant": "id from step 1", "name": "my hub", "key": "lrk_..." }
+   ```
+
+   The key never goes to a browser or a plugin. `url` must be `wss://` (`ws://` only for this machine). Restart the hub: it
+   reads the file at start.
+3. The hub log says `[relay] connected as ...`. A wrong key shows as `the relay refused this hub`, and the hub tries again
+   every minute. With no file the hub simply has no relay.
+
+While the hub is off the relay keeps what arrives (up to 1000 events for 24 hours) and hands it over, in order, when the hub
+is back. The relay lives in memory: restarting it forgets what was waiting, not the tenants or addresses.
+
+An address belongs to the plugin that asked for it and to the project it was asked in; uninstalling the plugin gives it back.
+Only that plugin gets its events. The relay checks the sender (Telegram's `secret_token`) before anything reaches the hub.
 
 ## Using what a plugin adds
 

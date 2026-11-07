@@ -34,6 +34,7 @@ func (h *Host) serverModules(l *loadedPlugin, p plugins.Permissions) []plugins.M
 		h.flowsModule(l, p),
 		h.browserModule(l, p),
 		h.runnersModule(l),
+		h.relayModule(l, p),
 	}
 }
 

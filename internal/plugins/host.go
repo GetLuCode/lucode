@@ -70,12 +70,51 @@ type BrowserDriver interface {
 	Text(ref string, max int) (string, error)
 }
 
+// RelayEvent is one webhook the relay hands to this hub: what a service posted to an address the
+// hub asked the relay for.
+type RelayEvent struct {
+	Seq         uint64
+	Endpoint    string
+	Provider    string
+	ReceivedAt  int64 // milliseconds since the epoch
+	ContentType string
+	Body        string
+}
+
+// RelayEndpoint is an address on the relay. Secret is only there on the answer to a create: the
+// relay shows it once, and the plugin gives it to the service (Telegram's secret_token).
+type RelayEndpoint struct {
+	ID       string
+	Provider string
+	Label    string
+	URL      string
+	Secret   string
+}
+
+// RelayStatus says whether the hub has a relay and is talking to it. It never carries the key.
+type RelayStatus struct {
+	Configured bool
+	Connected  bool
+	URL        string
+}
+
+// RelayClient is the hub's connection to the webhook relay (internal/relayclient). Tests use a fake.
+type RelayClient interface {
+	Status() RelayStatus
+	CreateEndpoint(ctx context.Context, provider, label string) (RelayEndpoint, error)
+	DeleteEndpoint(ctx context.Context, id string) error
+	// SetHandler says who gets the events. The client acknowledges an event to the relay once the
+	// handler has returned, so the relay keeps what the hub has not handled yet.
+	SetHandler(func(ctx context.Context, ev RelayEvent))
+}
+
 // HubDeps is what the hub gives the host.
 type HubDeps struct {
 	DB          *sql.DB
 	DataDir     string
 	Services    Services
 	Peers       func() []Peer
+	Relay       RelayClient                         // nil: no webhooks
 	NATS        *nats.Conn                          // nil: no runners
 	Browser     func(pluginID string) BrowserDriver // nil: the real Edge
 	HTTP        HTTPOptions

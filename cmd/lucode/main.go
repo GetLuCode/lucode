@@ -23,6 +23,7 @@ import (
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
 	pluginhub "claude-orchestrator/internal/plugins/hub"
+	"claude-orchestrator/internal/relayclient"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
 	versionpkg "claude-orchestrator/internal/version"
@@ -143,9 +144,18 @@ func main() {
 		handler.FlowTurnEnded(sessID)
 	}
 	manager.OnTurnFailed = handler.HandleTurnFailed // unresumable sessions etc.
+	// The webhook relay: the hub dials it (relay.json in the data folder holds its address and this
+	// hub's key). Without the file the hub simply has no relay, and plugins are told so if they ask.
+	relayCfg, relayOK, relayErr := relayclient.LoadConfig(filepath.Join(*dataDir, "relay.json"))
+	if relayErr != nil {
+		log.Printf("[relay] not used: %v", relayErr)
+	}
+	relayClient := relayclient.New(relayCfg, relayOK)
+	handler.SetRelay(relayClient)
 	if err := handler.StartPlugins(context.Background(), *dataDir, nc, pluginhub.New); err != nil {
 		log.Printf("[plugins] start: %v", err)
 	}
+	go relayClient.Run(context.Background()) // after the host has said who gets the events
 	handler.StartFlows(context.Background())
 	handler.SetAuthURL(*authURL)
 	handler.SetAIAPIURL(*aiAPIURL)

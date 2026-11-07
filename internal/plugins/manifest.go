@@ -36,6 +36,7 @@ var (
 	localIDRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	rpcNameRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 	portRe     = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	providerRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	hostRe     = regexp.MustCompile(`^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$`)
 	accentRe   = regexp.MustCompile(`^#[0-9a-fA-F]{3,8}$`)
 	commandRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
@@ -82,6 +83,7 @@ type Permissions struct {
 	Board         string       `json:"board,omitempty"`
 	Flows         bool         `json:"flows,omitempty"`
 	Browser       *BrowserPerm `json:"browser,omitempty"`
+	Relay         *RelayPerm   `json:"relay,omitempty"`
 	// runner
 	FS   string    `json:"fs,omitempty"`
 	Git  string    `json:"git,omitempty"`
@@ -93,6 +95,12 @@ type Permissions struct {
 // HTTPPerm lists the hosts lucode.http may reach.
 type HTTPPerm struct {
 	Hosts []string `json:"hosts"`
+}
+
+// RelayPerm lists the kinds of sender (telegram, ...) whose webhooks the plugin may get through the
+// hub's webhook relay. Each has its own grant, so an upgrade that adds one needs a new one.
+type RelayPerm struct {
+	Providers []string `json:"providers"`
 }
 
 // BrowserPerm lists the origins lucode.browser may visit.
@@ -339,9 +347,19 @@ func checkPermissions(target string, p Permissions) error {
 				}
 			}
 		}
+		if p.Relay != nil {
+			if len(p.Relay.Providers) == 0 {
+				return errors.New("plugin.json: permission relay lists no providers")
+			}
+			for _, name := range p.Relay.Providers {
+				if !providerRe.MatchString(name) {
+					return fmt.Errorf("plugin.json: %q is not a provider name (a-z, 0-9, - and _)", name)
+				}
+			}
+		}
 	} else {
-		if p.Storage || p.Conversations || p.Sessions != "" || p.Board != "" || p.Flows || p.Browser != nil {
-			return errors.New("plugin.json: storage, conversations, sessions, board, flows and browser are server permissions")
+		if p.Storage || p.Conversations || p.Sessions != "" || p.Board != "" || p.Flows || p.Browser != nil || p.Relay != nil {
+			return errors.New("plugin.json: storage, conversations, sessions, board, flows, browser and relay are server permissions")
 		}
 		if p.FS != "" && p.FS != "read" && p.FS != "write" {
 			return errors.New(`plugin.json: permission fs must be "read" or "write"`)
@@ -653,6 +671,11 @@ func PermissionsOf(m Manifest) []PermissionInfo {
 				add(TargetServer, "http:"+h, "Network from the hub: "+h, "medium", "Sends requests to this host over https from the hub.")
 			}
 		}
+		if p.Relay != nil {
+			for _, name := range p.Relay.Providers {
+				add(TargetServer, "relay:"+name, "Webhooks from "+name+" through the relay", "medium", "Gets public addresses on the hub's webhook relay for "+name+" and receives what that service posts to them, such as the messages people send. It also picks the project those events belong to.")
+			}
+		}
 		if p.Browser != nil {
 			for _, o := range p.Browser.Origins {
 				add(TargetServer, "browser:"+o, "Browser on "+o, "high", "Drives its own Edge on the hub and reads and runs code in pages of this origin. Code running in a page can still send what it reads anywhere: this limits what the plugin itself reads, not where a page sends data.")
@@ -719,6 +742,17 @@ func Effective(target string, p Permissions, granted []string) Permissions {
 		}
 		if hosts != nil {
 			out.HTTP = &HTTPPerm{Hosts: hosts}
+		}
+	}
+	if p.Relay != nil {
+		var names []string
+		for _, name := range p.Relay.Providers {
+			if has("relay:" + name) {
+				names = append(names, name)
+			}
+		}
+		if names != nil {
+			out.Relay = &RelayPerm{Providers: names}
 		}
 	}
 	if p.Browser != nil {

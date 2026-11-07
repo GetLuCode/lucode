@@ -191,6 +191,9 @@ func TestManifestRules(t *testing.T) {
 		{"bare star host", base(`"main":"m.js","permissions":{"http":{"hosts":["*"]}}`), "host name", ParseOptions{}},
 		{"ip as a host", base(`"main":"m.js","permissions":{"http":{"hosts":["127.0.0.1"]}}`), "host name", ParseOptions{}},
 		{"http origin", base(`"main":"m.js","permissions":{"browser":{"origins":["http://a.example"]}}`), "https origin", ParseOptions{}},
+		{"relay with no providers", base(`"main":"m.js","permissions":{"relay":{"providers":[]}}`), "lists no providers", ParseOptions{}},
+		{"relay with a bad provider", base(`"main":"m.js","permissions":{"relay":{"providers":["Tele gram"]}}`), "provider name", ParseOptions{}},
+		{"relay on the runner", base(`"targets":{"runner":{"main":"r.js","permissions":{"relay":{"providers":["telegram"]}}}}`), "relay are server permissions", ParseOptions{}},
 		{"claude model id", base(`"main":"m.js","contributes":{"models":[{"id":"claude-opus-5-5","label":"x"}]}`), "reserved", ParseOptions{}},
 		{"sonnet model id", base(`"main":"m.js","contributes":{"models":[{"id":"sonnet","label":"x"}]}`), "reserved", ParseOptions{}},
 		{"model id claiming another plugin", base(`"main":"m.js","contributes":{"models":[{"id":"plugin:other.x/y","label":"x"}]}`), "may only use", ParseOptions{}},
@@ -219,6 +222,35 @@ func TestManifestRules(t *testing.T) {
 	}
 	if m.Targets.Server == nil || m.Targets.Server.Main != "m.js" || !m.Targets.Server.Permissions.Storage {
 		t.Fatalf("the old form means the server target: %+v", m.Targets)
+	}
+}
+
+// Each provider is a line of the review and a grant of its own: an upgrade that adds one asks again.
+func TestRelayPermissionPerProvider(t *testing.T) {
+	m, err := ParseManifest([]byte(`{"id":"acme.x","name":"H","version":"1.0.0","sdk":1,"targets":{
+		"server":{"main":"s.js","permissions":{"relay":{"providers":["telegram","github"]}}}}}`), ParseOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]PermissionInfo{}
+	for _, p := range PermissionsOf(m) {
+		keys[p.Key] = p
+	}
+	for _, name := range []string{"telegram", "github"} {
+		p, ok := keys["server.relay:"+name]
+		if !ok || p.Risk != "medium" || p.Target != TargetServer || !strings.Contains(p.Label, name) {
+			t.Fatalf("review line for %s: %+v", name, p)
+		}
+	}
+	perms := m.Targets.Server.Permissions
+	if got := Effective(TargetServer, perms, []string{"server.relay:telegram"}); got.Relay == nil || len(got.Relay.Providers) != 1 || got.Relay.Providers[0] != "telegram" {
+		t.Fatalf("only the granted provider: %+v", got.Relay)
+	}
+	if got := Effective(TargetServer, perms, []string{"server.storage"}); got.Relay != nil {
+		t.Fatalf("no grant, no relay: %+v", got.Relay)
+	}
+	if got := Effective(TargetServer, perms, []string{"server.relay:telegram", "server.relay:github"}); got.Relay == nil || len(got.Relay.Providers) != 2 {
+		t.Fatalf("both: %+v", got.Relay)
 	}
 }
 

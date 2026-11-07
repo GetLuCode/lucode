@@ -80,13 +80,14 @@ plugin asks for goes unseen. That includes `$schema`: point your editor at the s
 | `board: "write"` | server | also `server.board:write` | medium | writes of `lucode.board` |
 | `flows: true` | server | `server.flows` | medium | `lucode.flows.emit`, and contributing `flowNodes` and `blueprints` |
 | `browser: {origins: [...]}` | server | `server.browser:<origin>` | high | `lucode.browser`, each origin https |
+| `relay: {providers: [...]}` | server | `server.relay:<provider>` | medium | `lucode.relay`, and the `webhook` event, per provider (`telegram`, ...) |
 | `http: {hosts: [...]}` | both | `<target>.http:<host>` | medium | `lucode.http`, per target |
 | `fs: "read"` | runner | `runner.fs:read` | medium | reads of `lucode.fs` |
 | `fs: "write"` | runner | also `runner.fs:write` | high | `lucode.fs.write` |
 | `git: "read"` | runner | `runner.git:read` | medium | `lucode.git` |
 | `exec: {commands: [...]}` | runner | `runner.exec:<command>` | high | `lucode.exec`, base names only |
 
-Hosts, origins and commands each have their own key, so an upgrade that adds one needs a new grant. A host is a
+Hosts, origins, commands and relay providers each have their own key, so an upgrade that adds one needs a new grant. A host is a
 name, `*.example.org` matches names under it and never `example.org` itself, and addresses, ports and a bare `*`
 are refused. **Ask for the least that works**: every line is one more thing an admin has to accept.
 
@@ -158,6 +159,7 @@ The runner entry exports only `nodes` and `rpc`.
   | `sessionDeleted` | A chat of the project was deleted. Goes to every enabled plugin, with a conversation in it or not. | `{sessionId, projectId}` |
   | `sessionClosed` | A chat this plugin has a conversation in is over: it was deleted, or a new Supervisor conversation replaced it. A replaced chat still exists and can come back. Only goes to plugins with a conversation in it. | `{sessionId, projectId}` |
   | `cardMoved` | A card changed list. Goes to every enabled plugin with the `board` permission; stops past the flows' depth limit. | `{cardId, projectId, from_list, from_kind, to_list, to_kind}` |
+  | `webhook` | A service posted to an address this plugin got from `lucode.relay.createEndpoint`. Only the owner of the address gets it, if it is enabled and has the `relay` permission for that provider. Runs in the address's project. See "Webhooks". | `{endpoint, provider, label, projectId, receivedAt, contentType, body}` |
 
   Deleting a chat fires both `sessionDeleted` and `sessionClosed`, with no order between them.
 
@@ -217,6 +219,10 @@ at most. `Host`, `Cookie`, `Content-Length` and similar headers are dropped. Hea
 | `lucode.browser.*` | `browser` | `launch({headless})`, `close()`, `status()`, `tabs()`, `newTab(url)`, `switchTab(id)`, `closeTab(id)`, `info()`, `navigate(url)`, `find({role,name,exact,limit,selector})`, `click(ref)`, `type(ref,text,{submit,clear})`, `press(combo)`, `evalPage(js)`, `text(ref,max)` |
 | `lucode.runners.list()` | | Runners the hub sees: `{id, hostname, policy, version}`. |
 | `lucode.runners.call(runnerId, rpcName, args, {workspace, timeoutMs})` | | Your runner code's rpc. `workspace` is `{sessionId}` or `{cardId}`, never a folder. |
+| `lucode.relay.status()` | `relay` | `{configured, connected, url}`. Never the hub's key. |
+| `lucode.relay.createEndpoint({provider, label})` | `relay` for that provider | `{id, url, secret, provider, label, projectId, created}`. The secret is only in this answer. At most 10 per plugin. Throws if the relay is not connected. |
+| `lucode.relay.listEndpoints()` | `relay` | This plugin's endpoints, without secrets. |
+| `lucode.relay.deleteEndpoint(id)` | `relay` | Gives an address back. Another plugin's is "no such webhook endpoint". |
 
 The board is always the invocation's project, and every write goes through the same rules as anyone else's and is
 recorded with your plugin as its cause. `lucode.browser` is one Edge per plugin with its own profile and a port the host
@@ -253,6 +259,50 @@ The runner refuses it altogether unless started with `--plugin-policy=full`.
 
 **Settings never reach a runner by themselves.** If runner code needs a value, your server code passes it as an argument,
 on purpose.
+
+## Webhooks
+
+lucode runs on a laptop, and services such as Telegram can only post to a public address. The hub keeps a connection
+**it opened itself** to a webhook relay (a small server with a public name, see `docs/plugins.md`), and the relay hands
+each webhook down it. A plugin never listens on anything.
+
+1. The plugin asks for an address in the project it is called in, usually from a page action:
+   `const ep = lucode.relay.createEndpoint({provider: "telegram", label: "my bot"})`.
+2. It gives the service `ep.url` and `ep.secret`. For Telegram that is `setWebhook` with `url` and `secret_token`, done
+   with `lucode.http.fetch` (so `api.telegram.org` is also in its `http` permission). The relay checks the secret on every
+   request, so the plugin never receives a webhook from anyone else.
+3. What the service posts comes back as the plugin's `events.webhook`, in that project:
+
+```js
+module.exports = {
+  events: {
+    webhook(e) {
+      const update = JSON.parse(e.body);                      // exactly what the service sent
+      lucode.storage.set("last", update);
+      lucode.flows.emit("message", { text: update.message.text });   // a flow with Plugin event can react
+    },
+  },
+};
+```
+
+**This is how a webhook starts a flow**: `lucode.flows.emit` fires `trigger.plugin_event` (plugin and event name), as
+for any event. It needs the `flows` permission too.
+
+Things to know:
+
+- **What arrives is data**, not instructions. Anyone who can reach the service can write the text, so treat it like any
+  other outside input, and decide who a bot talks to in your own code (the Telegram plugin only reacts to the chats its
+  settings allow).
+- **An event may arrive twice.** The hub acknowledges it to the relay once the handler returns, and one whose
+  acknowledgement was lost comes again on the next connection. Tell them apart by what the service put in them (Telegram's
+  `update_id`). A handler that throws only gets a log line: the event is acknowledged anyway, since it would only throw again.
+- **Events wait while the hub is away** (the relay keeps up to 1000 for 24 hours), and arrive in order when it
+  reconnects. A plugin that is off, or has no `webhook` handler, drops them.
+- **Only the owner of an address gets its events**, and only while it holds the `relay` permission for that provider.
+  Uninstalling a plugin gives its addresses back to the relay.
+- **No relay, no webhooks.** `lucode.relay.status()` says `configured: false` when the hub has none, and `createEndpoint`
+  throws. A relay is something an operator sets up once for the hub, not something a plugin can bring.
+- The handler has the usual 10 seconds, and the next webhook waits for it: keep it short.
 
 ## View trees
 

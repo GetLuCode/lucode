@@ -81,6 +81,19 @@ CREATE TABLE IF NOT EXISTS plugin_runner_pairings (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+-- an address on the webhook relay that a plugin asked for, and the project its events belong to.
+-- The relay's secret for it is never kept here: it is shown once, to the plugin.
+CREATE TABLE IF NOT EXISTS plugin_relay_endpoints (
+    endpoint_id TEXT PRIMARY KEY,
+    plugin_id   TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    project_id  TEXT NOT NULL,
+    label       TEXT NOT NULL DEFAULT '',
+    url         TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_plugin_relay_plugin ON plugin_relay_endpoints(plugin_id);
+
 -- a bundled plugin that was installed once: removed, it stays removed
 CREATE TABLE IF NOT EXISTS plugin_seeds (
     plugin_id  TEXT PRIMARY KEY,
@@ -197,6 +210,7 @@ func DeletePlugin(db *sql.DB, id string, keepData bool) error {
 			`DELETE FROM plugin_storage WHERE plugin_id=?`,
 			`DELETE FROM plugin_settings WHERE plugin_id=?`,
 			`DELETE FROM plugin_conversations WHERE plugin_id=?`,
+			`DELETE FROM plugin_relay_endpoints WHERE plugin_id=?`,
 		} {
 			if _, err := tx.Exec(q, id); err != nil {
 				return err
