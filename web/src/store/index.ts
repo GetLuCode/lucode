@@ -1085,6 +1085,10 @@ export const useStore = create<AppState>((set, get) => ({
         void usePlugins.getState().load()
         break
 
+      case 'plugin_webhook':
+        usePlugins.getState().noteWebhook(event.pluginId)
+        break
+
       case 'peers_changed':
         set(s => ({ peersVersion: s.peersVersion + 1 }))
         void get().loadInstances()

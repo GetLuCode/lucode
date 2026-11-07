@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import * as api from '../api'
-import { emptyPluginUI, mergeContributions, pluginErrorMessage } from '../lib/plugins'
+import { bumpWebhookTick, emptyPluginUI, mergeContributions, pluginErrorMessage, webhookToastDue } from '../lib/plugins'
 import { classifyRpcResult, type ViewNode, type ViewTone } from '../lib/pluginView'
 import type { InstalledPlugin, PluginCatalogEntry, PluginUI } from '../types'
 
@@ -13,9 +13,13 @@ interface PluginsState {
   available: boolean // the hub has the plugin routes; an older one simply has no contributions
   loaded: boolean // the first answer came, so a missing plugin really is missing
   version: number // bumped on every load, so lists and images fetch again
+  // per plugin, bumped when a webhook reaches it: its open page reads itself again
+  webhookTick: Record<string, number>
   toasts: PluginToast[]
   result: { pluginId: string; title: string; tree: ViewNode } | null // what a chat or card action answered
   load: () => Promise<void>
+  // A webhook reached a plugin (the hub sent plugin_webhook over the websocket).
+  noteWebhook: (pluginId: string) => void
   toast: (text: string, tone?: ViewTone, pluginId?: string) => void
   dismissToast: (id: number) => void
   closeResult: () => void
@@ -26,6 +30,8 @@ interface PluginsState {
 let loadSeq = 0
 let toastSeq = 0
 
+const lastWebhookToast: Record<string, number> = {}
+
 export const usePlugins = create<PluginsState>((set, get) => ({
   ui: emptyPluginUI(),
   installed: [],
@@ -33,8 +39,18 @@ export const usePlugins = create<PluginsState>((set, get) => ({
   available: false,
   loaded: false,
   version: 0,
+  webhookTick: {},
   toasts: [],
   result: null,
+
+  noteWebhook: pluginId => {
+    set(s => ({ webhookTick: bumpWebhookTick(s.webhookTick, pluginId) }))
+    const now = Date.now()
+    if (!webhookToastDue(lastWebhookToast[pluginId], now)) return
+    lastWebhookToast[pluginId] = now
+    // no name in the text: the toast is framed with the plugin's name (PluginHost) because it carries pluginId
+    get().toast('a webhook arrived', 'default', pluginId)
+  },
 
   load: async () => {
     const seq = ++loadSeq

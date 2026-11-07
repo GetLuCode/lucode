@@ -175,6 +175,19 @@ func (h *Host) deliverWebhook(_ context.Context, ev plugins.RelayEvent) {
 		"contentType": ev.ContentType,
 		"body":        ev.Body,
 	}, 0)
+	// The hub tells every open browser that a webhook arrived, over the websocket it already has,
+	// so a page of the plugin shows it at once. The body stays out of it: what anyone writes to a bot
+	// is not pushed raw to every browser, and the plugin decides how its page shows it.
+	if h.deps.Services != nil {
+		h.deps.Services.Broadcast("", map[string]any{
+			"type":       "plugin_webhook",
+			"pluginId":   r.PluginID,
+			"provider":   r.Provider,
+			"endpoint":   ev.Endpoint,
+			"projectId":  r.ProjectID,
+			"receivedAt": ev.ReceivedAt,
+		})
+	}
 }
 
 // forgetEndpoints gives a removed plugin's addresses back to the relay. It runs away from the caller:

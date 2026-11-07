@@ -198,6 +198,79 @@ func TestAPluginGetsAnAddressAndItsWebhooks(t *testing.T) {
 	}
 }
 
+// The browser hears of a webhook over the websocket the moment the plugin has handled it, without the
+// body: that is what makes a plugin's page show a message as it arrives.
+func TestAWebhookIsAnnouncedToTheBrowsers(t *testing.T) {
+	r, fake := relayRig(t)
+	r.install(hookFiles("acme.hook"))
+	allowHook(r, "acme.hook", "connect")
+	var mu sync.Mutex
+	var heard []map[string]any
+	r.h.bus.OnBroadcast = func(data []byte) {
+		var m map[string]any
+		if json.Unmarshal(data, &m) == nil && m["type"] == "plugin_webhook" {
+			mu.Lock()
+			heard = append(heard, m)
+			mu.Unlock()
+		}
+	}
+	_, raw := hookRPC(r, "acme.hook", "connect", nil)
+	var ep struct{ ID string }
+	_ = json.Unmarshal([]byte(raw), &ep)
+
+	ev := telegramUpdate("a secret message")
+	ev.Endpoint = ep.ID
+	fake.deliver(ev)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(heard) != 1 {
+		t.Fatalf("the browsers should hear of it once: %v", heard)
+	}
+	got := heard[0]
+	if got["pluginId"] != "acme.hook" || got["provider"] != "telegram" || got["endpoint"] != ep.ID || got["projectId"] != r.pid || got["receivedAt"].(float64) != 1700000000000 {
+		t.Fatalf("what the browsers heard: %v", got)
+	}
+	if _, has := got["body"]; has {
+		t.Fatal("the body must not go to every browser")
+	}
+	if b, _ := json.Marshal(got); strings.Contains(string(b), "a secret message") {
+		t.Fatal("what was written must not go to every browser")
+	}
+}
+
+// A webhook nobody owns, or for a plugin that is off, tells the browsers nothing.
+func TestADroppedWebhookIsNotAnnounced(t *testing.T) {
+	r, fake := relayRig(t)
+	r.install(hookFiles("acme.hook"))
+	allowHook(r, "acme.hook", "connect")
+	var mu sync.Mutex
+	n := 0
+	r.h.bus.OnBroadcast = func(data []byte) {
+		var m map[string]any
+		if json.Unmarshal(data, &m) == nil && m["type"] == "plugin_webhook" {
+			mu.Lock()
+			n++
+			mu.Unlock()
+		}
+	}
+	unknown := telegramUpdate("x")
+	unknown.Endpoint = "nobody-owns-this"
+	fake.deliver(unknown)
+	_, raw := hookRPC(r, "acme.hook", "connect", nil)
+	var ep struct{ ID string }
+	_ = json.Unmarshal([]byte(raw), &ep)
+	r.ok("admin", "PUT", "/api/plugins/acme.hook/enabled", map[string]any{"enabled": false}, nil)
+	off := telegramUpdate("x")
+	off.Endpoint = ep.ID
+	fake.deliver(off)
+	mu.Lock()
+	defer mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d announcements for webhooks that went nowhere", n)
+	}
+}
+
 func TestRelayPermissionIsPerProvider(t *testing.T) {
 	r, _ := relayRig(t)
 	r.install(hookFiles("acme.hook"))

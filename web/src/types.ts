@@ -195,6 +195,8 @@ export type WSEvent =
   | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
   | { type: 'peers_changed' }
   | { type: 'plugins_changed' }
+  // a webhook reached a plugin: no body, the plugin's page asks the plugin to show it
+  | { type: 'plugin_webhook'; pluginId: string; provider: string; endpoint: string; projectId: string; receivedAt: number }
 
 // Structured assistant message content
 export interface AssistantMessage {

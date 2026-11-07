@@ -297,3 +297,18 @@ export function unknownNodesMessage(types: string[]): string {
   }
   return `This flow uses nodes the running hub does not know (${types.join(', ')}), so they are not drawn and nothing here is saved. Restart the hub, then reload this page.`
 }
+
+// ---- webhooks ----------------------------------------------------------------------------------
+
+// A burst of webhooks is one notice: a bot that gets ten messages in a second makes one toast, and the
+// plugin's page (which shows each of them) is what keeps count.
+export const WEBHOOK_TOAST_EVERY_MS = 4000
+
+/** Whether a notice for a webhook is due, given when the last one was shown (undefined: never). */
+export const webhookToastDue = (last: number | undefined, now: number): boolean => last === undefined || now - last >= WEBHOOK_TOAST_EVERY_MS
+
+/** The per-plugin counters of webhooks, with one more for this plugin. A page that follows its counter reads itself again. */
+export const bumpWebhookTick = (ticks: Record<string, number>, pluginId: string): Record<string, number> => ({
+  ...ticks,
+  [pluginId]: (ticks[pluginId] ?? 0) + 1,
+})

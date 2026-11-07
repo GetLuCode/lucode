@@ -35,6 +35,9 @@ import {
   sortByRisk,
   targetsLabel,
   unknownNodesMessage,
+  WEBHOOK_TOAST_EVERY_MS,
+  webhookToastDue,
+  bumpWebhookTick,
 } from '../src/lib/plugins.ts'
 import { classifyRpcResult, formArgs, formDefaults, sanitizeAction, sanitizeViewTree, type ViewNode } from '../src/lib/pluginView.ts'
 import { pluginMarkdownToHtml } from '../src/lib/safeMarkdown.ts'
@@ -391,4 +394,23 @@ test('pairing shows only where the hub knows about it', () => {
   assert.equal(runnerPairing({}), 'unknown', 'an older hub')
   assert.equal(runnerPairing({ paired: true }), 'paired')
   assert.equal(runnerPairing({ paired: false }), 'unpaired')
+})
+
+// ---- a webhook reaches the open page --------------------------------------------------------------
+
+test('each webhook moves the counter of its plugin only, which is what makes its page read itself again', () => {
+  let ticks: Record<string, number> = {}
+  ticks = bumpWebhookTick(ticks, 'marcoorta.telegram')
+  ticks = bumpWebhookTick(ticks, 'marcoorta.telegram')
+  ticks = bumpWebhookTick(ticks, 'acme.other')
+  assert.deepEqual(ticks, { 'marcoorta.telegram': 2, 'acme.other': 1 })
+  const before = ticks
+  bumpWebhookTick(before, 'marcoorta.telegram')
+  assert.deepEqual(before, { 'marcoorta.telegram': 2, 'acme.other': 1 }, 'the old state is not changed in place')
+})
+
+test('a burst of webhooks is one notice, and the next burst another', () => {
+  assert.equal(webhookToastDue(undefined, 1000), true, 'the first one shows')
+  assert.equal(webhookToastDue(1000, 1000 + WEBHOOK_TOAST_EVERY_MS - 1), false, 'one a moment later does not')
+  assert.equal(webhookToastDue(1000, 1000 + WEBHOOK_TOAST_EVERY_MS), true, 'one after the pause does')
 })

@@ -20,6 +20,8 @@ export function PluginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [attempt, setAttempt] = useState(0)
+  // a webhook reached this plugin: read the page again, in place (what is already drawn stays until the answer)
+  const webhookTick = usePlugins(s => s.webhookTick[pluginId] ?? 0)
   const render = page?.render
 
   useEffect(() => {
@@ -37,7 +39,7 @@ export function PluginPage() {
       .catch(e => { if (!cancelled) setError(pluginErrorMessage(e)) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [pluginId, render, projectId, attempt])
+  }, [pluginId, render, projectId, attempt, webhookTick])
 
   const onTree = useCallback((t: ViewNode) => setTree(t), [])
 
