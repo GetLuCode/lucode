@@ -135,11 +135,18 @@ func Validate(g Graph) []Problem {
 		seen[n.ID] = true
 		def, ok := NodeTypeOf(n.Type)
 		if !ok {
+			if p, isPlugin := pluginProblem(n); isPlugin {
+				problems = append(problems, p)
+				continue
+			}
 			add(n.ID, "unknown node type %q", n.Type)
 			continue
 		}
 		if def.Category == CategoryTrigger {
 			triggers++
+		}
+		if p, bad := pluginEventProblem(n); bad {
+			problems = append(problems, p)
 		}
 		for _, f := range def.Fields {
 			val := n.str(f.Name)

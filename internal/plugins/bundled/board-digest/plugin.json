@@ -1,0 +1,54 @@
+{
+  "id": "lucode.board-digest",
+  "name": "Board digest",
+  "version": "1.0.0",
+  "sdk": 1,
+  "description": "The state of the board at a glance: what is open, what finished, what has gone quiet. A page for the project and a flow node that sums it up.",
+  "author": "lucode",
+  "icon": "assets/icon.svg",
+  "targets": {
+    "server": {
+      "main": "main.js",
+      "permissions": {
+        "board": "read",
+        "storage": true,
+        "flows": true
+      }
+    }
+  },
+  "contributes": {
+    "pages": [
+      { "id": "main", "label": "Digest", "icon": "assets/icon.svg", "render": "renderMain" }
+    ],
+    "settings": [
+      {
+        "key": "stale_days",
+        "label": "A task is stale after (days)",
+        "type": "number",
+        "default": 7,
+        "help": "Open tasks outside the backlog with no change for this long. The flow node can set its own."
+      }
+    ],
+    "flowNodes": [
+      {
+        "id": "digest",
+        "label": "Board digest",
+        "description": "Sums up the board. Reads as nodes.<id>.summary, .open, .in_progress, .finished_7d, .stale, .stale_tasks, .columns.",
+        "icon": "assets/icon.svg",
+        "fields": [
+          { "name": "stale_days", "label": "Stale after (days)", "kind": "number", "min": 1, "help": "Empty: the plugin's setting." }
+        ],
+        "ports": ["next"],
+        "timeoutSeconds": 60
+      }
+    ],
+    "blueprints": [
+      {
+        "key": "daily_digest",
+        "name": "Daily board digest",
+        "description": "Once a day, sums up the board and sends it to every device with notifications on.",
+        "file": "blueprints/daily_digest.json"
+      }
+    ]
+  }
+}

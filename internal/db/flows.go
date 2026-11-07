@@ -160,7 +160,8 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 	}
 	// flows.draft_agent — the agent that changed the draft since it was last published
 	db.Exec(`ALTER TABLE flows ADD COLUMN draft_agent TEXT NOT NULL DEFAULT ''`)
-	return nil
+	migrateFlowPluginColumns(db)
+	return migratePlugins(db)
 }
 
 type dbExec interface {
@@ -323,17 +324,25 @@ type Flow struct {
 	// DraftAgent is who to review before publishing: the agent that last changed the draft.
 	// A person's later edit does not clear it, because their save holds the agent's change too.
 	DraftAgent string `json:"draft_agent"`
+	// A plugin's blueprint in this project: Locked flows can run and be switched on and off,
+	// and a copy (ForkedFrom names the original) is what gets edited.
+	PluginID        string `json:"plugin_id"`
+	PluginBlueprint string `json:"plugin_blueprint"`
+	Locked          bool   `json:"locked"`
+	ForkedFrom      string `json:"forked_from"`
 }
 
-const flowCols = `id, project_id, name, draft, published_version, enabled, created_at, updated_at, draft_agent`
+const flowCols = `id, project_id, name, draft, published_version, enabled, created_at, updated_at, draft_agent, plugin_id, plugin_blueprint, locked, forked_from`
 
 func scanFlow(row interface{ Scan(...any) error }) (Flow, error) {
 	var f Flow
 	var draft string
-	var enabled int
-	err := row.Scan(&f.ID, &f.ProjectID, &f.Name, &draft, &f.PublishedVersion, &enabled, &f.CreatedAt, &f.UpdatedAt, &f.DraftAgent)
+	var enabled, locked int
+	err := row.Scan(&f.ID, &f.ProjectID, &f.Name, &draft, &f.PublishedVersion, &enabled, &f.CreatedAt, &f.UpdatedAt, &f.DraftAgent,
+		&f.PluginID, &f.PluginBlueprint, &locked, &f.ForkedFrom)
 	f.Draft = json.RawMessage(draft)
 	f.Enabled = enabled != 0
+	f.Locked = locked != 0
 	return f, err
 }
 
@@ -385,15 +394,34 @@ func AllActiveFlows(db *sql.DB) ([]Flow, error) {
 	return queryFlows(db, `enabled=1 AND published_version>0`)
 }
 
+// flowLockedCheck says why an update of a locked flow touched nothing. This layer refuses it, so
+// every route that saves a draft is covered, the flow_* tools included.
+func flowLockedCheck(db *sql.DB, res sql.Result, id string) error {
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return err
+	}
+	var locked int
+	if err := db.QueryRow(`SELECT locked FROM flows WHERE id=?`, id).Scan(&locked); err == nil && locked != 0 {
+		return ErrFlowLocked
+	}
+	return nil
+}
+
 func UpdateFlowDraft(db *sql.DB, id, name string, draft json.RawMessage) error {
-	_, err := db.Exec(`UPDATE flows SET name=?, draft=?, updated_at=? WHERE id=?`, name, string(draft), FlowNow(), id)
-	return err
+	res, err := db.Exec(`UPDATE flows SET name=?, draft=?, updated_at=? WHERE id=? AND locked=0`, name, string(draft), FlowNow(), id)
+	if err != nil {
+		return err
+	}
+	return flowLockedCheck(db, res, id)
 }
 
 // SaveFlowDraftByAgent stores a draft an agent wrote, and remembers who until it is published.
 func SaveFlowDraftByAgent(db *sql.DB, id, name string, draft json.RawMessage, agent string) error {
-	_, err := db.Exec(`UPDATE flows SET name=?, draft=?, draft_agent=?, updated_at=? WHERE id=?`, name, string(draft), agent, FlowNow(), id)
-	return err
+	res, err := db.Exec(`UPDATE flows SET name=?, draft=?, draft_agent=?, updated_at=? WHERE id=? AND locked=0`, name, string(draft), agent, FlowNow(), id)
+	if err != nil {
+		return err
+	}
+	return flowLockedCheck(db, res, id)
 }
 
 func SetFlowEnabled(db *sql.DB, id string, enabled bool) error {
@@ -408,6 +436,14 @@ func PublishFlow(db *sql.DB, id string, graph json.RawMessage) (int, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
+	// take the write lock first: a read followed by a write fails if another writer got in between
+	if _, err := tx.Exec(`UPDATE flows SET updated_at=updated_at WHERE id=?`, id); err != nil {
+		return 0, err
+	}
+	var locked int
+	if err := tx.QueryRow(`SELECT locked FROM flows WHERE id=?`, id).Scan(&locked); err == nil && locked != 0 {
+		return 0, ErrFlowLocked
+	}
 	var v int
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(version),0)+1 FROM flow_versions WHERE flow_id=?`, id).Scan(&v); err != nil {
 		return 0, err

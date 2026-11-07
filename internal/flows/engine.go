@@ -145,6 +145,9 @@ type Engine struct {
 
 	ToolTimeout time.Duration // how long DecideTool waits for the flows
 	tools       toolWaits
+
+	// EventTap sees every event as it is handled (plugins react to some). It must not block.
+	EventTap func(dbpkg.FlowEvent)
 }
 
 // NewEngine creates an engine.
@@ -297,6 +300,9 @@ func (e *Engine) Recover() {
 		}
 		_ = json.Unmarshal(s.Output, &text)
 		e.startPush(run, s, text.Title, text.Body)
+	}
+	if err := e.recoverPluginSteps(); err != nil {
+		log.Printf("[flows] recover plugin steps: %v", err)
 	}
 }
 
@@ -494,6 +500,9 @@ func (e *Engine) dispatchEvents() bool {
 		}
 		e.resolveWaits(ev)
 		e.startRuns(ev)
+		if e.EventTap != nil {
+			e.EventTap(ev)
+		}
 		if err := dbpkg.MarkFlowEventDispatched(e.db, ev.ID); err != nil {
 			log.Printf("[flows] mark event %d: %v", ev.ID, err)
 			return worked
@@ -671,6 +680,8 @@ func triggerMatches(n Node, ev dbpkg.FlowEvent) bool {
 		return ev.Type == dbpkg.EventTurnEnded
 	case TypeTurnFailed:
 		return ev.Type == dbpkg.EventTurnFailed
+	case TypePluginEvent:
+		return ev.Type == dbpkg.EventPluginEvent && n.str("plugin") == fmt.Sprint(ev.Payload["plugin"]) && n.str("event") == fmt.Sprint(ev.Payload["event"])
 	}
 	return false
 }
@@ -796,6 +807,11 @@ func (e *Engine) wakeDue() bool {
 		case TypePushNotification:
 			port = PortFailed
 			extra = map[string]any{"error": "the push services did not answer in time"}
+		default:
+			if IsPluginNode(node.Type) {
+				port = PortFailed
+				extra = map[string]any{"error": "the plugin did not answer in time"}
+			}
 		}
 		e.resumeStep(s, port, extra)
 	}
@@ -1050,6 +1066,10 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		return result{}, err
 	}
 	render := func(field string) (string, error) { return RenderTemplate(node.str(field), scope) }
+
+	if IsPluginNode(node.Type) {
+		return e.startPluginNode(run, g, node, s, scope)
+	}
 
 	switch node.Type {
 	case TypeIf:
@@ -1334,7 +1354,7 @@ func outcomePort(node Node, output map[string]any) string {
 func (e *Engine) agentTurns(run dbpkg.FlowRun, g Graph) int {
 	total := 0
 	for _, n := range g.Nodes {
-		if n.Type == TypeRunAgent || n.Type == TypeAIEvaluate {
+		if n.Type == TypeRunAgent || n.Type == TypeAIEvaluate || IsPluginNode(n.Type) {
 			total += dbpkg.CountFlowSteps(e.db, run.ID, n.ID)
 		}
 	}

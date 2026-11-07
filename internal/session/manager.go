@@ -82,6 +82,9 @@ type Manager struct {
 	// or "deny" with the reason the agent reads; anything else leaves it open. Set by the hub
 	// before turns start. It blocks, for a limited time.
 	ToolGate func(ToolRequest) (decision, reason string)
+
+	// PluginTurn answers a turn of executor "plugin". Set by the hub; a runner has none.
+	PluginTurn func(ctx context.Context, req PluginTurnRequest, progress func(string)) (string, error)
 }
 
 func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings string) *Manager {
@@ -235,8 +238,8 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	m.procs[opts.SessionID] = ps
 	m.mu.Unlock()
 
-	if opts.Executor == "aimode" {
-		go m.runWithAIMode(ctx, ps, opts)
+	if opts.Executor == "plugin" {
+		go m.runWithPlugin(ctx, ps, opts)
 	} else if opts.Executor == "claude" && opts.RunnerID != "" {
 		go m.runWithRemoteCLI(ctx, ps, opts)
 	} else if opts.Executor == "claude" {

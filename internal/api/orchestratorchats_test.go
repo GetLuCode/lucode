@@ -48,7 +48,7 @@ func TestSupervisorHistory(t *testing.T) {
 	}
 	googleTurn := func(id string) {
 		t.Helper()
-		if err := dbpkg.SaveAIModeConversation(h.db, id, pid, "https://www.google.com/search?q="+id, id, 2); err != nil {
+		if _, err := dbpkg.SavePluginConversation(h.db, dbpkg.PluginConversation{PluginID: "lucode.gemini", SessionID: id, ProjectID: pid, URL: "https://www.google.com/search?q=" + id, Title: id, Turns: 2}); err != nil {
 			t.Fatal(err)
 		}
 	}

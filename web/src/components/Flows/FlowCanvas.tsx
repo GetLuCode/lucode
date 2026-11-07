@@ -34,9 +34,14 @@ interface Props {
   onSelect(node: { id: string; type: string; config: Record<string, unknown> } | null): void
   // The handle only works from here on. A new canvas is empty: whoever owns it loads it.
   onReady(ready: boolean): void
+  disabledPlugins?: string[]
 }
 
-let registered = false
+// What is registered, by type, so a plugin installed later adds its nodes and an upgrade replaces them.
+const registered = new Map<string, string>()
+let cleared = false
+// Plugins that are off: their nodes stay drawn, and say so.
+let offPlugins = new Set<string>()
 
 // The name on an output is only a label: the port keeps its id, which is what edges store.
 function labelPorts(node: any, t: FlowNodeType, config: Record<string, unknown>) {
@@ -47,14 +52,18 @@ function labelPorts(node: any, t: FlowNodeType, config: Record<string, unknown>)
 // Replaces litegraph's stock nodes, some of which run typed code with new Function, with
 // the hub's list. Only these types can exist on the canvas.
 function registerTypes(types: FlowNodeType[]) {
-  if (registered) return
-  registered = true
-  LG.clearRegisteredTypes()
+  if (!cleared) {
+    cleared = true
+    LG.clearRegisteredTypes()
+  }
   LG.pointerevents_method = 'pointer' // touch works as well as the mouse
   LG.NODE_TITLE_COLOR = '#e8e4dd'
   LG.NODE_SELECTED_TITLE_COLOR = '#ffffff'
   LG.NODE_TEXT_COLOR = '#b9b6bd'
   for (const t of types) {
+    const seen = JSON.stringify(t)
+    if (registered.get(t.type) === seen) continue
+    registered.set(t.type, seen)
     function Node(this: any) {
       if (t.category !== 'trigger') this.addInput('', SLOT)
       for (const port of t.ports ?? []) this.addOutput(port, SLOT)
@@ -101,6 +110,17 @@ function registerTypes(types: FlowNodeType[]) {
         ctx.lineWidth = 2
         ctx.strokeRect(-1, -LG.NODE_TITLE_HEIGHT - 1, this.size[0] + 2, this.size[1] + LG.NODE_TITLE_HEIGHT + 2)
       }
+      if (t.plugin_id && offPlugins.has(t.plugin_id)) {
+        ctx.strokeStyle = '#f59e0b'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([5, 4])
+        ctx.strokeRect(-1, -LG.NODE_TITLE_HEIGHT - 1, this.size[0] + 2, this.size[1] + LG.NODE_TITLE_HEIGHT + 2)
+        ctx.setLineDash([])
+        ctx.font = '11px sans-serif'
+        ctx.fillStyle = '#f59e0b'
+        ctx.textAlign = 'right'
+        ctx.fillText('plugin off', this.size[0] - 6, -8)
+      }
       const text = nodeSummary(t, this.properties.config ?? {})
       if (text) {
         ctx.font = '11px sans-serif'
@@ -115,7 +135,7 @@ function registerTypes(types: FlowNodeType[]) {
   }
 }
 
-export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanvas({ nodeTypes, onChange, onSelect, onReady }, ref) {
+export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanvas({ nodeTypes, onChange, onSelect, onReady, disabledPlugins }, ref) {
   const box = useRef<HTMLDivElement>(null)
   const el = useRef<HTMLCanvasElement>(null)
   const graph = useRef<any>(null)
@@ -125,9 +145,19 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
   const events = useRef({ onChange, onSelect, onReady })
   events.current = { onChange, onSelect, onReady }
 
+  // Plugins come and go while the page is open: what the canvas knows follows the hub's list.
   useEffect(() => {
     registerTypes(nodeTypes)
     typeOf.current = new Map(nodeTypes.map(t => [t.type, t]))
+    canvas.current?.setDirty(true, true)
+  }, [nodeTypes])
+
+  useEffect(() => {
+    offPlugins = new Set(disabledPlugins ?? [])
+    canvas.current?.setDirty(true, true)
+  }, [disabledPlugins])
+
+  useEffect(() => {
     const g: any = new LGraph()
     const c: any = new LGraphCanvas(el.current as any, g)
     graph.current = g
@@ -205,7 +235,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
       graph.current = null
       canvas.current = null
     }
-    // the canvas lives as long as the view; the types come once from the hub
+    // the canvas lives as long as the view
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

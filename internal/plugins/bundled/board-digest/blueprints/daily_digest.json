@@ -1,0 +1,17 @@
+{
+  "nodes": [
+    { "id": "n1", "type": "trigger.schedule", "x": 40, "y": 160, "config": { "minutes": 1440 } },
+    { "id": "n2", "type": "plugin.lucode.board-digest.digest", "x": 320, "y": 160, "config": {} },
+    {
+      "id": "n3",
+      "type": "action.push_notification",
+      "x": 600,
+      "y": 160,
+      "config": { "title": "Board digest", "body": "{{nodes.n2.summary}}" }
+    }
+  ],
+  "edges": [
+    { "from": "n1", "port": "next", "to": "n2" },
+    { "from": "n2", "port": "next", "to": "n3" }
+  ]
+}

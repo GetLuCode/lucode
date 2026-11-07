@@ -50,6 +50,10 @@ func (h *Handler) startTurn(opts sessionpkg.TurnOptions) error {
 
 // agentTurnOpts is the turn configuration for a task session on its agent.
 func (h *Handler) agentTurnOpts(sess dbpkg.Session, agent dbpkg.Agent, card dbpkg.KanbanCard, proj dbpkg.Project, message string) (sessionpkg.TurnOptions, error) {
+	if pluginOpts, handled, err := h.pluginTurnOpts(sess, message, agent.Model); handled {
+		pluginOpts.AgentName = agent.Name
+		return pluginOpts, err
+	}
 	provider, model := resolveProvider("", agent.Model)
 	// Where it runs and with which AI: the agent's choice, else the project's.
 	env, err := h.resolveTurnEnv(agent, proj)

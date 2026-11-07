@@ -1,5 +1,6 @@
-import type { ActiveFlowRun, Flow, FlowApproval, FlowBlueprint, FlowGraph, FlowNodeType, FlowProblem, FlowRun, FlowStep, Alert, AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, AIModeConversation, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope } from './types'
+import type { ActiveFlowRun, Flow, FlowApproval, FlowBlueprint, FlowGraph, FlowNodeType, FlowProblem, FlowRun, FlowStep, Alert, AIProfile, Runner, ClaudeCommand, RunnerVersion, CardComment, Project, Session, MessagesPage, Message, SearchResult, UserTool, CommandDetectResult, ToolExecuteResult, InstanceInfo, ProcessInfo, ClaudeProcess, OrchestratorChat, Agent, KanbanList, KanbanCard, CheckpointListResponse, CheckpointWithTree, DiffResponse, FileDiff, Checkpoint, PermissionRule, PermissionScope, InstalledPlugin, PluginCatalogEntry, PluginConversationRow, PluginInspection, PluginRunnerInfo } from './types'
 import { useAuthStore } from './store/auth'
+import { continueConversationPath } from './lib/plugins'
 
 const BASE = process.env.VITE_API_BASE ?? ''
 
@@ -73,7 +74,9 @@ export const updateProjectEnvironment = (id: string, data: { runner_id: string; 
 export const renameProject = (id: string, name: string) => req<void>('PATCH', `/api/projects/${id}`, { name })
 
 // Sessions
-export const listSessions = (pid: string) => req<Session[]>('GET', `/api/projects/${pid}/sessions`)
+// A chat held by a plugin's page belongs to that page: it is never in the ordinary lists.
+export const listSessions = (pid: string) =>
+  req<Session[]>('GET', `/api/projects/${pid}/sessions`).then(l => (l ?? []).filter(s => s.kind !== 'plugin'))
 export const createSession = (pid: string, data: { name?: string; model?: string; provider?: string }) =>
   req<Session>('POST', `/api/projects/${pid}/sessions`, data)
 export const deleteSession = (id: string) => req<void>('DELETE', `/api/sessions/${id}`)
@@ -97,9 +100,6 @@ export const sendTurn = (id: string, message: string, model?: string, provider?:
 export const getOrchestrator = (pid: string) => req<Session>('GET', `/api/projects/${pid}/orchestrator`)
 // Closes the current orchestrator conversation and starts an empty one.
 export const newOrchestratorSession = (pid: string) => req<Session>('POST', `/api/projects/${pid}/orchestrator/new`)
-// History of the local Google AI Mode model: its conversations by url, and bringing one back to work on.
-export const listAIModeConversations = (pid: string) => req<AIModeConversation[]>('GET', `/api/projects/${pid}/aimode/conversations`)
-export const continueAIModeConversation = (id: string) => req<Session>('POST', `/api/aimode/conversations/${id}/continue`)
 // History of the Supervisor conversations of a project: the ones claude can pick up again.
 export const listSupervisorChats = (pid: string) =>
   req<OrchestratorChat[]>('GET', `/api/orchestrator/chats?project=${encodeURIComponent(pid)}&mode=supervisor`)
@@ -539,3 +539,57 @@ export const getFlowPush = () => req<{ public_key: string }>('GET', '/api/flow-p
 export const savePushSubscription = (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) => req<void>('PUT', '/api/flow-push/subscription', sub)
 export const removePushSubscription = (endpoint: string) => req<void>('DELETE', '/api/flow-push/subscription', { endpoint })
 export const testPushSubscription = (endpoint: string) => req<void>('POST', '/api/flow-push/test', { endpoint })
+
+// Plugins
+const pluginPath = (id: string) => `/api/plugins/${encodeURIComponent(id)}`
+export const listPlugins = () => req<InstalledPlugin[]>('GET', '/api/plugins').then(l => l ?? [])
+export const getPluginUI = () => req<unknown>('GET', '/api/plugins/ui')
+export const listPluginCatalog = () => req<PluginCatalogEntry[]>('GET', '/api/plugins/catalog').then(l => l ?? [])
+export const installCatalogPlugin = (id: string) => req<unknown>('POST', `/api/plugins/catalog/${encodeURIComponent(id)}/install`)
+export const installPlugin = (token: string, granted: string[]) => req<unknown>('POST', '/api/plugins/install', { token, granted })
+export const setPluginEnabled = (id: string, enabled: boolean) => req<unknown>('PUT', `${pluginPath(id)}/enabled`, { enabled })
+export const uninstallPlugin = (id: string, keepData: boolean) => req<void>('DELETE', `${pluginPath(id)}${keepData ? '?keepData=1' : ''}`)
+export const getPluginSettings = (id: string) => req<Record<string, unknown>>('GET', `${pluginPath(id)}/settings`)
+export const savePluginSettings = (id: string, values: Record<string, unknown>) => req<unknown>('PUT', `${pluginPath(id)}/settings`, values)
+export const getPluginLogs = (id: string) => req<unknown>('GET', `${pluginPath(id)}/logs`)
+export const listPluginRunners = (id: string) => req<PluginRunnerInfo[]>('GET', `${pluginPath(id)}/runners`).then(l => l ?? [])
+// The answer holds a secret: show it, never keep or log it.
+export const pairPluginRunner = (runnerId: string) =>
+  req<{ code: string; command: string }>('POST', `/api/plugins/runners/${encodeURIComponent(runnerId)}/pair`)
+export const callPluginRpc = (id: string, rpc: string, projectId: string | null, args: Record<string, unknown>) =>
+  req<unknown>('POST', `${pluginPath(id)}/rpc/${encodeURIComponent(rpc)}`, { projectId, args })
+export const listPluginConversations = (id: string, projectId: string, source: string) =>
+  req<PluginConversationRow[]>('GET', `${pluginPath(id)}/conversations?project=${encodeURIComponent(projectId)}${source ? `&source=${encodeURIComponent(source)}` : ''}`).then(l => l ?? [])
+// `page`: the chat lives on the plugin's page; otherwise a chat that is gone comes back in the Supervisor panel.
+export const continuePluginConversation = (id: string, conversationId: string, surface?: 'page') =>
+  req<Session>('POST', continueConversationPath(id, conversationId, surface))
+export const createPluginConversation = (id: string, projectId: string, model: string) =>
+  req<Session>('POST', `${pluginPath(id)}/conversations`, { projectId, model })
+export const forkFlow = (id: string) => req<Flow>('POST', `/api/flows/${id}/fork`)
+
+// The zip goes as multipart, so this cannot use req: the browser sets the boundary.
+export async function inspectPlugin(file: File): Promise<PluginInspection> {
+  const form = new FormData()
+  form.append('file', file)
+  const headers: Record<string, string> = {}
+  const token = getAuthToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  if (activeRemoteId) headers['X-Lucode-Remote'] = activeRemoteId
+  const res = await fetch(`${BASE}/api/plugins/inspect`, { method: 'POST', headers, body: form })
+  if (!res.ok) {
+    if (res.status === 401) useAuthStore.getState().clearAuth()
+    throw new Error(`POST /api/plugins/inspect → ${res.status}: ${await res.text()}`)
+  }
+  return res.json()
+}
+
+// A plugin's image, fetched with the token. The caller shows it through an object URL in an <img>.
+export async function fetchPluginAsset(id: string, encodedPath: string): Promise<Blob> {
+  const headers: Record<string, string> = {}
+  const token = getAuthToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  if (activeRemoteId) headers['X-Lucode-Remote'] = activeRemoteId
+  const res = await fetch(`${BASE}${pluginPath(id)}/assets/${encodedPath}`, { headers })
+  if (!res.ok) throw new Error(`asset ${res.status}`)
+  return res.blob()
+}

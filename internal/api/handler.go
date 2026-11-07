@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"claude-orchestrator/internal/aimode"
 	authclient "claude-orchestrator/internal/authclient"
 	dbpkg "claude-orchestrator/internal/db"
 	"claude-orchestrator/internal/flows"
 	natspkg "claude-orchestrator/internal/natsbus"
 	"claude-orchestrator/internal/permissions"
+	"claude-orchestrator/internal/plugins"
 	sessionpkg "claude-orchestrator/internal/session"
 
 	"github.com/google/uuid"
@@ -64,11 +64,12 @@ type Handler struct {
 
 	flows *flows.Engine // nil until StartFlows (only the hub runs it)
 
+	plugins plugins.HubHost // nil until StartPlugins (only the hub runs it)
+
 	pushIcon string // path of the icon of a notification; empty: the browser's own
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
-	aimode.Default.SetStore(aimodeStore{db: db}) // the local model remembers its conversations
 	return &Handler{
 		db:           db,
 		bus:          bus,
@@ -102,6 +103,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/version", h.version("hub"))
 	h.registerFlows(mux)
 	h.registerGit(mux)
+	h.registerPlugins(mux)
 
 	mux.HandleFunc("POST /api/projects", h.createProject)
 	mux.HandleFunc("GET /api/projects", h.listProjects)
@@ -118,8 +120,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/orchestrator/chats", h.listOrchestratorChats)
 	mux.HandleFunc("PATCH /api/orchestrator/chats/{id}", h.updateOrchestratorChat)
 	mux.HandleFunc("POST /api/orchestrator/chats/{id}/open", h.openOrchestratorChat)
-	mux.HandleFunc("GET /api/projects/{pid}/aimode/conversations", h.listAIModeConversations)
-	mux.HandleFunc("POST /api/aimode/conversations/{id}/continue", h.continueAIModeConversation)
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)
 	mux.HandleFunc("DELETE /api/sessions/{id}/turn", h.cancelTurn)
 	mux.HandleFunc("GET /api/sessions/{id}/process", h.getSessionProcess)
@@ -352,8 +352,8 @@ func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		if token := extractBearerToken(r); token != "" {
-			if _, err := h.auth.ValidateToken(token); err == nil {
-				next.ServeHTTP(w, r)
+			if res, err := h.auth.ValidateToken(token); err == nil {
+				next.ServeHTTP(w, withAuthInfo(r, authInfo{Bearer: true, IsAdmin: res.IsAdmin}))
 				return
 			}
 		}
@@ -573,7 +573,12 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	h.manager.CloseLive(id)
-	go aimode.Default.Forget(id) // its AI Mode conversation tab, if it had one
+	if h.plugins != nil {
+		if sess, err := dbpkg.GetSession(h.db, id); err == nil {
+			h.plugins.SessionDeleted(sess.ProjectID, id)
+			h.plugins.SessionClosed(sess.ProjectID, id)
+		}
+	}
 	if err := dbpkg.DeleteSession(h.db, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -635,6 +640,13 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sess.Kind == dbpkg.SessionKindOrchestrator {
+		orchModel := body.Model
+		if orchModel == "" {
+			orchModel = sess.Model
+		}
+		if refusePluginTurnRPC(w, r, orchModel) {
+			return
+		}
 		opts, err := h.orchestratorTurnOpts(sess, proj, body.Message, body.Model, body.RunnerID, body.AIProfileID, body.Effort, body.Thinking)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -665,6 +677,12 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 			agent = &a
 			model = a.Model
 		}
+	}
+	if sess.Kind == dbpkg.SessionKindPlugin && !plugins.IsPluginModel(model) {
+		model = sess.Model // a chat on a plugin's page stays with its plugin
+	}
+	if refusePluginTurnRPC(w, r, model) {
+		return
 	}
 	provider, model := resolveProvider(body.Provider, model)
 
@@ -699,11 +717,12 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if aimode.IsModel(model) { // local model: Google AI Mode in Edge, no claude and no tools
-		opts.Executor, opts.Persistent, opts.Resume = "aimode", false, false
+	if err := h.applyPluginModel(&opts); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
 	}
 
-	if opts.Executor != "aimode" {
+	if opts.Executor != pluginExecutor {
 		// Where it runs and with which AI: the agent's runner, else the project's.
 		// On a hub this sends the turn to the runner instead of starting claude here.
 		var envAgent dbpkg.Agent
@@ -862,6 +881,10 @@ func (h *Handler) forkSession(w http.ResponseWriter, r *http.Request) {
 			WorkDirs:        proj.WorkDirs,
 			ClaudeConfigDir: h.projectConfigDir(proj),
 			ForkFrom:        id,
+		}
+		if err := h.applyPluginModel(&opts); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
 		}
 		if err := h.manager.StartTurn(opts); err != nil {
 			log.Printf("api: fork turn: %v", err)

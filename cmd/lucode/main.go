@@ -22,6 +22,7 @@ import (
 	apipkg "claude-orchestrator/internal/api"
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
+	pluginhub "claude-orchestrator/internal/plugins/hub"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
 	versionpkg "claude-orchestrator/internal/version"
@@ -142,6 +143,9 @@ func main() {
 		handler.FlowTurnEnded(sessID)
 	}
 	manager.OnTurnFailed = handler.HandleTurnFailed // unresumable sessions etc.
+	if err := handler.StartPlugins(context.Background(), *dataDir, nc, pluginhub.New); err != nil {
+		log.Printf("[plugins] start: %v", err)
+	}
 	handler.StartFlows(context.Background())
 	handler.SetAuthURL(*authURL)
 	handler.SetAIAPIURL(*aiAPIURL)

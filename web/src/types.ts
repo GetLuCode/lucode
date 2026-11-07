@@ -89,7 +89,7 @@ export interface Session {
   context_usage?: string  // JSON-encoded context usage, persisted per session
   card_id?: string        // the task (kanban card) this session belongs to
   agent_id?: string       // the agent running it
-  kind?: 'orchestrator' | '' // the project's main chat (right-hand panel)
+  kind?: 'orchestrator' | 'plugin' | '' // the project's main chat (right-hand panel), or a chat held by a plugin's page
   worktree?: string       // git worktree the agent works in (from its transcript)
   worktree_removed?: boolean // merging its task deleted that worktree: the chat is closed
   branch?: string         // its branch
@@ -194,6 +194,7 @@ export type WSEvent =
   | { type: 'turn_usage'; session_id: string; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number; cache_creation_1h_input_tokens?: number; model: string }
   | { type: 'message_ready'; session_id: string; message: { content: string; role: string } }
   | { type: 'peers_changed' }
+  | { type: 'plugins_changed' }
 
 // Structured assistant message content
 export interface AssistantMessage {
@@ -428,20 +429,6 @@ export interface OrchestratorChat {
   current: boolean // the chat its project's panel shows now
 }
 
-export interface AIModeConversation {
-  id: string
-  session_id: string
-  project_id: string
-  url: string
-  title: string
-  created_at: string
-  updated_at: string
-  session_exists: boolean
-  session_kind?: string
-  message_count: number
-  current: boolean
-}
-
 // Something lucode noticed that the user may want to clean up by hand (the bell in the header).
 export interface Alert {
   id: string
@@ -456,11 +443,54 @@ export interface FlowNode { id: string; type: string; x: number; y: number; conf
 export interface FlowEdge { from: string; port: string; to: string }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[] }
 export interface FlowNodeField { name: string; label: string; kind: 'text' | 'template' | 'expr' | 'number' | 'select' | 'agent' | 'list' | 'bool' | 'lines'; required?: boolean; options?: string[]; default?: unknown; help?: string; min?: number; port_label?: string }
-export interface FlowNodeType { type: string; title: string; category: 'trigger' | 'control' | 'action'; description: string; ports: string[] | null; fields: FlowNodeField[] | null }
-export interface Flow { id: string; project_id: string; name: string; draft: FlowGraph; published_version: number; enabled: boolean; created_at: string; updated_at: string; draft_agent?: string }
+export interface FlowNodeType { type: string; title: string; category: 'trigger' | 'control' | 'action'; description: string; ports: string[] | null; fields: FlowNodeField[] | null; plugin_id?: string; plugin_name?: string; icon?: string; target?: PluginTarget; plugin_disabled?: boolean }
+export interface Flow { id: string; project_id: string; name: string; draft: FlowGraph; published_version: number; enabled: boolean; created_at: string; updated_at: string; draft_agent?: string; plugin_id?: string; plugin_blueprint?: string; locked?: boolean; forked_from?: string }
 export interface FlowProblem { node_id?: string; message: string }
 export interface FlowRun { id: string; flow_id: string; version: number; project_id: string; card_id: string; event_id: number; event: unknown; depth: number; status: string; error: string; started_at: string; finished_at: string }
 export interface FlowStep { seq: number; run_id: string; node_id: string; from_node: string; status: string; port: string; output: unknown; error: string; wait_key: string; wake_at: string; started_at: string; finished_at: string }
 export interface ActiveFlowRun { run: FlowRun; flow_name: string; open: string[]; open_names: string[]; card_title: string }
 export interface FlowApproval { seq: number; run_id: string; flow_id: string; flow_name: string; node_id: string; card_id: string; card_title: string; question: string; since: string }
-export interface FlowBlueprint { key: string; name: string; description: string; seeded: boolean }
+export interface FlowBlueprint { key: string; name: string; description: string; seeded: boolean; plugin_id?: string; plugin_name?: string }
+
+// Plugins: what the hub says about them. A plugin never ships browser code; see lib/pluginView.ts.
+export type PluginTarget = 'server' | 'runner'
+export interface PluginPermission { key: string; label: string; risk: 'low' | 'medium' | 'high' | string; detail: string; target?: PluginTarget }
+export interface PluginSettingDef { key: string; label: string; type: 'text' | 'textarea' | 'number' | 'bool' | 'select' | 'secret'; default?: unknown; options?: (string | { value: string; label?: string })[]; help?: string }
+export interface PluginTargetsDecl { server?: { main?: string; permissions?: Record<string, unknown> }; runner?: { main?: string; permissions?: Record<string, unknown> } }
+export interface PluginManifest {
+  id: string
+  name: string
+  version: string
+  description?: string
+  author?: string
+  homepage?: string
+  icon?: string
+  targets?: PluginTargetsDecl
+  contributes?: { settings?: PluginSettingDef[] }
+}
+export interface InstalledPlugin { manifest: PluginManifest; status: string; enabled: boolean; granted?: string[]; error?: string; source?: string; targets?: PluginTargetsDecl }
+export interface PluginInspection { token: string; manifest: PluginManifest; permissions: PluginPermission[]; upgradeFrom?: string; newPermissions?: unknown; warnings?: string[] }
+export interface PluginCatalogEntry { id: string; name: string; description?: string; installed: boolean; version?: string }
+export interface PluginRunnerInfo { runnerId: string; hostname: string; online: boolean; policy: string; delivered: boolean; version: string; error: string; paired?: boolean }
+export interface PluginModelContribution { pluginId: string; id: string; value: string; label: string; mode: string; hint: string; icon: string; accent?: string; images: boolean; loader: string; waitingText: string; pluginName: string }
+export interface PluginConversationContribution { pluginId: string; id: string; model: string; title: string; emptyText: string; showUrl: boolean }
+export interface PluginPageContribution { pluginId: string; id: string; label: string; icon: string; render: string }
+export interface PluginActionContribution { pluginId: string; id: string; label: string; icon: string; rpc: string }
+export interface PluginUI { models: PluginModelContribution[]; conversations: PluginConversationContribution[]; pages: PluginPageContribution[]; chatActions: PluginActionContribution[]; cardActions: PluginActionContribution[] }
+export interface PluginConversationRow {
+  id: string
+  session_id: string
+  project_id: string
+  plugin_id?: string
+  source?: string
+  url: string
+  title: string
+  turns?: number
+  meta?: unknown
+  created_at: string
+  updated_at: string
+  session_exists: boolean
+  session_kind?: string
+  message_count: number
+  current: boolean
+}

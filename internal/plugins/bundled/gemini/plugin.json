@@ -1,0 +1,89 @@
+{
+  "id": "lucode.gemini",
+  "name": "Gemini",
+  "version": "1.0.0",
+  "sdk": 1,
+  "description": "Google AI Mode as a chat model, in an Edge window lucode drives. No API key and no tokens: it uses the Google account signed in to that window.",
+  "author": "lucode",
+  "icon": "assets/gemini.svg",
+  "targets": {
+    "server": {
+      "main": "main.js",
+      "permissions": {
+        "conversations": true,
+        "flows": true,
+        "browser": { "origins": ["https://www.google.com", "https://consent.google.com"] }
+      }
+    }
+  },
+  "contributes": {
+    "models": [
+      {
+        "id": "aimode",
+        "label": "Google AI Mode",
+        "mode": "Gemini",
+        "hint": "Google AI Mode (Edge)",
+        "icon": "assets/gemini.svg",
+        "accent": "#4285f4",
+        "images": true,
+        "loader": "skeleton",
+        "waitingText": "Waiting for Google AI Mode…",
+        "timeoutSeconds": 720
+      }
+    ],
+    "conversations": [
+      {
+        "id": "aimode",
+        "model": "aimode",
+        "title": "AI Mode conversations",
+        "emptyText": "None yet. Each conversation you have with Google AI Mode is saved here by its address.",
+        "showUrl": true
+      }
+    ],
+    "pages": [
+      { "id": "main", "label": "Gemini", "icon": "assets/gemini.svg", "render": "renderMain" }
+    ],
+    "settings": [
+      {
+        "key": "primer",
+        "label": "First message of each conversation",
+        "type": "textarea",
+        "help": "Tells Gemini how to answer; its reply to it is not shown. Empty: the one that ships with the plugin."
+      },
+      {
+        "key": "headless",
+        "label": "Hide the Edge window",
+        "type": "bool",
+        "default": false,
+        "help": "With it hidden, a human check from Google cannot be solved until you turn this off."
+      }
+    ],
+    "flowNodes": [
+      {
+        "id": "ask",
+        "label": "Ask Google AI Mode",
+        "description": "Asks in a new conversation of its own, which closes afterwards. It waits its turn behind any other conversation. Reads as nodes.<id>.answer.",
+        "icon": "assets/gemini.svg",
+        "fields": [
+          {
+            "name": "question",
+            "label": "Question",
+            "kind": "template",
+            "required": true,
+            "help": "This text goes to Google."
+          }
+        ],
+        "ports": ["next"],
+        "timeoutSeconds": 720
+      }
+    ],
+    "blueprints": [
+      {
+        "key": "research_new_card",
+        "name": "Research new cards with Google AI Mode",
+        "description": "When a card is created, asks Google AI Mode about it and leaves the answer as a comment. The card's title and description go to Google.",
+        "file": "blueprints/research_new_card.json"
+      }
+    ]
+  }
+}

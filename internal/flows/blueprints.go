@@ -19,6 +19,9 @@ type Blueprint struct {
 	Description string `json:"description"`
 	Seeded      bool   `json:"seeded"`
 	Graph       Graph  `json:"-"`
+	// a plugin's blueprint; its key is <plugin id>/<key>
+	PluginID   string `json:"plugin_id,omitempty"`
+	PluginName string `json:"plugin_name,omitempty"`
 }
 
 func bpNode(id int, typ string, x, y float64, kv ...any) Node {
@@ -143,12 +146,18 @@ var blueprints = []Blueprint{
 	},
 }
 
-// Blueprints lists the base flows.
-func Blueprints() []Blueprint { return blueprints }
+// Blueprints lists the base flows and those of the installed plugins.
+func Blueprints() []Blueprint {
+	src := currentPlugins()
+	if src == nil {
+		return blueprints
+	}
+	return append(append([]Blueprint{}, blueprints...), src.Blueprints()...)
+}
 
 // BlueprintOf finds a base flow.
 func BlueprintOf(key string) (Blueprint, bool) {
-	for _, b := range blueprints {
+	for _, b := range Blueprints() {
 		if b.Key == key {
 			return b, true
 		}

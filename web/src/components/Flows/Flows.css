@@ -305,3 +305,5 @@
   cursor: pointer;
 }
 .flows-blueprints__item:hover { color: var(--text); background: var(--bg-hover); }
+
+.flows-bar__fork { display: inline-flex; align-items: center; gap: 6px; }

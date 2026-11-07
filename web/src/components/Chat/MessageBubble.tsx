@@ -11,6 +11,9 @@ import { useHookCountdown } from '../Hook/useHookCountdown'
 import { hookAction, hookOutcome, hookSummary, type HookOutcome } from '../Hook/hookSummary'
 import { ToolExecutionMessage } from './ToolExecutionMessage'
 import { highlightCode } from '../../lib/highlight'
+import { sanitizeHtml, sanitizeUntrustedHtml } from '../../lib/sanitizeHtml'
+import { mermaidIsInert } from '../../lib/htmlPolicy'
+import { PluginChatActions } from '../Plugins/PluginActions'
 import { renderMermaid } from '../../lib/mermaid'
 import type { Message, ToolInputField } from '../../types'
 
@@ -35,9 +38,10 @@ interface Props {
   isStarred?: boolean
   onStar?: (messageId: string) => void
   onViewRawData?: (messageId: string) => void
+  untrusted?: boolean // written by a plugin's model: nothing in it may load by itself
 }
 
-export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking, isStarred, onStar, onViewRawData }: Props) {
+export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking, isStarred, onStar, onViewRawData, untrusted }: Props) {
   const [copied, setCopied] = useState(false)
 
   const handleSpeak = () => {
@@ -63,7 +67,7 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
         transition={{ duration: 0.15, ease: 'easeOut' }}
       >
         <div className={`msg__bubble${isBeingRead ? ' msg__bubble--reading' : ''}`}>
-          <BubbleContent message={message} sendHookRespond={sendHookRespond} />
+          <BubbleContent message={message} sendHookRespond={sendHookRespond} untrusted={untrusted} />
         </div> 
       </motion.div>
       <div className={`msg__info msg--${message.role}`}>
@@ -122,6 +126,7 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
                       <div className="tooltip tooltip--up">Raw turn data</div>
                     </div>
                   )}
+                  {message.role === 'assistant' && <PluginChatActions message={message} />}
                 </>
               </div>
             )}
@@ -131,13 +136,13 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
   )
 }
 
-function BubbleContent({ message, sendHookRespond }: { message: Message; sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always', reason?: string, rule?: { tool: string; input_regex?: Record<string, string> }) => void }) {
+function BubbleContent({ message, sendHookRespond, untrusted }: { message: Message; untrusted?: boolean; sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always', reason?: string, rule?: { tool: string; input_regex?: Record<string, string> }) => void }) {
   switch (message.role) {
     case 'user':
       return <UserContent content={message.content} />
 
     case 'assistant':
-      return <MarkdownContent content={message.content} />
+      return <MarkdownContent content={message.content} untrusted={untrusted} />
 
     case 'thinking':
       return (
@@ -234,14 +239,14 @@ type Segment = { kind: 'html'; html: string } | { kind: 'mermaid'; source: strin
 
 // The markdown as html pieces with the mermaid blocks apart, so each diagram is a React
 // component of its own (the html is React's: drawing into it by hand would be undone on re-render).
-function splitSegments(content: string): Segment[] {
+function splitSegments(content: string, untrusted?: boolean): Segment[] {
   const tokens = marked.lexer(content)
   const out: Segment[] = []
   let buf: Token[] = []
   const flush = () => {
     if (!buf.length) return
     const piece = Object.assign([...buf], { links: tokens.links }) as unknown as TokensList
-    out.push({ kind: 'html', html: marked.parser(piece) })
+    out.push({ kind: 'html', html: (untrusted ? sanitizeUntrustedHtml : sanitizeHtml)(marked.parser(piece)) })
     buf = []
   }
   for (const t of tokens) {
@@ -254,12 +259,12 @@ function splitSegments(content: string): Segment[] {
   return out
 }
 
-function MarkdownContent({ content }: { content: string }) {
-  const segments = useMemo(() => splitSegments(content), [content])
+function MarkdownContent({ content, untrusted }: { content: string; untrusted?: boolean }) {
+  const segments = useMemo(() => splitSegments(content, untrusted), [content, untrusted])
   return (
     <div className="msg__markdown">
       {segments.map((seg, i) => seg.kind === 'mermaid'
-        ? <MermaidDiagram key={i} source={seg.source} />
+        ? <MermaidDiagram key={i} source={seg.source} sourceOnly={untrusted && !mermaidIsInert(seg.source)} />
         : <div key={i} className="msg__md-part" dangerouslySetInnerHTML={{ __html: seg.html }} />)}
     </div>
   )
@@ -267,14 +272,15 @@ function MarkdownContent({ content }: { content: string }) {
 
 // A mermaid block: the diagram once drawn; as code while it loads, if it is still streaming in
 // or if it is not valid mermaid.
-function MermaidDiagram({ source }: { source: string }) {
+function MermaidDiagram({ source, sourceOnly }: { source: string; sourceOnly?: boolean }) {
   const [svg, setSvg] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     setSvg(null)
+    if (sourceOnly) return // drawing it could load what it names
     renderMermaid(source).then(r => { if (!cancelled) setSvg(r) })
     return () => { cancelled = true }
-  }, [source])
+  }, [source, sourceOnly])
   if (svg) return <DiagramView svg={svg} />
   const { html } = highlightCode(source, '')
   return <pre><code className="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>

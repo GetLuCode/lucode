@@ -27,6 +27,7 @@ const (
 	TypeManual      = "trigger.manual"
 	TypeSchedule    = "trigger.schedule"
 	TypeToolRequest = "trigger.tool_requested"
+	TypePluginEvent = "trigger.plugin_event"
 
 	TypeIf        = "control.if"
 	TypeSwitch    = "control.switch"
@@ -99,6 +100,13 @@ type NodeType struct {
 	Fields      []Field  `json:"fields"`
 	// Repeatable: running it twice does no harm, so it can run again after a hub stop.
 	Repeatable bool `json:"-"`
+	// A plugin's node. Disabled: its plugin is off, so a run fails on it, but the editor keeps it.
+	PluginID       string `json:"plugin_id,omitempty"`
+	PluginName     string `json:"plugin_name,omitempty"`
+	Icon           string `json:"icon,omitempty"`
+	Disabled       bool   `json:"plugin_disabled,omitempty"`
+	Target         string `json:"target,omitempty"`
+	TimeoutSeconds int    `json:"-"`
 }
 
 var kindOptions = []string{"any", "backlog", "todo", "inprogress", "review", "done", "blocked"}
@@ -162,6 +170,16 @@ var nodeTypes = []NodeType{
 		Description: "An agent wants to use a tool and no permission rule decided it. The flow has a minute to reach a Tool decision. Without one, a person is asked, or Claude's auto mode decides if the agent runs in it. Reads event.tool_name, event.tool_input, event.tool_input_text, event.work_dir, event.task, event.agent, event.auto_mode.",
 		Ports:       []string{PortNext},
 		Repeatable:  true,
+	},
+	{
+		Type: TypePluginEvent, Title: "Plugin event", Category: CategoryTrigger,
+		Description: "A plugin fires an event with lucode.flows.emit. Reads event.plugin, event.event, event.payload.",
+		Ports:       []string{PortNext},
+		Fields: []Field{
+			{Name: "plugin", Label: "Plugin", Kind: FieldText, Required: true, Help: "The id of the plugin, such as acme.hello."},
+			{Name: "event", Label: "Event", Kind: FieldText, Required: true},
+		},
+		Repeatable: true,
 	},
 
 	{
@@ -359,11 +377,27 @@ const (
 	RunFailedName    = "failure"
 )
 
-// NodeTypes lists the base nodes.
-func NodeTypes() []NodeType { return nodeTypes }
+// NodeTypes lists the base nodes and those of the installed plugins.
+func NodeTypes() []NodeType {
+	src := currentPlugins()
+	if src == nil {
+		return nodeTypes
+	}
+	return append(append([]NodeType{}, nodeTypes...), src.NodeTypes()...)
+}
 
 // NodeTypeOf finds a node type.
 func NodeTypeOf(t string) (NodeType, bool) {
+	if IsPluginNode(t) {
+		if src := currentPlugins(); src != nil {
+			for _, n := range src.NodeTypes() {
+				if n.Type == t {
+					return n, true
+				}
+			}
+		}
+		return NodeType{}, false
+	}
 	for _, n := range nodeTypes {
 		if n.Type == t {
 			return n, true

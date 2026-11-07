@@ -2,6 +2,7 @@ import { withPendingHooks } from './pendingHooks'
 import { create } from 'zustand'
 import type { Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, ClaudeProcess, InstanceInfo, RawEventEntry, ToolInputField } from '../types'
 import * as api from '../api'
+import { usePlugins } from './plugins'
 import type { CacheCountdown } from '../components/Chat/CacheBadge'
 
 export interface TokenUsage {
@@ -1079,6 +1080,10 @@ export const useStore = create<AppState>((set, get) => ({
         })
         break
       }
+
+      case 'plugins_changed':
+        void usePlugins.getState().load()
+        break
 
       case 'peers_changed':
         set(s => ({ peersVersion: s.peersVersion + 1 }))

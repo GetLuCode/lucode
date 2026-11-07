@@ -45,9 +45,9 @@ export function OrchestratorEdit({ projectId, sessionId, onMoved, onSaved }: {
           <IconPencil size={16} />
         </button>
       </PopoverTrigger>
-      <PopoverContent side="bottom" align="end" className="aimode-history orch-history">
-        <div className="aimode-history__title">This conversation</div>
-        {error && <div className="aimode-history__error">{error}</div>}
+      <PopoverContent side="bottom" align="end" className="conv-history orch-history">
+        <div className="conv-history__title">This conversation</div>
+        {error && <div className="conv-history__error">{error}</div>}
         <div className="orch-history__edit">
           <input
             autoFocus

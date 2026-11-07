@@ -4,21 +4,23 @@ import { useState } from 'react'
 import { ToolsTab } from './ToolsTab'
 import { SpacesTab } from './SpacesTab'
 import { PermissionsTab } from './PermissionsTab'
+import { PluginsTab } from '../Plugins/PluginsTab'
 import './SettingsModal.css'
 import { backdropClose } from '../../lib/backdropClose'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
-  initialTab?: 'tools' | 'spaces' | 'permissions'
+  initialTab?: Tab
 }
 
-type Tab = 'tools' | 'spaces' | 'permissions'
+type Tab = 'tools' | 'spaces' | 'permissions' | 'plugins'
 
 const TAB_LABELS: Record<Tab, string> = {
   tools: 'Voice Tools',
   spaces: 'Spaces',
   permissions: 'Permissions',
+  plugins: 'Plugins',
 }
 
 export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
@@ -35,7 +37,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
       {...backdropClose(onClose)}
     >
       <motion.div
-        className="settings-modal"
+        className={`settings-modal${tab === 'plugins' ? ' settings-modal--wide' : ''}`}
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
@@ -71,12 +73,19 @@ export function SettingsModal({ isOpen, onClose, initialTab }: Props) {
           >
             Permissions
           </button>
+          <button
+            className={`settings-modal__tab${tab === 'plugins' ? ' settings-modal__tab--active' : ''}`}
+            onClick={() => setTab('plugins')}
+          >
+            Plugins
+          </button>
         </div>
 
         <div className="settings-modal__body">
           {tab === 'tools' && <ToolsTab />}
           {tab === 'spaces' && <SpacesTab />}
           {tab === 'permissions' && <PermissionsTab />}
+          {tab === 'plugins' && <PluginsTab />}
         </div>
       </motion.div>
     </motion.div>

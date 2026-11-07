@@ -1,4 +1,4 @@
-package aimode
+package hub_test
 
 import (
 	"net/url"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"claude-orchestrator/internal/cdp"
+	"claude-orchestrator/internal/plugins/bundled"
 )
 
 // A page shaped like Google's AI Mode answer (the data attributes, the role=heading divs,
@@ -38,6 +39,11 @@ func TestMarkdownConversion(t *testing.T) {
 	if _, err := cdp.FindEdge(); err != nil {
 		t.Skip("Edge is not installed")
 	}
+	raw, err := bundled.FS.ReadFile("gemini/data/markdown.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answerJS := string(raw)
 	t.Setenv("LUCODE_EDGE_STATE", filepath.Join(t.TempDir(), "state.json"))
 	b := cdp.New("aimode-md", 9477)
 	if _, err := b.Launch(cdp.LaunchOptions{Headless: true, Port: 9477, ProfileDir: t.TempDir(), URL: "data:text/html;charset=utf-8," + url.PathEscape(fakeAnswer)}); err != nil {
@@ -45,7 +51,6 @@ func TestMarkdownConversion(t *testing.T) {
 	}
 	t.Cleanup(func() { b.Close() })
 	var got string
-	var err error
 	for i := 0; i < 50; i++ { // the page was opened by Launch without waiting for it to load
 		if got, err = b.Eval(answerJS); err == nil && strings.Contains(got, "Referencias:") {
 			break
@@ -67,7 +72,9 @@ func TestMarkdownConversion(t *testing.T) {
 		"| A | B \\| C |\n| --- | --- |\n| 1 | 2 |\n\n" +
 		"Referencias:\n\n" +
 		"- Sitio oficial: [python.org](http://python.org)"
-	if cleaned := Clean(got); cleaned != want {
+	// the plugin's clean() takes the page's closing notice off; that part has its own test
+	cleaned := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(got), "La IA puede cometer errores, así que verifica las respuestas"))
+	if cleaned != want {
 		t.Errorf("markdown:\n%q\n--- want:\n%q", cleaned, want)
 	}
 }

@@ -12,6 +12,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -24,6 +25,8 @@ import (
 	apipkg "claude-orchestrator/internal/api"
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
+	"claude-orchestrator/internal/plugins"
+	pluginrunner "claude-orchestrator/internal/plugins/runner"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
 	versionpkg "claude-orchestrator/internal/version"
@@ -39,13 +42,22 @@ func main() {
 		return
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "pair" {
+		runPair(os.Args[2:])
+		return
+	}
+
 	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "NATS server of the hub: host, host:port or a full URL (needs JetStream: nats-server -js)")
 	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
 	natsCreds := flag.String("nats-creds", "", "path to NATS credentials file (.creds)")
 	dataDir := flag.String("data", defaultDataDir(), "directory of the runner's database and identity")
 	workingDir := flag.String("working-dir", "", "root folder hubs may browse when choosing a project dir (default: home)")
+	pluginPolicy := flag.String("plugin-policy", plugins.PolicyStandard, "what plugins may do here: off (none), standard (fs, git, http if granted), full (exec too)")
 	flag.Parse()
 	*natsURL = natspkg.NormalizeURL(*natsURL) // "hub" or "192.168.1.5" are enough
+	if !plugins.ValidPolicy(*pluginPolicy) {
+		log.Fatalf("--plugin-policy must be off, standard or full, not %q", *pluginPolicy)
+	}
 
 	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
 		log.Fatalf("data dir: %v", err)
@@ -91,7 +103,7 @@ func main() {
 	if err := bus.StartDiscovery(natspkg.InstanceInfo{
 		ID:    instanceID,
 		Type:  "lucode",
-		Extra: map[string]any{"runner_only": true, "version": versionpkg.Current("runner").Short},
+		Extra: map[string]any{"runner_only": true, "version": versionpkg.Current("runner").Short, plugins.DiscoveryPolicyKey: *pluginPolicy},
 	}); err != nil {
 		log.Fatalf("discovery: %v", err)
 	}
@@ -104,12 +116,48 @@ func main() {
 	if err := bus.StartRPCServer(apipkg.NewRunnerHandler(db, bus, manager, *workingDir)); err != nil {
 		log.Fatalf("rpc server: %v", err)
 	}
-	log.Printf("[runner] ready — id %s", instanceID)
+	agent, err := pluginrunner.New(pluginrunner.Options{NATS: nc, RunnerID: instanceID, DataDir: *dataDir, Policy: *pluginPolicy})
+	if err != nil {
+		log.Fatalf("plugins: %v", err)
+	}
+	if err := agent.Start(); err != nil {
+		log.Fatalf("plugins: %v", err)
+	}
+	log.Printf("[runner] ready — id %s, plugin policy %s", instanceID, *pluginPolicy)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 	log.Printf("[runner] stopping")
+}
+
+// runPair is lucode-runner pair <code>: it writes the pairing and exits. A subcommand and never a
+// flag of the running process, so the secret does not sit in the process list.
+func runPair(args []string) {
+	fs := flag.NewFlagSet("pair", flag.ExitOnError)
+	dataDir := fs.String("data", defaultDataDir(), "directory of the runner's database and identity")
+	_ = fs.Parse(args)
+	if fs.NArg() != 1 {
+		log.Fatal("usage: lucode-runner pair [--data dir] <code>; an admin of the hub creates the code in Settings, Plugins")
+	}
+	p, err := plugins.ParsePairingCode(fs.Arg(0))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
+		log.Fatalf("data dir: %v", err)
+	}
+	id, err := natspkg.LoadOrCreateInstanceID(*dataDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if p.Runner != id {
+		log.Fatalf("this code is for the runner %s, and this data dir belongs to the runner %s: create one for this runner", p.Runner, id)
+	}
+	if err := plugins.SavePairing(*dataDir, p); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Paired: runner %s takes plugins from that hub from now on. A running runner needs no restart.\n", id)
 }
 
 func defaultDataDir() string {
