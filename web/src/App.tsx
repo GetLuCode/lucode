@@ -21,6 +21,7 @@ import { FlowsView } from './components/Flows/FlowsView'
 import { GitView } from './components/Git/GitView'
 import { RunnersView } from './components/Runners/RunnersView'
 import { UsagePage } from './components/Usage/UsagePage'
+import { SettingsPage } from './components/Settings/SettingsPage'
 import { OrchestratorPanel } from './components/Orchestrator/OrchestratorPanel'
 import { OrchestratorOpenButton } from './components/Orchestrator/OrchestratorOpenButton'
 import { PluginHost } from './components/Plugins/PluginHost'
@@ -113,7 +114,7 @@ export default function App() {
   useEffect(() => {
     const path = location.pathname
     if (path === '/') return // the start page
-    if (['/agents', '/agent', '/kanban', '/running', '/flows', '/git', '/runners', '/checkpoints', '/usage', '/plugins'].some(p => path.includes(p))) return
+    if (['/agents', '/agent', '/kanban', '/running', '/flows', '/git', '/runners', '/checkpoints', '/usage', '/plugins', '/settings'].some(p => path.includes(p))) return
     if (!activeProjectId) return
     if (path.includes('/sessions/')) {
       if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
@@ -125,7 +126,9 @@ export default function App() {
   // Any navigation closes the overlay.
   useEffect(() => { setNavOpen(false) }, [location.pathname])
 
-  const isUsage = location.pathname === '/usage' // account-wide: no project header, no supervisor panel
+  const isSettings = location.pathname.startsWith('/settings')
+  // account-wide pages: no project header, no supervisor panel
+  const isUsage = location.pathname === '/usage' || isSettings
   const isHome = location.pathname === '/'
   // first: a plugin's page id could be any word, also one of the ones below
   const isPluginPage = /^\/projects\/[^/]+\/plugins\//.test(location.pathname)
@@ -160,7 +163,7 @@ export default function App() {
           <div className="main__content">
             {/* a render error stays inside the page and clears when the route changes */}
             <ErrorBoundary key={location.pathname}>
-              {isHome ? <HomeView /> : isUsage ? <UsagePage /> : isPluginsList ? <PluginsPage /> : isPluginPage ? <PluginPage /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isFlowsRoute ? <FlowsView /> : isGitRoute ? <GitView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
+              {isHome ? <HomeView /> : isSettings ? <SettingsPage /> : isUsage ? <UsagePage /> : isPluginsList ? <PluginsPage /> : isPluginPage ? <PluginPage /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isFlowsRoute ? <FlowsView /> : isGitRoute ? <GitView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
             </ErrorBoundary>
           </div>
           {/* same button on every tab except the chat; the Agent tab already shows the panel */}

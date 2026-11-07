@@ -1,6 +1,5 @@
-import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { IconSearch, IconAdjustments, IconChartBar, IconLayoutSidebarLeftCollapse } from '@tabler/icons-react'
-import { SettingsModal } from '../Settings/SettingsModal'
 
 interface NavRailProps {
   activePage?: 'home' | 'usage'
@@ -9,7 +8,7 @@ interface NavRailProps {
 }
 
 export function NavRail({ activePage, onOpenSearch, onNavigate }: NavRailProps) {
-  const [showSettings, setShowSettings] = useState(false)
+  const navigate = useNavigate()
 
   return (
     <div className="nav-panel nav-panel--collapsed nav-panel--rail-only">
@@ -42,11 +41,10 @@ export function NavRail({ activePage, onOpenSearch, onNavigate }: NavRailProps) 
         <button
           className="nav-panel__rail-btn"
           title="Settings"
-          onClick={() => setShowSettings(true)}
+          onClick={() => navigate('/settings')}
         >
           <IconAdjustments size={16} />
         </button>
-        <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
       </div>
     </div>
   )
