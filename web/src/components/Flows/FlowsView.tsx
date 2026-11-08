@@ -2,14 +2,19 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useSearchParams } from 'react-router-dom'
 import { fromPromise } from 'xstate'
 import { useMachine } from '@xstate/react'
-import { IconPlayerPause, IconPlayerPlay, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
+import { IconAlertTriangle, IconGitFork, IconLock, IconPlayerPause, IconPlayerPlay, IconPlus, IconPuzzle, IconTerminal2, IconTrash, IconX } from '@tabler/icons-react'
 import { useStore } from '../../store'
+import { usePlugins } from '../../store/plugins'
+import { groupByPlugin, nodeTypeDisabled, pluginErrorMessage, unknownNodesMessage } from '../../lib/plugins'
+import { PluginIcon, InstalledPluginIcon } from '../Plugins/PluginIcon'
+import '../Plugins/Plugins.css'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import * as api from '../../api'
 import type { Agent, Flow, FlowBlueprint, FlowGraph, FlowNodeField, FlowNodeType, FlowProblem, FlowRun, FlowStep, KanbanCard, KanbanList } from '../../types'
 import type { FlowCanvasHandle } from './FlowCanvas'
+import { PushDevice } from './PushDevice'
 import { editorMachine } from './editorMachine'
-import { STEP_COLORS, nodeStatuses, parseFlowGraph, unknownNodeTypes } from './flowGraph'
+import { PIN_COLORS, STEP_COLORS, inputPin, nodeStatuses, outputPins, parseFlowGraph, portLabels, unknownNodeTypes, valueText } from './flowGraph'
 import './Flows.css'
 
 // litegraph is half a megabyte: it only loads for whoever opens this tab.
@@ -17,11 +22,14 @@ const FlowCanvas = lazy(() => import('./FlowCanvas').then(m => ({ default: m.Flo
 
 type Selected = { id: string; type: string; config: Record<string, unknown> } | null
 
-const CATEGORIES: [string, string][] = [['trigger', 'Triggers'], ['control', 'Control'], ['action', 'Actions']]
+const CATEGORIES: [string, string][] = [['trigger', 'Triggers'], ['control', 'Control'], ['data', 'Data'], ['action', 'Actions']]
 
 export function FlowsView() {
   const projectId = useStore(s => s.activeProjectId)
   const flowVersion = useStore(s => s.flowVersion)
+  const flowDraftChange = useStore(s => s.flowDraftChange)
+  const pluginsVersion = usePlugins(s => s.version)
+  const installedPlugins = usePlugins(s => s.installed)
   const isMobile = useIsMobile()
   const [params, setParams] = useSearchParams()
 
@@ -44,7 +52,8 @@ export function FlowsView() {
   const canvas = useRef<FlowCanvasHandle>(null)
   // The canvas loads late (and is rebuilt if remounted), so what it should show is kept here.
   const canvasLive = useRef(false)
-  const showing = useRef<{ graph: FlowGraph; readOnly: boolean; statuses: Map<string, string> } | null>(null)
+  const showing = useRef<{ graph: FlowGraph; readOnly: boolean; statuses: Map<string, string>; keepView?: boolean } | null>(null)
+  const repaintAfterTypes = useRef(false)
   const flowRef = useRef<Flow | null>(null)
   const nameRef = useRef('')
   const nodeTypesRef = useRef(nodeTypes)
@@ -56,6 +65,7 @@ export function FlowsView() {
     const current = flowRef.current
     // an empty canvas that has not loaded yet must never overwrite a draft
     if (!current || !canvas.current || !canvasLive.current) return
+    if (current.locked) return // a plugin's flow: the hub refuses it anyway
     // nor one that could not draw every node: saving it would delete the ones it left out
     if (showing.current && unknownNodeTypes(showing.current.graph, nodeTypesRef.current).length > 0) return
     const saved = await api.saveFlow(current.id, { name: nameRef.current, draft: canvas.current.serialize() })
@@ -84,7 +94,7 @@ export function FlowsView() {
     () => (flow && nodeTypes.length > 0 ? unknownNodeTypes(parseFlowGraph(flow.draft), nodeTypes) : []),
     [flow, nodeTypes],
   )
-  const editable = !viewingRun && !isMobile && unknownTypes.length === 0
+  const editable = !viewingRun && !isMobile && unknownTypes.length === 0 && !flow?.locked
 
   const stateRef = useRef(state)
   stateRef.current = state
@@ -100,12 +110,22 @@ export function FlowsView() {
     setFlows(await api.listFlows(projectId))
   }, [projectId])
 
+  useEffect(() => () => { flush().catch(console.error) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetched again when plugins change: they bring nodes, blueprints and locked flows, and a flow
+  // that could not be drawn for lack of a plugin's nodes can be drawn once it is back.
   useEffect(() => {
-    api.listFlowNodeTypes().then(setNodeTypes).catch(e => setNotice(String(e)))
+    api.listFlowNodeTypes().then(types => {
+      const view = showing.current
+      const wasBlocked = !!view && unknownNodeTypes(view.graph, nodeTypesRef.current).length > 0
+      setNodeTypes(types)
+      nodeTypesRef.current = types
+      repaintAfterTypes.current = wasBlocked && !!view && unknownNodeTypes(view.graph, types).length === 0
+    }).catch(e => setNotice(String(e)))
     api.listFlowBlueprints().then(setBlueprints).catch(console.error)
-    return () => { flush().catch(console.error) }
+    if (pluginsVersion > 0) reloadFlows().catch(console.error)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [pluginsVersion])
 
   useEffect(() => {
     if (!projectId) return
@@ -119,9 +139,16 @@ export function FlowsView() {
   const paint = useCallback(() => {
     const view = showing.current
     if (!canvasLive.current || !view) return
-    canvas.current?.load(view.graph, view.readOnly || unknownNodeTypes(view.graph, nodeTypesRef.current).length > 0)
+    canvas.current?.load(view.graph, view.readOnly || unknownNodeTypes(view.graph, nodeTypesRef.current).length > 0, view.keepView)
     canvas.current?.setStatuses(view.statuses)
   }, [])
+
+  // After the canvas has registered the new types: it runs its effects before this one.
+  useEffect(() => {
+    if (!repaintAfterTypes.current) return
+    repaintAfterTypes.current = false
+    paint()
+  }, [nodeTypes, paint])
 
   const onCanvasReady = useCallback((ready: boolean) => {
     canvasLive.current = ready
@@ -140,7 +167,7 @@ export function FlowsView() {
     setName(fresh.name)
     setViewed(null)
     setSelected(null)
-    show(parseFlowGraph(fresh.draft), isMobile)
+    show(parseFlowGraph(fresh.draft), isMobile || !!fresh.locked)
     canvas.current?.setProblems([])
     send({ type: 'OPEN' })
   }, [flush, isMobile, send, show])
@@ -197,6 +224,27 @@ export function FlowsView() {
     return () => { stale = true; clearTimeout(t) }
   }, [flowId, viewedId, flowVersion, tab]) // opening Runs refetches too, in case the socket missed an event
 
+  // Live: an agent changed a draft. The last save wins, so what it wrote replaces what is on the
+  // canvas, unsaved edits included. A run on screen stays: going back to the draft reads it again.
+  useEffect(() => {
+    if (flowDraftChange.version === 0) return
+    let stale = false
+    reloadFlows().catch(console.error)
+    if (flowRef.current?.id !== flowDraftChange.flow_id) return
+    api.getFlow(flowDraftChange.flow_id).then(fresh => {
+      if (stale || flowRef.current?.id !== fresh.id) return
+      setFlow(fresh)
+      if (stateRef.current.matches('viewingRun')) return
+      setName(fresh.name)
+      showing.current = { graph: parseFlowGraph(fresh.draft), readOnly: isMobile || !!fresh.locked, statuses: new Map(), keepView: true }
+      paint()
+      canvas.current?.setProblems([])
+      send({ type: 'OPEN' })
+    }).catch(e => setNotice(String(e)))
+    return () => { stale = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowDraftChange.version])
+
   useEffect(() => {
     canvas.current?.setProblems(state.context.problems.flatMap(p => (p.node_id ? [p.node_id] : [])))
   }, [state.context.problems])
@@ -222,6 +270,18 @@ export function FlowsView() {
       await reloadFlows()
       await openFlow(f)
     } catch (e) { setNotice(String(e)) }
+  }
+
+  // A locked flow stays as the plugin wrote it; this copy is an ordinary draft to change.
+  const [forking, setForking] = useState(false)
+  async function forkFlow() {
+    if (!flow) return
+    setForking(true)
+    try {
+      const copy = await api.forkFlow(flow.id)
+      await reloadFlows()
+      await openFlow(copy)
+    } catch (e) { setNotice(pluginErrorMessage(e)) } finally { setForking(false) }
   }
 
   async function removeFlow() {
@@ -274,11 +334,20 @@ export function FlowsView() {
     : state.matches('publishing') ? 'Publishing…'
     : state.matches('dirty') ? 'Unsaved'
     : state.matches('saveFailed') ? 'Not saved'
+    : flow?.draft_agent ? `Changed by ${flow.draft_agent}: review it before publishing`
     : state.context.unpublished ? 'Saved, not published'
     : 'Saved'
 
   const problems = state.context.problems
   const selectedType = selected ? typeOf(selected.type) : undefined
+  const pluginName = (id: string) => installedPlugins.find(p => p.manifest?.id === id)?.manifest.name
+  const disabledPlugins = useMemo(
+    () => [...new Set(nodeTypes.filter(t => nodeTypeDisabled(t, installedPlugins)).map(t => t.plugin_id!))],
+    [nodeTypes, installedPlugins],
+  )
+  const coreBlueprints = blueprints.filter(b => !b.seeded && !b.plugin_id)
+  const pluginBlueprints = groupByPlugin(blueprints.filter(b => !b.seeded && b.plugin_id), b => b.plugin_id!)
+  const pluginNodeGroups = groupByPlugin(nodeTypes.filter(t => t.plugin_id && t.category !== 'trigger'), t => t.plugin_id!)
   const hasManual = useMemo(() => flow && parseFlowGraph(flow.draft).nodes.some(n => n.type === 'trigger.manual'), [flow])
 
   return (
@@ -297,6 +366,7 @@ export function FlowsView() {
             >
               <span className={`flows-dot${f.enabled && f.published_version > 0 ? ' flows-dot--on' : ''}`} />
               <span className="flows-list__name">{f.name}</span>
+              {f.locked && <IconLock size={12} className="flows-list__lock" aria-label="Locked: from a plugin" />}
               {f.published_version > 0 && <span className="flows-list__version">v{f.published_version}</span>}
             </button>
           ))}
@@ -310,11 +380,23 @@ export function FlowsView() {
           {paused ? <IconPlayerPlay size={14} /> : <IconPlayerPause size={14} />}
           {paused ? 'All flows paused: resume' : 'Pause all flows'}
         </button>
-        {editable && blueprints.some(b => !b.seeded) && (
+        <PushDevice />
+        {(editable || !!flow?.locked) && !isMobile && !viewingRun && (coreBlueprints.length > 0 || pluginBlueprints.length > 0) && (
           <div className="flows-blueprints">
             <div className="flows-palette__title">Start from a blueprint</div>
-            {blueprints.filter(b => !b.seeded).map(b => (
+            {coreBlueprints.map(b => (
               <button key={b.key} className="flows-blueprints__item" title={b.description} onClick={() => createFromBlueprint(b)}>{b.name}</button>
+            ))}
+            {pluginBlueprints.map(g => (
+              <div key={g.pluginId}>
+                <div className="flows-blueprints__plugin">
+                  <InstalledPluginIcon pluginId={g.pluginId} size={13} />
+                  {g.items[0].plugin_name || pluginName(g.pluginId) || g.pluginId}
+                </div>
+                {g.items.map(b => (
+                  <button key={b.key} className="flows-blueprints__item" title={b.description} onClick={() => createFromBlueprint(b)}>{b.name}</button>
+                ))}
+              </div>
             ))}
           </div>
         )}
@@ -323,7 +405,7 @@ export function FlowsView() {
             {CATEGORIES.map(([cat, label]) => (
               <div key={cat}>
                 <div className="flows-palette__title">{label}</div>
-                {nodeTypes.filter(t => t.category === cat).map(t => (
+                {nodeTypes.filter(t => t.category === cat && (!t.plugin_id || cat === 'trigger')).map(t => (
                   <button
                     key={t.type}
                     className={`flows-palette__item flows-palette__item--${cat}`}
@@ -331,6 +413,31 @@ export function FlowsView() {
                     onClick={() => canvas.current?.addNode(t.type)}
                   >{t.title}</button>
                 ))}
+              </div>
+            ))}
+            {pluginNodeGroups.map(g => (
+              <div key={g.pluginId}>
+                <div className="flows-palette__plugin">
+                  <InstalledPluginIcon pluginId={g.pluginId} size={13} />
+                  <span>{g.items[0].plugin_name || pluginName(g.pluginId) || g.pluginId}</span>
+                </div>
+                {g.items.map(t => {
+                  const off = nodeTypeDisabled(t, installedPlugins)
+                  const onRunner = t.target === 'runner'
+                  return (
+                    <button
+                      key={t.type}
+                      className={`flows-palette__item flows-palette__item--action flows-palette__item--plugin${off ? ' flows-palette__item--off' : ''}`}
+                      title={`${t.description}${onRunner ? '\nRuns on the card’s runner.' : ''}${off ? '\nIts plugin is off: a run fails on this node until it is back on.' : ''}`}
+                      onClick={() => canvas.current?.addNode(t.type)}
+                    >
+                      <PluginIcon pluginId={g.pluginId} path={t.icon} size={13} fallback={<IconPuzzle size={13} stroke={1.6} />} />
+                      <span className="flows-palette__label">{t.title}</span>
+                      {onRunner && <span className="flows-palette__tag">runner</span>}
+                      {off && <span className="flows-palette__tag flows-palette__tag--off">off</span>}
+                    </button>
+                  )
+                })}
               </div>
             ))}
           </div>
@@ -360,7 +467,7 @@ export function FlowsView() {
                     disabled={!editable}
                     onChange={e => { setName(e.target.value); send({ type: 'CHANGE' }) }}
                   />
-                  <span className="flows-bar__label" role="status">{saveLabel}</span>
+                  {!flow.locked && <span className="flows-bar__label" role="status">{saveLabel}</span>}
                   <span className="flows-bar__gap" />
                   {hasManual && flow.published_version > 0 && (
                     <>
@@ -373,6 +480,11 @@ export function FlowsView() {
                   )}
                   {flow.published_version > 0 && (
                     <button className="btn btn--secondary" onClick={toggleEnabled}>{flow.enabled ? 'Disable' : 'Enable'}</button>
+                  )}
+                  {flow.locked && (
+                    <button className="btn btn--secondary flows-bar__fork" onClick={forkFlow} disabled={forking}>
+                      <IconGitFork size={14} aria-hidden />Create a new version
+                    </button>
                   )}
                   {editable && (
                     <button className="btn btn--primary" onClick={() => send({ type: 'PUBLISH' })} disabled={state.matches('publishing')}>Publish</button>
@@ -391,10 +503,18 @@ export function FlowsView() {
             {notice && <button className="header-icon-btn" onClick={() => setNotice('')} aria-label="Dismiss"><IconX size={14} /></button>}
           </div>
         )}
+        {flow?.locked && !viewed && (
+          <div className="flows-lock">
+            {flow.plugin_id ? <InstalledPluginIcon pluginId={flow.plugin_id} size={16} /> : <IconLock size={16} aria-hidden />}
+            <span>
+              <strong>Locked.</strong> This flow comes from {flow.plugin_id ? <strong>{pluginName(flow.plugin_id) ?? flow.plugin_id}</strong> : 'a plugin'} and updates with it. You can run it, turn it on or off and read it. To change it, create a new version.
+            </span>
+          </div>
+        )}
         {isMobile && flow && <div className="flows-notice">Flows can be viewed here. Edit them on a larger screen.</div>}
         {unknownTypes.length > 0 && !viewed && (
           <div className="flows-notice" role="alert">
-            This flow uses nodes the running hub does not know ({unknownTypes.join(', ')}), so they are not drawn and nothing here is saved. Restart the hub, then reload this page.
+            {unknownNodesMessage(unknownTypes)}
           </div>
         )}
         {canvasReady && (
@@ -405,6 +525,7 @@ export function FlowsView() {
               onChange={() => send({ type: 'CHANGE' })}
               onSelect={n => { setSelected(n); if (n) setTab('node') }}
               onReady={onCanvasReady}
+              disabledPlugins={disabledPlugins}
             />
           </Suspense>
         )}
@@ -431,6 +552,7 @@ export function FlowsView() {
                   type={selectedType}
                   config={selected.config}
                   disabled={!editable}
+                  pluginOff={nodeTypeDisabled(selectedType, installedPlugins)}
                   agents={agents}
                   lists={lists}
                   nodeId={selected.id}
@@ -440,7 +562,7 @@ export function FlowsView() {
                 />
               ) : (
                 <p className="flows-hint">
-                  {viewed ? 'Select a node to see what it did.' : 'Add a trigger, connect the nodes by dragging from an output, and select one to set it up. Publish to make it active.'}
+                  {viewed ? 'Select a node to see what it did.' : flow.locked ? 'Select a node to read how it is set up.' : 'Add a trigger, connect the nodes by dragging from an output, and select one to set it up. Publish to make it active.'}
                 </p>
               )}
             </div>
@@ -533,8 +655,9 @@ function DecisionForm({ seq, question, onDecided }: { seq: number; question: str
   )
 }
 
-function NodeForm({ type, config, disabled, agents, lists, nodeId, step, onChange, onDecided }: {
+function NodeForm({ type, config, disabled, pluginOff, agents, lists, nodeId, step, onChange, onDecided }: {
   type: FlowNodeType
+  pluginOff: boolean
   config: Record<string, unknown>
   disabled: boolean
   agents: Agent[]
@@ -549,6 +672,12 @@ function NodeForm({ type, config, disabled, agents, lists, nodeId, step, onChang
     <div className="flows-form" key={nodeId}>
       <h3 className="flows-form__title">{type.title}</h3>
       <p className="flows-form__desc">{type.description}</p>
+      {type.plugin_id && type.target === 'runner' && (
+        <p className="flows-form__where"><IconTerminal2 size={13} aria-hidden /><span>Runs on the card’s runner. If that runner is offline or its policy refuses it, the node goes to “failed”.</span></p>
+      )}
+      {pluginOff && (
+        <p className="flows-form__where flows-form__where--off"><IconAlertTriangle size={13} aria-hidden /><span>{type.plugin_name || 'Its plugin'} is off, so a run fails on this node until it is back on.</span></p>
+      )}
       {(type.fields ?? []).map(f => (
         <label key={f.name} className={`flows-field${f.kind === 'bool' ? ' flows-field--check' : ''}`}>
           {f.kind === 'bool' ? (
@@ -563,21 +692,49 @@ function NodeForm({ type, config, disabled, agents, lists, nodeId, step, onChang
             </>
           )}
           {f.help && <small>{f.help}</small>}
-          {(f.kind === 'expr' || f.kind === 'template') && !f.help && <small>{f.kind === 'template' ? 'Insert values with {{card.title}}.' : 'Reads card, event, run and nodes.'}</small>}
+          {(f.kind === 'expr' || f.kind === 'template') && !f.help && <small>{f.kind === 'template' ? 'Insert values with {{input}} or {{card.title}}.' : 'Reads input, card, event and run.'}</small>}
         </label>
       ))}
       {type.type === 'action.ai_evaluate' && !disabled && <AIKeyField />}
-      <p className="flows-form__id">Other nodes read its output as <code>nodes.{nodeId}</code></p>
+      <NodePins type={type} config={config} />
       {step && (
         <div className="flows-step">
           <RunStatus status={step.status} />
           {step.port && step.port !== '*' && <span> through “{step.port}”</span>}
           {step.error && <p className="flows-run__error">{step.error}</p>}
+          {step.input !== undefined && step.input !== null && (
+            <><span className="flows-step__label">Received</span><pre>{valueText(step.input)}</pre></>
+          )}
           {deciding ? (
             <DecisionForm seq={step.seq} question={String((step.output as { question?: unknown })?.question ?? '')} onDecided={onDecided} />
-          ) : step.output && step.output !== '{}' && <pre>{JSON.stringify(step.output, null, 2)}</pre>}
+          ) : stepValue(step) !== undefined && (
+            <><span className="flows-step__label">Gave</span><pre>{valueText(stepValue(step))}</pre></>
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+// What a step gave through its output: the value the next nodes received.
+function stepValue(step: FlowStep): unknown {
+  const out = step.output as { value?: unknown } | null
+  return out && typeof out === 'object' && 'value' in out ? out.value : undefined
+}
+
+// The node's input and outputs, with what each carries: values travel on the wires.
+function NodePins({ type, config }: { type: FlowNodeType; config: Record<string, unknown> }) {
+  const input = inputPin(type)
+  const outputs = outputPins(type)
+  const labels = portLabels(type, config)
+  const pin = (name: string, kind: string, label?: string) => (
+    <li key={name}><span className="flows-pin__dot" style={{ background: PIN_COLORS[kind] ?? PIN_COLORS.any }} />{label && label !== 'unused' ? `${label} (${name})` : name}<small>{kind}</small></li>
+  )
+  return (
+    <div className="flows-pins">
+      {input && <div><span className="flows-step__label">Input</span><ul>{pin(input.name, input.type)}</ul></div>}
+      {outputs.length > 0 && <div><span className="flows-step__label">Outputs</span><ul>{outputs.map(o => pin(o.name, o.type, labels.get(o.name)))}</ul></div>}
+      <small>An output carries the node’s answer to the nodes wired to it, and starts them. Read a JSON answer with Get JSON prop.</small>
     </div>
   )
 }
@@ -622,6 +779,8 @@ function FieldInput({ field, value, disabled, agents, lists, onChange }: {
       )
     case 'template':
       return <textarea className="input flows-field__text" rows={3} value={text} disabled={disabled} onChange={e => onChange(e.target.value)} />
+    case 'lines':
+      return <textarea className="input flows-field__text flows-field__code" rows={3} spellCheck={false} value={text} disabled={disabled} onChange={e => onChange(e.target.value)} />
     default:
       return (
         <input

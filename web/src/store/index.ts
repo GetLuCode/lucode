@@ -2,6 +2,7 @@ import { withPendingHooks } from './pendingHooks'
 import { create } from 'zustand'
 import type { Project, Session, Message, PendingHook, WSEvent, UserTool, ContextUsage, ClaudeProcess, InstanceInfo, RawEventEntry, ToolInputField } from '../types'
 import * as api from '../api'
+import { usePlugins } from './plugins'
 import type { CacheCountdown } from '../components/Chat/CacheBadge'
 
 export interface TokenUsage {
@@ -49,6 +50,7 @@ interface AppState {
   // Bumped when an agent changes a task (done/blocked/comment) so open boards refresh.
   boardVersion: number
   flowVersion: number // bumped when a flow run changes, so the views refetch
+  flowDraftChange: { flow_id: string; version: number } // an agent changed a draft, so the editor reloads it
   activeProjectId: string | null
   activeSessionId: string | null
   pendingSession: { projectId: string; model: string } | null
@@ -299,6 +301,7 @@ export const useStore = create<AppState>((set, get) => ({
   sessions: [],
   boardVersion: 0,
   flowVersion: 0,
+  flowDraftChange: { flow_id: '', version: 0 },
   activeProjectId: null,
   activeSessionId: null,
   pendingSession: null,
@@ -976,6 +979,11 @@ export const useStore = create<AppState>((set, get) => ({
         break
       }
 
+      case 'flow_draft_updated': {
+        set(s => ({ flowDraftChange: { flow_id: event.flow_id, version: s.flowDraftChange.version + 1 } }))
+        break
+      }
+
       case 'flow_updated': {
         set(s => ({ flowVersion: s.flowVersion + 1 }))
         break
@@ -1073,6 +1081,14 @@ export const useStore = create<AppState>((set, get) => ({
         break
       }
 
+      case 'plugins_changed':
+        void usePlugins.getState().load()
+        break
+
+      case 'plugin_webhook':
+        usePlugins.getState().noteWebhook(event.pluginId)
+        break
+
       case 'peers_changed':
         set(s => ({ peersVersion: s.peersVersion + 1 }))
         void get().loadInstances()
@@ -1113,6 +1129,9 @@ export const useStore = create<AppState>((set, get) => ({
               tool_input: event.tool_input,
               tool_use_id: event.tool_use_id,
               timestamp: event.timestamp,
+              decision: event.decision,
+              decided_by: event.decided_by,
+              reason: event.reason,
             }),
             seq: (s.messages[sessId]?.length ?? 0),
             created_at: event.timestamp,

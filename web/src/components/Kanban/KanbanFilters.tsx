@@ -218,8 +218,6 @@ export function KanbanFilters({ filters, onChange, types, typeColor, agents, sho
   agents: Agent[]
   showArchived: boolean
   onToggleArchived: () => void
-  shown: number
-  total: number
 }) {
   const set = (patch: Partial<KanbanFilterState>) => onChange({ ...filters, ...patch })
   const active = countActiveFilters(filters)

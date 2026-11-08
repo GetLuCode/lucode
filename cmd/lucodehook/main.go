@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,12 @@ import (
 
 // permissionTimeout matches the aiapi permission client.
 const permissionTimeout = 4 * time.Minute
+
+// How long a tool waits for a hub that is not there, which is what a restart looks like.
+const (
+	hubRestartWait = 30 * time.Second
+	hubRetryEvery  = time.Second
+)
 
 var logger = log.New(io.Discard, "", 0)
 
@@ -125,8 +132,13 @@ func main() {
 		"tool_name":   toolName,
 		"tool_input":  ev["tool_input"],
 		"work_dir":    jsonStr(ev["cwd"]),
+		// what claude is really running in: the hub can only leave a call to auto mode if it is on
+		"permission_mode": jsonStr(ev["permission_mode"]),
 	})
-	msg, err := nc.Request("lucode.permissions."+sessionID, payload, permissionTimeout)
+	msg, err := askHub(nc, "lucode.permissions."+sessionID, payload, hubRestartWait)
+	if errors.Is(err, nats.ErrNoResponders) {
+		deny("the lucode hub is not running — tool blocked")
+	}
 	if err != nil {
 		deny("approval timed out — tool blocked")
 	}
@@ -140,12 +152,29 @@ func main() {
 	switch reply.Decision {
 	case "allow", "approve":
 		allow("approved: "+reply.Reason, true)
+	case "auto":
+		// no decision: claude's auto mode reviews the call as if there were no hook
+		allow("left to auto mode", false)
 	default:
 		reason := reply.Reason
 		if reason == "" {
 			reason = "Blocked by user"
 		}
 		deny(reason)
+	}
+}
+
+// askHub sends the request and waits for the answer. With nobody listening the hub is down,
+// usually only for a restart, so it tries again for a while before giving up.
+func askHub(nc *nats.Conn, subject string, payload []byte, restartWait time.Duration) (*nats.Msg, error) {
+	deadline := time.Now().Add(restartWait)
+	for {
+		msg, err := nc.Request(subject, payload, permissionTimeout)
+		if !errors.Is(err, nats.ErrNoResponders) || time.Now().After(deadline) {
+			return msg, err
+		}
+		logger.Printf("no hub listening, trying again")
+		time.Sleep(hubRetryEvery)
 	}
 }
 

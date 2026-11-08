@@ -512,7 +512,7 @@ export function UsagePage() {
   const [day, setDay] = useState('')
   const [fromHour, setFromHour] = useState(0)
   const [toHour, setToHour] = useState(24)
-  const filter = useMemo<UsageRange | api.UsageWindow>(() => {
+  const filter = useMemo<UsageRange | api.UsageSpan>(() => {
     if (!day) return range
     const [y, m, d] = day.split('-').map(Number)
     return { from: new Date(y, m - 1, d, fromHour).toISOString(), to: new Date(y, m - 1, d, toHour).toISOString() }

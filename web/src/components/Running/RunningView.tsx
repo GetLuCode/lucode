@@ -128,12 +128,6 @@ export function RunningView() {
     return () => { cancelled = true }
   }, [diffKey])
 
-  const fmt = (iso?: string) => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    return isNaN(d.getTime()) || d.getFullYear() < 2000 ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-  }
-
   const fmtFull = (iso?: string) => {
     if (!iso) return '—'
     const d = new Date(iso)

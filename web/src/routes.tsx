@@ -14,6 +14,9 @@ export function AppRoutes() {
     <AuthGuard>
       <Routes>
         <Route path="/usage" element={<App />} />
+        <Route path="/settings" element={<App />} />
+        <Route path="/settings/:section" element={<App />} />
+        <Route path="/settings/plugin/:pluginId" element={<App />} />
         <Route path="/" element={<App />} />
         <Route path="/projects/:projectId" element={<App />} />
         <Route path="/projects/:projectId/sessions/:sessionId" element={<App />} />
@@ -26,6 +29,7 @@ export function AppRoutes() {
         <Route path="/projects/:projectId/runners/:runnerId" element={<App />} />
         <Route path="/projects/:projectId/agent" element={<App />} />
         <Route path="/projects/:projectId/checkpoints" element={<App />} />
+        <Route path="/projects/:projectId/plugins/:pluginId/:pageId" element={<App />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AuthGuard>

@@ -18,11 +18,11 @@ func approvalGraph(extra map[string]any) Graph {
 		Nodes: []Node{
 			reviewTrigger(),
 			{ID: "ask", Type: TypeApproval, Config: config},
-			{ID: "yes", Type: TypeComment, Config: cfg("text", "yes {{nodes.ask.note}}")},
+			{ID: "yes", Type: TypeComment, Config: cfg("text", "yes {{input}}")},
 			{ID: "no", Type: TypeComment, Config: cfg("text", "no")},
 			{ID: "late", Type: TypeComment, Config: cfg("text", "nobody answered")},
 		},
-		Edges: []Edge{{"t", PortNext, "ask"}, {"ask", PortApproved, "yes"}, {"ask", PortRejected, "no"}, {"ask", PortTimeout, "late"}},
+		Edges: []Edge{{"t", PortEvent, "ask"}, {"ask", PortApproved, "yes"}, {"ask", PortRejected, "no"}, {"ask", PortTimeout, "late"}},
 	}
 }
 
@@ -75,7 +75,7 @@ func TestDecideOnlyAnswersApprovals(t *testing.T) {
 			reviewTrigger(),
 			{ID: "ask", Type: TypeDelay, Config: cfg("seconds", float64(60))},
 		},
-		Edges: []Edge{{"t", PortNext, "ask"}},
+		Edges: []Edge{{"t", PortEvent, "ask"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	if err := h.e.Decide(h.waitingApproval(f).Seq, PortApproved, ""); !errors.Is(err, ErrNotWaiting) {
@@ -116,11 +116,11 @@ func aiGraph() Graph {
 		Nodes: []Node{
 			reviewTrigger(),
 			{ID: "ai", Type: TypeAIEvaluate, Config: cfg("instruction", "Risk of {{card.title}}?", "input", "text", "outcome1", "low", "outcome2", "high", "model", "claude-opus-5-5", "effort", "low")},
-			{ID: "l", Type: TypeComment, Config: cfg("text", "low because {{nodes.ai.reason}}")},
+			{ID: "l", Type: TypeComment, Config: cfg("text", "low because {{input}}")},
 			{ID: "h", Type: TypeComment, Config: cfg("text", "high")},
-			{ID: "bad", Type: TypeComment, Config: cfg("text", "failed: {{nodes.ai.error}}")},
+			{ID: "bad", Type: TypeComment, Config: cfg("text", "failed: {{input}}")},
 		},
-		Edges: []Edge{{"t", PortNext, "ai"}, {"ai", PortOutcome1, "l"}, {"ai", PortOutcome2, "h"}, {"ai", PortFailed, "bad"}},
+		Edges: []Edge{{"t", PortEvent, "ai"}, {"ai", PortOutcome1, "l"}, {"ai", PortOutcome2, "h"}, {"ai", PortFailed, "bad"}},
 	}
 }
 
@@ -202,7 +202,7 @@ func TestAIEvaluatesCountTowardTheTurnLimit(t *testing.T) {
 			{ID: "ai", Type: TypeAIEvaluate, Config: cfg("instruction", "x", "input", "x", "outcome1", "low", "outcome2", "high", "model", "claude-opus-5-5", "effort", "low")},
 			{ID: "r", Type: TypeRetry, Config: cfg("max", float64(1000))},
 		},
-		Edges: []Edge{{"t", PortNext, "ai"}, {"ai", PortOutcome1, "r"}, {"r", PortAgain, "ai"}},
+		Edges: []Edge{{"t", PortEvent, "ai"}, {"ai", PortOutcome1, "r"}, {"r", PortAgain, "ai"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	for i := 0; i < 30; i++ {
@@ -232,10 +232,10 @@ func TestAskNodesValidate(t *testing.T) {
 		edge Edge
 		want string
 	}{
-		{"same answer twice", ai("outcome2", "a"), Edge{"t", PortNext, "ai"}, "there twice"},
-		{"unknown model", ai("model", "gpt-5"), Edge{"t", PortNext, "ai"}, "not an option"},
-		{"no answer", ai("outcome1", ""), Edge{"t", PortNext, "ai"}, "Answer 1 is required"},
-		{"no question", Node{ID: "ask", Type: TypeApproval}, Edge{"t", PortNext, "ask"}, "Question is required"},
+		{"same answer twice", ai("outcome2", "a"), Edge{"t", PortEvent, "ai"}, "there twice"},
+		{"unknown model", ai("model", "gpt-5"), Edge{"t", PortEvent, "ai"}, "not an option"},
+		{"no answer", ai("outcome1", ""), Edge{"t", PortEvent, "ai"}, "Answer 1 is required"},
+		{"no question", Node{ID: "ask", Type: TypeApproval}, Edge{"t", PortEvent, "ask"}, "Question is required"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var all []string
@@ -249,7 +249,7 @@ func TestAskNodesValidate(t *testing.T) {
 	}
 	bad := Graph{
 		Nodes: []Node{trigger, ai(), {ID: "c", Type: TypeComment, Config: cfg("text", "x")}},
-		Edges: []Edge{{"t", PortNext, "ai"}, {"ai", PortOutcome3, "c"}},
+		Edges: []Edge{{"t", PortEvent, "ai"}, {"ai", PortOutcome3, "c"}},
 	}
 	var msgs []string
 	for _, p := range Validate(bad) {
@@ -258,7 +258,7 @@ func TestAskNodesValidate(t *testing.T) {
 	if !strings.Contains(strings.Join(msgs, " | "), "Answer 3 is empty") {
 		t.Fatalf("got %q", msgs)
 	}
-	if p := Validate(Graph{Nodes: []Node{trigger, ai()}, Edges: []Edge{{"t", PortNext, "ai"}}}); len(p) != 0 {
+	if p := Validate(Graph{Nodes: []Node{trigger, ai()}, Edges: []Edge{{"t", PortEvent, "ai"}}}); len(p) != 0 {
 		t.Fatalf("a good node: %+v", p)
 	}
 }

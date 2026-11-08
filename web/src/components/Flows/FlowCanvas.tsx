@@ -1,26 +1,27 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { LGraph, LGraphCanvas, LiteGraph } from 'litegraph.js'
 import 'litegraph.js/css/litegraph.css'
-import type { FlowGraph, FlowNodeType } from '../../types'
-import { STEP_COLORS, canvasType, defaultConfig, nodeSummary, portLabels, serializeCanvas, type CanvasLink, type CanvasNode } from './flowGraph'
+import type { FlowGraph, FlowNodeType, FlowPin } from '../../types'
+import { PIN_COLORS, STEP_COLORS, canvasType, defaultConfig, inputPin, nodeSummary, outputPins, portLabels, serializeCanvas, slotType, type CanvasLink, type CanvasNode } from './flowGraph'
 
 // The litegraph canvas. It only draws and edits: the hub validates and runs flows, and
-// litegraph's own graph runtime is never started.
+// litegraph's own graph runtime is never started. Like a node graph of values: each output
+// carries the node's answer to the input it is wired to, and that arrival starts the node.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const LG = LiteGraph as any
 
-const SLOT = 'flow'
 const NODE_WIDTH = 210
 const SUMMARY_HEIGHT = 26
 const CATEGORY_COLOR: Record<string, [string, string]> = {
   trigger: ['#7a4f9e', '#231a2c'],
   control: ['#3f6f9e', '#18222c'],
   action: ['#2f7a68', '#15251f'],
+  data: ['#8a6a2f', '#261f14'],
 }
 
 export interface FlowCanvasHandle {
-  load(graph: FlowGraph, readOnly: boolean): void
+  load(graph: FlowGraph, readOnly: boolean, keepView?: boolean): void
   serialize(): FlowGraph
   addNode(type: string): void
   setConfig(flowId: string, config: Record<string, unknown>): void
@@ -34,11 +35,22 @@ interface Props {
   onSelect(node: { id: string; type: string; config: Record<string, unknown> } | null): void
   // The handle only works from here on. A new canvas is empty: whoever owns it loads it.
   onReady(ready: boolean): void
+  disabledPlugins?: string[]
 }
 
-let registered = false
+// What is registered, by type, so a plugin installed later adds its nodes and an upgrade replaces them.
+const registered = new Map<string, string>()
+let cleared = false
+// Plugins that are off: their nodes stay drawn, and say so.
+let offPlugins = new Set<string>()
 
 // The name on an output is only a label: the port keeps its id, which is what edges store.
+// A slot is drawn in the color of what it carries, so text, JSON and anything tell apart.
+function slotExtra(pin: FlowPin) {
+  const color = PIN_COLORS[pin.type] ?? PIN_COLORS.any
+  return { pinType: pin.type, color_on: color, color_off: color }
+}
+
 function labelPorts(node: any, t: FlowNodeType, config: Record<string, unknown>) {
   const labels = portLabels(t, config)
   for (const out of node.outputs ?? []) out.label = labels.get(out.name)
@@ -47,17 +59,22 @@ function labelPorts(node: any, t: FlowNodeType, config: Record<string, unknown>)
 // Replaces litegraph's stock nodes, some of which run typed code with new Function, with
 // the hub's list. Only these types can exist on the canvas.
 function registerTypes(types: FlowNodeType[]) {
-  if (registered) return
-  registered = true
-  LG.clearRegisteredTypes()
+  if (!cleared) {
+    cleared = true
+    LG.clearRegisteredTypes()
+  }
   LG.pointerevents_method = 'pointer' // touch works as well as the mouse
   LG.NODE_TITLE_COLOR = '#e8e4dd'
   LG.NODE_SELECTED_TITLE_COLOR = '#ffffff'
   LG.NODE_TEXT_COLOR = '#b9b6bd'
   for (const t of types) {
+    const seen = JSON.stringify(t)
+    if (registered.get(t.type) === seen) continue
+    registered.set(t.type, seen)
+    const input = inputPin(t)
     function Node(this: any) {
-      if (t.category !== 'trigger') this.addInput('', SLOT)
-      for (const port of t.ports ?? []) this.addOutput(port, SLOT)
+      if (input) this.addInput(input.name, slotType(input), slotExtra(input))
+      for (const pin of outputPins(t)) this.addOutput(pin.name, slotType(pin), slotExtra(pin))
       this.properties = { flowId: undefined, config: defaultConfig(t) }
       labelPorts(this, t, this.properties.config)
       this.resizable = false
@@ -74,13 +91,13 @@ function registerTypes(types: FlowNodeType[]) {
       const slots = Math.max(this.inputs?.length ?? 0, this.outputs?.length ?? 0, 1)
       return [NODE_WIDTH, slots * LG.NODE_SLOT_HEIGHT + SUMMARY_HEIGHT]
     }
-    // litegraph takes one link per input, so an input is added whenever all are in use:
-    // several paths can arrive at any node, which Join and merging branches need.
+    // litegraph takes one link per input, so another slot of the same input is added whenever
+    // all are in use: several paths can arrive at any node, which Join and merging branches need.
     proto.onConnectionsChange = function (this: any, kind: number) {
-      if (kind !== LG.INPUT || !this.inputs) return
+      if (kind !== LG.INPUT || !this.inputs || !input) return
       const free = this.inputs.filter((i: any) => i.link == null).length
       if (free === 0) {
-        this.addInput('', SLOT)
+        this.addInput(input.name, slotType(input), slotExtra(input))
       } else if (free > 1) {
         for (let i = this.inputs.length - 1; i > 0; i--) {
           if (this.inputs[i].link == null) { this.removeInput(i); break }
@@ -101,6 +118,17 @@ function registerTypes(types: FlowNodeType[]) {
         ctx.lineWidth = 2
         ctx.strokeRect(-1, -LG.NODE_TITLE_HEIGHT - 1, this.size[0] + 2, this.size[1] + LG.NODE_TITLE_HEIGHT + 2)
       }
+      if (t.plugin_id && offPlugins.has(t.plugin_id)) {
+        ctx.strokeStyle = '#f59e0b'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([5, 4])
+        ctx.strokeRect(-1, -LG.NODE_TITLE_HEIGHT - 1, this.size[0] + 2, this.size[1] + LG.NODE_TITLE_HEIGHT + 2)
+        ctx.setLineDash([])
+        ctx.font = '11px sans-serif'
+        ctx.fillStyle = '#f59e0b'
+        ctx.textAlign = 'right'
+        ctx.fillText('plugin off', this.size[0] - 6, -8)
+      }
       const text = nodeSummary(t, this.properties.config ?? {})
       if (text) {
         ctx.font = '11px sans-serif'
@@ -115,7 +143,7 @@ function registerTypes(types: FlowNodeType[]) {
   }
 }
 
-export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanvas({ nodeTypes, onChange, onSelect, onReady }, ref) {
+export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanvas({ nodeTypes, onChange, onSelect, onReady, disabledPlugins }, ref) {
   const box = useRef<HTMLDivElement>(null)
   const el = useRef<HTMLCanvasElement>(null)
   const graph = useRef<any>(null)
@@ -125,9 +153,19 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
   const events = useRef({ onChange, onSelect, onReady })
   events.current = { onChange, onSelect, onReady }
 
+  // Plugins come and go while the page is open: what the canvas knows follows the hub's list.
   useEffect(() => {
     registerTypes(nodeTypes)
     typeOf.current = new Map(nodeTypes.map(t => [t.type, t]))
+    canvas.current?.setDirty(true, true)
+  }, [nodeTypes])
+
+  useEffect(() => {
+    offPlugins = new Set(disabledPlugins ?? [])
+    canvas.current?.setDirty(true, true)
+  }, [disabledPlugins])
+
+  useEffect(() => {
     const g: any = new LGraph()
     const c: any = new LGraphCanvas(el.current as any, g)
     graph.current = g
@@ -139,6 +177,11 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
     c.render_canvas_border = false
     c.show_info = false
     c.connections_width = 2
+    // a wire takes the color of what it carries
+    const linkColors = (LGraphCanvas as any).link_type_colors ?? ((LGraphCanvas as any).link_type_colors = {})
+    linkColors.text = PIN_COLORS.text
+    linkColors.json = PIN_COLORS.json
+    linkColors[''] = PIN_COLORS.any
 
     const changed = () => { if (!loading.current) events.current.onChange() }
     g.onNodeAdded = (n: any) => {
@@ -242,17 +285,19 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
       graph.current = null
       canvas.current = null
     }
-    // the canvas lives as long as the view; the types come once from the hub
+    // the canvas lives as long as the view
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const byFlowId = (id: string) => (graph.current?._nodes ?? []).find((n: any) => n.properties.flowId === id)
 
   useImperativeHandle(ref, () => ({
-    load(data, readOnly) {
+    load(data, readOnly, keepView) {
       const g = graph.current
       const c = canvas.current
       if (!g || !c) return
+      // a live reload leaves the view where the person has it, unless there was nothing to see
+      const holdView = keepView && (g._nodes?.length ?? 0) > 0
       loading.current = true
       try {
         g.clear()
@@ -274,7 +319,9 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
           const from = made.get(e.from)
           const to = made.get(e.to)
           if (!from || !to) continue
-          const out = from.findOutputSlot(e.port)
+          let out = from.findOutputSlot(e.port)
+          // a graph saved with the old "next" output: the hub reads it as the node's first output
+          if (out < 0 && e.port === 'next' && from.outputs?.length) out = 0
           if (out < 0 || !to.inputs) continue
           const free = to.inputs.findIndex((i: any) => i.link == null)
           from.connect(out, to, free < 0 ? to.inputs.length - 1 : free)
@@ -285,8 +332,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
       c.read_only = readOnly
       c.allow_reconnect_links = !readOnly
       c.deselectAllNodes()
-      c.ds.reset()
-      if (data.nodes.length) {
+      if (!holdView) c.ds.reset()
+      if (!holdView && data.nodes.length) {
         // the whole flow fits on opening: nothing is hidden past the edge
         const minX = Math.min(...data.nodes.map(n => n.x))
         const minY = Math.min(...data.nodes.map(n => n.y))

@@ -129,12 +129,17 @@ func (s *Store) appendOne(r Rule, dec Decision, src RuleSource, path string) err
 	if err != nil {
 		return err
 	}
+	tool, err := compileTool(r)
+	if err != nil {
+		return err
+	}
 	s.rules = append(s.rules, compiledRule{
 		Rule:     r,
 		Decision: dec,
 		Source:   src,
 		Path:     path,
 		regex:    regex,
+		tool:     tool,
 	})
 	return nil
 }
@@ -229,6 +234,9 @@ func AddSessionRule(sess SessionStore, sessID, scope string, r Rule) (Rule, erro
 	}
 	// Compile-check the regexes up front so we don't persist a broken rule.
 	if _, err := compileRegexes(r); err != nil {
+		return Rule{}, err
+	}
+	if _, err := compileTool(r); err != nil {
 		return Rule{}, err
 	}
 	row := SessionRuleRow{

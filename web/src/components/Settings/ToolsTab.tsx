@@ -138,13 +138,13 @@ function ToolForm({
             className={`tool-form__env-btn${form.execution_env === 'orchestrator' ? ' tool-form__env-btn--active' : ''}`}
             onClick={() => setForm(f => ({ ...f, execution_env: 'orchestrator' }))}
           >
-            Server (Goja)
+            Server (JavaScript)
           </button>
         </div>
         <span className="tool-form__hint">
           {form.execution_env === 'browser'
             ? 'Runs in the browser. Has access to DOM, fetch, localStorage.'
-            : 'Runs on the server with Goja. Has access to fs, http, log modules.'}
+            : 'Runs on the server as JavaScript. Has access to fs, http, log modules.'}
         </span>
       </div>
 

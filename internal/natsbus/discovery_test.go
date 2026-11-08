@@ -10,11 +10,15 @@ import (
 
 // A newcomer learns who is already there right away, not at their next heartbeat
 // (15 s), and is told about a peer once, not on every heartbeat.
+//
+// It needs a NATS of its own: on the shared one, real instances answer the newcomer's query at
+// about the same time, and a late answer counts as a change.
 func TestNewcomerDiscoversPeersImmediately(t *testing.T) {
+	url := startJetStreamServer(t)
 	suffix := time.Now().Format("150405.000")
-	old := testBus(t, "disc-old-"+suffix) // announces itself once, long before the newcomer
+	old := testBusAt(t, url, "disc-old-"+suffix) // announces itself once, long before the newcomer
 
-	nc, err := nats.Connect("nats://127.0.0.1:4222", nats.Timeout(time.Second))
+	nc, err := nats.Connect(url, nats.Timeout(time.Second))
 	if err != nil {
 		t.Skipf("no NATS: %v", err)
 	}

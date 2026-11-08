@@ -1,3 +1,4 @@
+import { MERMAID_SECURE_KEYS } from './htmlPolicy'
 // Mermaid diagrams of the chats. Always the light theme on a white card: diagrams set their own
 // light fills (rect rgb(...), notes), which a dark theme leaves unreadable.
 // The library is big, so it is only loaded when an answer has one.
@@ -7,7 +8,7 @@ let seq = 0
 
 function load() {
   loading ??= import('mermaid').then(m => {
-    m.default.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' })
+    m.default.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default', secure: MERMAID_SECURE_KEYS })
     return m.default
   })
   return loading

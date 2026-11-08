@@ -15,6 +15,7 @@ import { KanbanFilters, NO_FILTERS, matchesFilters, type KanbanFilterState } fro
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { AgentAvatar } from '../Agents/AgentAvatar'
 import { ReviewModal } from './ReviewModal'
+import { PluginCardActions } from '../Plugins/PluginActions'
 
 // ---- pasted images -----------------------------------------------------------
 
@@ -258,6 +259,7 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
                     <IconRefresh size={14} />
                     <span>Reset</span>
                   </button>
+                  <PluginCardActions card={card} onDone={() => setMenuOpen(false)} />
                 </div>
               )}
             </div>

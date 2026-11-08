@@ -514,6 +514,13 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		}
 		return h.handleBrowserTool(toolName, args)
 	}
+	if taskmcp.IsFlowTool(toolName) {
+		// the same: an agent only has them if they were given to it by name
+		if agentErr != nil || !contains(agent.LucodeTools, toolName) {
+			return "", fmt.Errorf("the %s tool is disabled for this agent", toolName)
+		}
+		return h.handleFlowTool(card.ProjectID, agent.Name, toolName, args)
+	}
 
 	switch toolName {
 	case taskmcp.ToolComment:

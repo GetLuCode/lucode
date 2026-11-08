@@ -70,6 +70,28 @@ func TestNamesAreAllTaskTools(t *testing.T) {
 	}
 }
 
+func TestFlowToolsAreOptInAndCannotPublish(t *testing.T) {
+	for _, n := range listed(t, nil) {
+		if IsFlowTool(n) {
+			t.Errorf("%s must not be listed when no filter is given", n)
+		}
+	}
+	if got := listed(t, FlowNames()); len(got) != len(FlowNames()) {
+		t.Errorf("asking for the flow tools lists them all, got %v", got)
+	}
+	for _, n := range FlowNames() {
+		if !IsFlowTool("mcp__lucode__" + n) {
+			t.Errorf("%s is not recognised with the mcp prefix", n)
+		}
+		// what a published flow can do is why an agent must not be able to publish one
+		for _, banned := range []string{"publish", "enable", "delete", "pause", "run"} {
+			if strings.Contains(n, banned) {
+				t.Errorf("%s: no flow tool may %s", n, banned)
+			}
+		}
+	}
+}
+
 func TestBrowserToolsAreOptIn(t *testing.T) {
 	for _, n := range listed(t, nil) {
 		if IsBrowserTool(n) {

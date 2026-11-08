@@ -71,6 +71,15 @@ const LUCODE_TOOLS = [
   { name: 'git_diff',      desc: 'Read a diff of a repository of the project, from any runner' },
 ]
 
+// Preparing automations with the user. Stored in lucode_tools like the rest, but never on by default.
+const FLOW_TOOLS = [
+  { name: 'flow_list',    desc: 'List the flows of the project' },
+  { name: 'flow_get',     desc: 'Read the draft of a flow' },
+  { name: 'flow_catalog', desc: 'See the node types and blueprints' },
+  { name: 'flow_create',  desc: 'Create a flow as an unpublished draft' },
+  { name: 'flow_update',  desc: 'Change the draft of a flow' },
+]
+
 // Control of Microsoft Edge (CDP). Stored in lucode_tools like the rest, but never on by default.
 const BROWSER_TOOLS = [
   { name: 'browser_launch',        desc: 'Start Edge in a window or headless' },
@@ -361,7 +370,7 @@ function AgentForm({
                   disabled={form.executor !== 'claude'}
                   onChange={e => setField('auto_mode', e.target.checked)}
                 />
-                Auto mode (no approval requests)
+                Auto mode (Claude decides what rules and flows leave open; no approval requests)
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 6, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
                 <input
@@ -460,6 +469,13 @@ function AgentForm({
             onToggle={toggleLucodeTool}
           />
           <ToolGroup
+            title="Flow tools (Automate)"
+            hint="Off by default. Lets the agent read flows and change their drafts, live in the editor and without asking for approval. Only a person can publish, enable or delete a flow."
+            tools={FLOW_TOOLS}
+            enabled={form.lucode_tools}
+            onToggle={toggleLucodeTool}
+          />
+          <ToolGroup
             title="Browser tools (Edge)"
             hint="Off by default. Lets the agent open Microsoft Edge on the machine where lucode runs and drive it by accessibility roles and names. Each use asks for approval."
             tools={BROWSER_TOOLS}
@@ -516,7 +532,7 @@ function AgentCard({
           <span className="agent-card__model">{modelLabel}</span>
           <span className="agent-card__model">{agent.executor === 'claude' ? 'claude -p' : 'aiapi'}</span>
           {agent.scope === 'global' && <span className="agent-card__model" title="Available in every project">global</span>}
-          {agent.auto_mode && <span className="agent-card__model" title="claude decides on its own which tools are safe; no approval requests">auto</span>}
+          {agent.auto_mode && <span className="agent-card__model" title="claude decides what rules and flows leave open; no approval requests">auto</span>}
           {agent.worktree && <span className="agent-card__model" title={`works in its own git worktree (baseRef=${agent.worktree_base_ref})`}>worktree</span>}
           {agent.persistent && <span className="agent-card__model" title="Process stays alive between messages">live</span>}
           {supervisor && <span className="agent-card__model" title="Reports to">→ {supervisor}</span>}

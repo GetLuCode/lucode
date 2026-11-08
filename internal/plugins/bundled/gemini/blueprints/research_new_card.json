@@ -1,0 +1,43 @@
+{
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "trigger.card_created",
+      "x": 40,
+      "y": 160,
+      "config": {
+        "to_kind": "any"
+      }
+    },
+    {
+      "id": "n2",
+      "type": "plugin.lucode.gemini.ask",
+      "x": 320,
+      "y": 160,
+      "config": {
+        "question": "Find what is useful to know before working on this task:\n\n{{card.title}}\n\n{{card.description}}"
+      }
+    },
+    {
+      "id": "n3",
+      "type": "action.comment",
+      "x": 600,
+      "y": 160,
+      "config": {
+        "text": "{{input}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "port": "event",
+      "to": "n2"
+    },
+    {
+      "from": "n2",
+      "port": "answer",
+      "to": "n3"
+    }
+  ]
+}

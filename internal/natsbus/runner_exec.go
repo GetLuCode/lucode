@@ -284,18 +284,24 @@ type RunnerEvent struct {
 
 // RunnerFollower reads the events of a session on a runner.
 type RunnerFollower struct {
+	nc   *nats.Conn
 	sub  *nats.Subscription
 	beat *nats.Subscription
 }
 
 // Close stops reading. The durable consumer stays, with its position, for the
 // next FollowRunnerTurn of the session.
+//
+// It returns once the server knows. Until then the consumer can still send the next event here,
+// where nobody reads it, and the consumer allows one unacked event at a time: the session would
+// get nothing more until AckWait (30 s) has it sent again.
 func (f *RunnerFollower) Close() {
 	if f == nil {
 		return
 	}
 	_ = f.sub.Unsubscribe()
 	_ = f.beat.Unsubscribe()
+	_ = f.nc.FlushTimeout(2 * time.Second)
 }
 
 var consumerNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]`)
@@ -383,7 +389,7 @@ func (b *Bus) FollowRunnerTurn(runnerID, sessID string, fromStart bool, onBeat f
 		sub.Unsubscribe()
 		return nil, err
 	}
-	return &RunnerFollower{sub: sub, beat: beat}, nil
+	return &RunnerFollower{nc: b.nc, sub: sub, beat: beat}, nil
 }
 
 // RunnerCancel asks a runner to stop the turn it runs for a session.

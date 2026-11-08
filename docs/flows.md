@@ -14,6 +14,7 @@ como debe comportarse y como reconocer cada fallo. Como probar y como anadir nod
 | Motor (`internal/flows`) | Hub | Valida, decide el siguiente paso y guarda el estado en la base de datos. |
 | Git status, Merge, Run agent | Runner, por NATS | Lo que toca git o ejecuta claude. |
 | AI evaluate | Hub, por HTTP | Una peticion a la API de Anthropic. Sin claude, sin runner y sin disco. |
+| Push notification | Hub, por HTTP | Una peticion al servicio de push de cada navegador. Sin claude, sin runner. |
 | Human approval | Base de datos | Una espera que sobrevive a reinicios. |
 
 ### De un evento a una ejecucion
@@ -23,6 +24,36 @@ como debe comportarse y como reconocer cada fallo. Como probar y como anadir nod
    a la version publicada en ese momento.
 3. Lo lento (git, API, agente) corre aparte y vuelve como evento. Una espera queda en la base de
    datos, asi que un reinicio del hub la retoma.
+
+### Los valores viajan por los cables
+
+Como en un grafo de nodos tipo ComfyUI: cada nodo da su respuesta por la salida que toma, y esa
+respuesta llega a la entrada de los nodos conectados y los arranca. No hay salida `next`.
+
+| Pieza | Como funciona |
+|---|---|
+| Entrada | Todo nodo salvo un disparador tiene una (`input`; Get JSON prop la llama `json`). En sus campos se lee como `{{input}}`, siempre como texto. |
+| Salida | Cada una dice que lleva: `text`, `json` o `any` (pasa lo que le llego, como If, Delay o Move card). |
+| Disparador | Da el evento como JSON por su salida `event`. |
+| JSON | No se abre como variables. Para leer una propiedad se usa **Get JSON prop**: `{json.prop}`, `{json.a.b}`, `{json.files.0}`. Solo, conserva el tipo; mezclado con texto da texto. |
+| Join | Espera a todos los caminos conectados y da una lista JSON con lo que trajo cada uno, en el orden de los cables. |
+
+Siguen disponibles en plantillas y condiciones `card`, `event` y `run`. `nodes.<id>` ya no existe:
+publicar avisa con `nodes.<id> is gone: ...`.
+
+Que da cada nodo: Run agent `reply` (el ultimo mensaje del agente), AI evaluate la razon del
+modelo en cada respuesta, Git status y Merge JSON, Human approval la nota de la persona, Comment y
+Notify supervisor el texto, Create task el id de la tarjeta, Push notification `result` en JSON, y
+`failed` siempre el error como texto.
+
+Publicar rechaza conectar una salida `text` a una entrada `json` (`... needs JSON, and the "text"
+output of ... gives text`). Una salida `any` se comprueba al ejecutar: si no es JSON, Get JSON prop
+toma `failed`.
+
+**Grafos viejos.** Al arrancar, el hub reescribe borradores y versiones guardados con `next`: el
+cable sale de la primera salida del nodo, y `{{nodes.X.error}}` (o `reason`, `text`...) pasa a
+`{{input}}` cuando es justo lo que llega por ese cable. Lo demas se queda y publicar dice que
+cambiar. El editor tambien lee `next` como la primera salida.
 
 ### Borrador y version publicada
 
@@ -63,6 +94,119 @@ deja la tarea en Review sin consultar git, porque Done podria esconder trabajo s
 Siguen en Go: arrancar el agente al entrar en In Progress, liberar dependencias y el boton de merge
 de Review.
 
+### Aprobar herramientas: Tool requested y Tool decision
+
+Un flujo puede contestar al hook `PreToolUse`. Solo sustituye el paso de preguntar a una persona:
+
+```
+hook del runner -> NATS -> hub:
+  herramientas de tarea y ToolSearch -> se permiten
+  ya se denego algo en este turno    -> se deniega
+  reglas de permisos                 -> allow y deny deciden; ask va directo a la persona
+  flujos con Tool requested          -> allow, deny o ask
+  ask, o ningun flujo                -> agente en auto: decide el clasificador de claude
+                                        los demas: la persona, como siempre
+```
+
+**Modo auto.** Un agente con `auto_mode` lanza claude con `--permission-mode=auto` y tambien con el
+hook, asi que pasa por el mismo camino. Los docs de Claude Code dicen que un `allow` del hook cuenta
+como una regla y se resuelve antes del clasificador; si el hook no contesta, decide el clasificador.
+Nunca te pregunta, salvo una regla `ask` explicita. Un flujo puede distinguirlo con `event.auto_mode`.
+
+**Tool log.** Cada llamada queda en el chat de la sesion con sus parametros, su decision y quien la
+tomo (regla, flujo o `Claude auto mode`), tambien en agentes sin auto. Solo se registra la peticion:
+no el resultado, ni lo que el clasificador decidio al final. Las que contesta una persona siguen
+saliendo como su aprobacion de siempre.
+
+**Match tool** es el mismo test que una regla de permisos, con el mismo codigo (`permissions.Matcher`):
+
+| Campo | Ejemplo | Significado |
+|---|---|---|
+| Tool | `Read\|Glob\|Grep`, `mcp__github__.*`, `*` | Regex sobre el nombre completo. `*` es cualquiera. |
+| Parameters | `command: ^go test ./[^;&\|]*$` | Una por linea, `parametro: regex`. Tienen que cumplirse todas. |
+
+Las reglas de permisos ganan lo mismo: su `tool` tambien admite regex. Un nombre normal sigue
+significando exactamente esa herramienta.
+
+**Cuidado con Bash.** La regex de un parametro puede coincidir con solo una parte del texto, y un comando
+puede encadenar otros: `^go test` tambien coincide con `go test && rm -rf /`. Para un allow, cierra con
+`$` y excluye `;`, `&`, `|`. Una lista de patrones prohibidos tampoco es una barrera: siempre hay otra
+forma de escribir el mismo comando.
+
+El blueprint **Approve tools with rules** no se siembra: deja correr herramientas sin nadie delante, asi
+que cada proyecto decide. Se crea desde el editor. No usa la API.
+
+| Situacion | Resultado |
+|---|---|
+| `Read`, `Glob`, `Grep` | Allow |
+| `Bash` con `rm -r`, `git push --force`, `git reset --hard` o `curl \| sh` | Deny; se paran las demas herramientas del turno |
+| Lo demas | La persona, o el clasificador si el agente esta en auto |
+
+**AI evaluate es opcional:** se puede anadir como cualquier nodo, gasta tokens de API en cada llamada que
+llegue a el, y si falla se puede conectar su salida `failed` a un Tool decision `ask`.
+
+**Reglas, porque el hook esta esperando:**
+
+- Cualquier fallo queda sin decidir, nunca en un allow: error de expresion, flujo que termina sin
+  decidir, ejecucion cancelada, proyecto en pausa, hub parandose o 60 s sin respuesta. Eso significa la
+  persona, o el clasificador si el agente esta en auto.
+- Si hay varios flujos, gana el mas estricto (`deny`, luego `ask`, luego `allow`). Un `deny` no espera
+  a los demas y los cancela.
+- Una entrada de mas de 64 KB va directa a la persona: cortarla haria que el modelo juzgue solo una
+  parte de lo que se va a ejecutar.
+- Los 60 s salen de los 4 minutos del hook, y la cuenta atras de la pagina ya los descuenta.
+- Las ejecuciones no hacen cola entre ellas ni heredan la profundidad de la tarjeta. Se borran a los 7
+  dias, porque hay una por herramienta y guardan su entrada.
+
+Lee `event.tool_name`, `event.tool_input` (`event.tool_input.command`), `event.tool_input_text` (el
+JSON tal cual), `event.work_dir`, `event.task` (titulo de la tarjeta, vacio si no hay) y `event.agent`
+(nombre del agente, vacio si la sesion no tiene; por ejemplo `event.agent == "reviewer"` en un If). Tambien corre
+en sesiones sin tarjeta; ahi `card.*` no existe y Comment, Add tag y Notify supervisor fallan, asi que
+acaban en la persona.
+
+### Agentes que preparan flujos
+
+Las tools `flow_list`, `flow_get`, `flow_catalog`, `flow_create` y `flow_update` dejan a un agente leer
+flujos y escribir borradores de su proyecto. El Supervisor las tiene; a otro agente hay que dárselas en
+su pestana Tools, y `agent_create` no las hereda.
+
+- **Solo una persona publica.** No hay tool para publicar, activar, desactivar, borrar ni pausar, porque
+  un flujo publicado puede aprobar herramientas o fusionar ramas. Un borrador no ejecuta nada, y por eso
+  estas tools se aprueban solas y no pasan por reglas ni flujos.
+- **En vivo.** Un cambio del agente aparece en el editor abierto, sin mover la vista.
+- **Gana el ultimo que guarda (decision del usuario).** Lo que escribe el agente sustituye lo que hay en
+  el canvas, con ediciones sin guardar; y un guardado tuyo en curso puede pisar lo del agente.
+- **Aviso antes de publicar.** El estado dice `Changed by <agente>: review it before publishing` hasta
+  publicar. Tu guardado no lo quita, porque ese guardado tambien lleva el cambio del agente. No muestra
+  las diferencias con la version publicada.
+- `flow_update` rechaza nodos que el hub no conoce y grafos sin `nodes`. Lo demas puede estar a medias: el
+  agente recibe la lista de problemas que impedirian publicar.
+
+### Push notification
+
+Avisa a todos los dispositivos que activaron "Notifications on this device" en la pestana Flows, aunque
+lucode este cerrado. El blueprint "Push when a task needs review" es un ejemplo listo para copiar.
+
+- **Activarlo es por dispositivo.** El boton esta en la barra lateral de Flows, fuera del formulario del
+  nodo, porque ese formulario es de solo lectura en un movil. "Send a test" comprueba el dispositivo sin
+  necesidad de un flujo. Cerrar sesion lo desactiva en ese dispositivo.
+- **Solo funciona en HTTPS o localhost, y con el build.** Lo exige el navegador; en
+  `http://192.168.x.x` el boton se sustituye por un aviso. Tampoco funciona en el servidor de desarrollo
+  (`:5173`), donde no se registra el service worker. En iPhone hay que anadir lucode a la pantalla de inicio.
+- **Resultado.** Con al menos un dispositivo alcanzado sigue por `result`, que da JSON con `sent`, `failed` y
+  `removed`. Sin ninguno sigue por `failed`.
+- **Limpieza.** Un dispositivo por el que el servicio contesta 404 o 410 se olvida. Otros errores lo
+  conservan.
+- **Tiempo de vida.** Un dispositivo apagado lo recibe si vuelve en menos de 24 h.
+- **Tras un reinicio se reenvia** el mismo texto con el mismo `tag` (`flow-step-<seq>`): el dispositivo
+  reemplaza el aviso en lugar de duplicarlo.
+- **Clic:** abre la ejecucion en Flows.
+- **Texto:** el servicio de push solo ve datos cifrados. Un mensaje largo se recorta para caber en 3000 bytes.
+- **Claves:** las VAPID se crean la primera vez en `~/.lucode/flows-push.json` y la privada nunca sale del
+  hub. Si se pierden, todos los dispositivos deben volver a activarlo. Un archivo danado da error y no se
+  reemplaza. `LUCODE_PUSH_CONTACT` cambia el contacto que se envia a los servicios de push.
+- **No se puede usar en un flujo Tool requested:** esos bloquean el hook y el envio puede tardar 30 s.
+
 ### Merge
 
 | Opcion | Por defecto |
@@ -90,6 +234,10 @@ El nodo afectado se marca en rojo y el mensaje sale en la pestana Node.
 
 | Mensaje | Causa y arreglo |
 |---|---|
+| `Match tool matches everything: ...` | Sin herramienta ni parametros: escribe alguno. |
+| `Match tool: the line "..." is not parameter: regex` | Falta el `parametro:` delante de la regex. |
+| `Match tool: rule "...": invalid tool regex` o `invalid regex` | La regex no compila (sintaxis RE2 de Go). |
+| `Match tool only works in a flow started by Tool requested: ...` | Sin ese disparador no hay herramienta que leer. |
 | `the flow is empty` | No hay nodos. |
 | `the flow needs a trigger: nothing would ever start it` | Falta un disparador. Si el flujo tenia uno, mira primero "El editor perdio nodos". |
 | `unknown node type "..."` | El hub no conoce ese tipo: suele ser un hub mas viejo que el flujo. Reinicialo. |
@@ -101,6 +249,11 @@ El nodo afectado se marca en rojo y el mensaje sale en la pestana Node.
 | `Merge: to delete the branch the worktree has to be deleted too, ...` | Conserva los dos o borra los dos. |
 | `AI evaluate: the third output is connected but Answer 3 is empty` | Rellena Answer 3 o quita la conexion. |
 | `AI evaluate: the answer "..." is there twice` | Dos respuestas iguales: cambia una. |
+| `Tool decision only works in a flow started by Tool requested: ...` | Ningun otro disparador espera su respuesta. |
+| `... cannot share a flow with Tool requested: ...` | Otro disparador en el mismo flujo: separalos. |
+| `... cannot be used with Tool requested: ...` | Nodo lento o que arranca un turno (Run agent, Human approval, Delay, Merge...). Para preguntar a una persona usa Tool decision con `ask`. |
+| `this flow has no Tool decision, ...` | Solo podria acabar preguntando a la persona. |
+| `this allows every tool without checking anything: ...` | Allow sin nada antes: pon un Match tool o una condicion. Para no preguntar, usa el modo auto del agente. |
 
 ### Durante una ejecucion
 
@@ -121,6 +274,12 @@ El error se ve en la pestana Runs, en el paso que fallo.
 | `the model declined to evaluate this (...)` | El modelo rechazo el contenido. | Revisa el texto enviado o conecta la salida `failed`. |
 | `the model stopped without an answer (...)` | La respuesta termino sin una decision. | Conecta `failed` para tratarlo; reintenta si es puntual. |
 | `this approval is no longer waiting for a decision` | Ya se decidio, o la ejecucion termino o se cancelo. | Nada: recarga la campana. |
+| `no device has notifications on: ...` | Ningun dispositivo lo activo, o los que habia ya no existen. | Activalo en la pestana Flows de ese dispositivo. |
+| `no device could be reached: ...` | Todos los envios fallaron; el motivo va detras. | Conecta `failed` si no debe parar el flujo. |
+| `the push service rejected this hub's keys (...)` | Las claves VAPID cambiaron desde que el dispositivo se suscribio. | Desactivalo y activalo de nuevo en ese dispositivo. |
+| `the push services did not answer in time` | Sin respuesta en 2 minutos. | Comprueba la red del hub. |
+| `Push notification: the title or the message came out empty` | La plantilla dio un texto vacio. | Revisa la plantilla. |
+| `.../flows-push.json is damaged: ...` | El archivo de claves no se puede leer. | Restauralo, o borralo y reactiva cada dispositivo. |
 
 ### Sintomas sin mensaje de error
 
@@ -131,6 +290,11 @@ El error se ve en la pestana Runs, en el paso que fallo.
 | Un flujo nunca arranca | Sin publicar, desactivado, proyecto en pausa, otro flujo en cola en esa tarjeta, o el evento lo causo el propio flujo. | Punto verde en la lista, boton de pausa y pestana Runs. |
 | Ejecucion parada en `waiting` | Espera un Human approval, un turno o un evento; es lo normal. | El paso en azul y la campana. |
 | Un cambio del borrador no tiene efecto | Sin publicar: se ejecuta la version publicada. | El estado dice `Saved, not published`. |
+| El boton de notificaciones no aparece | La pagina va por HTTP, en el servidor de desarrollo o con los avisos bloqueados. | El aviso que sale en su lugar dice cual. |
+| El nodo acaba bien pero no sale el aviso | El navegador esta cerrado del todo, o el sistema silencia los avisos (Windows: "No molestar"). `sent` solo dice que el servicio de push lo acepto. | "Send a test" en ese dispositivo. |
+| Una herramienta pregunta a la persona con un flujo activo | El flujo no llego a decidir: fallo, tardo mas de 60 s o la entrada pasa de 64 KB. | Pestana Runs y linea `no decision on` en el log del hub. |
+| Un agente nunca pasa por el flujo | Una regla ya lo decide. | Reglas de permisos. |
+| Un agente en auto no deja tool log | Su runner es anterior a este cambio: lanza claude sin el hook. | Recompila y reinicia el runner. |
 
 ### El editor perdio nodos (caso real, 2026-11-06)
 
@@ -180,9 +344,35 @@ pestana.
 - **Un Task finished ya sembrado no se actualiza.** Un cambio en `blueprints.go` solo llega a proyectos
   nuevos; `flow_seeds` impide volver a sembrar.
 
+- **Con AI evaluate, el modelo lee texto que puede venir de fuera.** Una entrada manipulada podria
+  convencerlo de aprobar. Las reglas `deny` van antes y el modelo no las ve.
+- **`Read`, `Glob` y `Grep` pasan sin mirar la ruta** en el blueprint, asi que leen tambien fuera del
+  proyecto. Para evitarlo, anade `file_path: ^/tu/proyecto/` al nodo o quitalos de `Tool`.
+- **Un allow del hook se salta el clasificador** en un agente en auto, salvo los casos que claude protege
+  siempre: lo que un flujo aprueba ya no lo revisa nadie mas.
+- **Agentes en auto dependen del hub.** Con el hub caido, el hook reintenta 30 s y deniega; antes el agente
+  seguia solo. Un reinicio del hub con un hook esperando pierde la peticion y el hook deniega a los 4 minutos.
+- **Una evaluacion cancelada por tiempo sigue en curso** hasta que responde la API y se paga igual.
+- **El tool log no tiene el resultado de la herramienta.** Haria falta un hook `PostToolUse`.
+- **Las notificaciones llegan a todos los dispositivos del hub**, sea cual sea el usuario y el proyecto: el
+  nodo no elige destinatario. Con varias personas en un hub, cada una ve los avisos de todos los proyectos.
+- **El contacto VAPID por defecto es ficticio** (`lucode@example.com`). Con `LUCODE_PUSH_CONTACT` el servicio
+  de push podria avisarte de un problema; no hace falta para enviar.
+- **Una sesion caducada no desactiva los avisos**: solo cerrar sesion con el boton. Es a proposito, para que
+  un movil siga recibiendolos, pero un dispositivo abandonado sigue suscrito hasta desactivarlo.
+
 ## Sin probar
 
 - La API real de Anthropic: solo la falsa (`internal/fakeanthropic`).
+- Push en un movil real y con Apple o Firefox. `TestPushLive` (`LUCODE_PUSH_LIVE=1`) si lo prueba de punta a
+  punta en Edge y Chrome de escritorio con Windows Push y FCM reales. El boton de la barra lateral y el clic
+  en la notificacion solo tienen prueba con un navegador simulado.
+- Aprobar herramientas con un claude real y con un runner remoto: si se probo el binario real del hook
+  contra un hub con NATS temporal, y su entrada imita la de claude. En particular, el campo
+  `permission_mode` y que el silencio del hook llegue al clasificador salen de la documentacion.
+- En navegador: los nodos Tool requested, Match tool y Tool decision, el tool log en vivo y la recarga
+  del editor cuando un agente cambia un borrador.
+- Las tools de flujos con un claude real por MCP: solo se llamo al handler del hub y se probo el hook.
 - Task finished completo con un runner remoto. Git status y Merge si se probaron con runner real por
   NATS, cada uno por separado del blueprint.
 - La app completa con WebSocket real, y el editor en movil.

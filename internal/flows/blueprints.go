@@ -19,6 +19,9 @@ type Blueprint struct {
 	Description string `json:"description"`
 	Seeded      bool   `json:"seeded"`
 	Graph       Graph  `json:"-"`
+	// a plugin's blueprint; its key is <plugin id>/<key>
+	PluginID   string `json:"plugin_id,omitempty"`
+	PluginName string `json:"plugin_name,omitempty"`
 }
 
 func bpNode(id int, typ string, x, y float64, kv ...any) Node {
@@ -43,6 +46,10 @@ func bpEdge(from int, port string, to int) Edge {
 // BlueprintTaskFinished is the key of the flow that decides where a finished task goes.
 const BlueprintTaskFinished = "task_finished"
 
+// BlueprintToolApproval is the key of the flow that answers tool approvals with regexes. It is
+// not seeded: it lets tools run with nobody watching, so a project has to choose it.
+const BlueprintToolApproval = "tool_approval"
+
 var blueprints = []Blueprint{
 	{
 		Key: BlueprintTaskFinished, Name: "Task finished", Seeded: true,
@@ -55,15 +62,15 @@ var blueprints = []Blueprint{
 				bpNode(4, TypeNotifySupervisor, 900, 40, "text", "Task {{card.title}} is ready for review (its branch waits to be merged): {{event.summary}}"),
 				bpNode(5, TypeMoveCard, 600, 240, "to_kind", "done"),
 				bpNode(6, TypeNotifySupervisor, 900, 240, "text", "Task {{card.title}} is done: {{event.summary}}"),
-				bpNode(7, TypeComment, 600, 400, "text", "Could not read the branch of this task, so it waits in Review: {{nodes.n2.error}}"),
+				bpNode(7, TypeComment, 600, 400, "text", "Could not read the branch of this task, so it waits in Review: {{input}}"),
 				bpNode(8, TypeMoveCard, 900, 400, "to_kind", "review"),
 			},
 			Edges: []Edge{
-				bpEdge(1, PortNext, 2),
+				bpEdge(1, PortEvent, 2),
 				bpEdge(2, PortClean, 3), bpEdge(2, PortConflicts, 3), bpEdge(2, PortDirty, 3),
-				bpEdge(3, PortNext, 4),
-				bpEdge(2, PortNothing, 5), bpEdge(5, PortNext, 6),
-				bpEdge(2, PortFailed, 7), bpEdge(7, PortNext, 8),
+				bpEdge(3, PortMoved, 4),
+				bpEdge(2, PortNothing, 5), bpEdge(5, PortMoved, 6),
+				bpEdge(2, PortFailed, 7), bpEdge(7, PortText, 8),
 			},
 		},
 	},
@@ -74,22 +81,25 @@ var blueprints = []Blueprint{
 			Nodes: []Node{
 				bpNode(1, TypeCardMoved, 40, 200, "to_kind", "review"),
 				bpNode(2, TypeGitStatus, 300, 200),
-				bpNode(3, TypeRunAgent, 600, 40, "prompt", "Your branch {{nodes.n2.branch}} cannot be merged into {{nodes.n2.base}} yet. Merge {{nodes.n2.base}} into your branch, resolve what conflicts, commit everything, run the project's checks and call task_done again."),
-				bpNode(4, TypeAIEvaluate, 600, 240, "instruction", "How risky is it to merge these changes without further review?",
-					"input", "Task: {{card.title}}\n\n{{card.description}}\n\nFiles: {{nodes.n2.files}}", "outcome1", "low", "outcome2", "high"),
-				bpNode(5, TypeApproval, 900, 200, "question", "Risk {{nodes.n4.outcome}} on {{card.title}}: {{nodes.n4.reason}} Merge it?"),
-				bpNode(6, TypeMerge, 1200, 200),
-				bpNode(7, TypeMoveCard, 900, 420, "to_kind", "blocked"),
-				bpNode(8, TypeComment, 1200, 420, "text", "High risk, so it waits for a person: {{nodes.n4.reason}}"),
+				bpNode(9, TypeGetJSONProp, 600, 0, "template", "Your branch {json.branch} cannot be merged into {json.base} yet. Merge {json.base} into your branch, resolve what conflicts, commit everything, run the project's checks and call task_done again."),
+				bpNode(3, TypeRunAgent, 900, 40),
+				bpNode(10, TypeGetJSONProp, 600, 240, "template", "{json.files}"),
+				bpNode(4, TypeAIEvaluate, 900, 240, "instruction", "How risky is it to merge these changes without further review?",
+					"input", "Task: {{card.title}}\n\n{{card.description}}\n\nFiles: {{input}}", "outcome1", "low", "outcome2", "high"),
+				bpNode(5, TypeApproval, 1200, 200, "question", "Low risk on {{card.title}}: {{input}} Merge it?"),
+				bpNode(6, TypeMerge, 1500, 200),
+				bpNode(11, TypeGetJSONProp, 1800, 40, "template", "The merge of your branch failed: {json.reason}. Merge the base branch into yours, resolve what conflicts, commit everything, run the project's checks and call task_done again."),
+				bpNode(7, TypeMoveCard, 1200, 420, "to_kind", "blocked"),
+				bpNode(8, TypeComment, 1500, 420, "text", "High risk, so it waits for a person: {{input}}"),
 			},
 			Edges: []Edge{
-				bpEdge(1, PortNext, 2),
-				bpEdge(2, PortConflicts, 3), bpEdge(2, PortDirty, 3),
-				bpEdge(2, PortClean, 4),
+				bpEdge(1, PortEvent, 2),
+				bpEdge(2, PortConflicts, 9), bpEdge(2, PortDirty, 9), bpEdge(9, PortValue, 3),
+				bpEdge(2, PortClean, 10), bpEdge(10, PortValue, 4),
 				bpEdge(4, PortOutcome1, 5),
 				bpEdge(5, PortApproved, 6),
-				bpEdge(6, PortConflicts, 3),
-				bpEdge(4, PortOutcome2, 7), bpEdge(7, PortNext, 8),
+				bpEdge(6, PortConflicts, 11), bpEdge(11, PortValue, 3),
+				bpEdge(4, PortOutcome2, 7), bpEdge(7, PortMoved, 8),
 			},
 		},
 	},
@@ -100,19 +110,58 @@ var blueprints = []Blueprint{
 			Nodes: []Node{
 				bpNode(1, TypeCardMoved, 40, 120, "to_kind", "review"),
 				bpNode(2, TypeGitStatus, 300, 120),
-				bpNode(3, TypeRunAgent, 600, 120, "prompt", "Your branch {{nodes.n2.branch}} cannot be merged into {{nodes.n2.base}}. Merge {{nodes.n2.base}} into your branch, resolve what conflicts, commit everything, run the project's checks and call task_done again."),
+				bpNode(4, TypeGetJSONProp, 600, 120, "template", "Your branch {json.branch} cannot be merged into {json.base}. Merge {json.base} into your branch, resolve what conflicts, commit everything, run the project's checks and call task_done again."),
+				bpNode(3, TypeRunAgent, 900, 120),
 			},
-			Edges: []Edge{bpEdge(1, PortNext, 2), bpEdge(2, PortConflicts, 3), bpEdge(2, PortDirty, 3)},
+			Edges: []Edge{bpEdge(1, PortEvent, 2), bpEdge(2, PortConflicts, 4), bpEdge(2, PortDirty, 4), bpEdge(4, PortValue, 3)},
+		},
+	},
+	{
+		Key: BlueprintToolApproval, Name: "Approve tools with rules",
+		Description: "When an agent asks for a tool no rule covers: Read, Glob and Grep pass, Bash commands that match a dangerous pattern are denied, and the rest asks you as usual. Change the regexes to fit your project.",
+		Graph: Graph{
+			Nodes: []Node{
+				bpNode(1, TypeToolRequest, 40, 200),
+				bpNode(2, TypeMatchTool, 300, 200, "tool", "Read|Glob|Grep"),
+				bpNode(3, TypeToolDecision, 600, 40, "decision", ToolAllow, "reason", "{{event.tool_name}} only reads"),
+				bpNode(4, TypeMatchTool, 600, 240, "tool", "Bash",
+					"input_regex", `command: (?i)\brm\s+-[a-z]*r|git\s+push\s.*--force|git\s+reset\s+--hard|curl[^|]*\|\s*(ba)?sh`),
+				bpNode(5, TypeToolDecision, 900, 120, "decision", ToolDeny, "reason", "this command matches a dangerous pattern of the project's flow"),
+				bpNode(6, TypeToolDecision, 900, 360, "decision", ToolAsk),
+			},
+			Edges: []Edge{
+				bpEdge(1, PortEvent, 2),
+				bpEdge(2, PortMatch, 3), bpEdge(2, PortNoMatch, 4),
+				bpEdge(4, PortMatch, 5), bpEdge(4, PortNoMatch, 6),
+			},
+		},
+	},
+	{
+		Key: "review_push", Name: "Push when a task needs review",
+		Description: "When a task enters Review, a notification reaches your devices. If none can be reached, the card gets a comment instead.",
+		Graph: Graph{
+			Nodes: []Node{
+				bpNode(1, TypeCardMoved, 40, 120, "to_kind", "review"),
+				bpNode(2, TypePushNotification, 300, 120, "title", "Ready for review", "body", "{{card.title}}"),
+				bpNode(3, TypeComment, 600, 240, "text", "Could not send the notification: {{input}}"),
+			},
+			Edges: []Edge{bpEdge(1, PortEvent, 2), bpEdge(2, PortFailed, 3)},
 		},
 	},
 }
 
-// Blueprints lists the base flows.
-func Blueprints() []Blueprint { return blueprints }
+// Blueprints lists the base flows and those of the installed plugins.
+func Blueprints() []Blueprint {
+	src := currentPlugins()
+	if src == nil {
+		return blueprints
+	}
+	return append(append([]Blueprint{}, blueprints...), src.Blueprints()...)
+}
 
 // BlueprintOf finds a base flow.
 func BlueprintOf(key string) (Blueprint, bool) {
-	for _, b := range blueprints {
+	for _, b := range Blueprints() {
 		if b.Key == key {
 			return b, true
 		}

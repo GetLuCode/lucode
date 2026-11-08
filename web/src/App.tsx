@@ -21,8 +21,11 @@ import { FlowsView } from './components/Flows/FlowsView'
 import { GitView } from './components/Git/GitView'
 import { RunnersView } from './components/Runners/RunnersView'
 import { UsagePage } from './components/Usage/UsagePage'
+import { SettingsPage } from './components/Settings/SettingsPage'
 import { OrchestratorPanel } from './components/Orchestrator/OrchestratorPanel'
 import { OrchestratorOpenButton } from './components/Orchestrator/OrchestratorOpenButton'
+import { PluginHost } from './components/Plugins/PluginHost'
+import { PluginPage } from './components/Plugins/PluginPage'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
@@ -110,7 +113,7 @@ export default function App() {
   useEffect(() => {
     const path = location.pathname
     if (path === '/') return // the start page
-    if (['/agents', '/agent', '/kanban', '/running', '/flows', '/git', '/runners', '/checkpoints', '/usage'].some(p => path.includes(p))) return
+    if (['/agents', '/agent', '/kanban', '/running', '/flows', '/git', '/runners', '/checkpoints', '/usage', '/plugins', '/settings'].some(p => path.includes(p))) return
     if (!activeProjectId) return
     if (path.includes('/sessions/')) {
       if (activeSessionId) navigate(`/projects/${activeProjectId}/sessions/${activeSessionId}`, { replace: true })
@@ -122,21 +125,26 @@ export default function App() {
   // Any navigation closes the overlay.
   useEffect(() => { setNavOpen(false) }, [location.pathname])
 
-  const isUsage = location.pathname === '/usage' // account-wide: no project header, no supervisor panel
+  const isSettings = location.pathname.startsWith('/settings')
+  // account-wide pages: no project header, no supervisor panel
+  const isUsage = location.pathname === '/usage' || isSettings
   const isHome = location.pathname === '/'
-  const isAgentsRoute = location.pathname.includes('/agents')
-  const isKanbanRoute = location.pathname.includes('/kanban')
-  const isRunningRoute = location.pathname.includes('/running')
-  const isFlowsRoute = location.pathname.includes('/flows')
-  const isGitRoute = /\/git\/?$/.test(location.pathname)
-  const isRunnersRoute = location.pathname.includes('/runners')
-  const isAgentTab = /\/agent\/?$/.test(location.pathname)
-  const isCheckpointsOpen = location.pathname.includes('/checkpoints')
+  // first: a plugin's page id could be any word, also one of the ones below
+  const isPluginPage = /^\/projects\/[^/]+\/plugins\//.test(location.pathname)
+  const isAgentsRoute = !isPluginPage && location.pathname.includes('/agents')
+  const isKanbanRoute = !isPluginPage && location.pathname.includes('/kanban')
+  const isRunningRoute = !isPluginPage && location.pathname.includes('/running')
+  const isFlowsRoute = !isPluginPage && location.pathname.includes('/flows')
+  const isGitRoute = !isPluginPage && /\/git\/?$/.test(location.pathname)
+  const isRunnersRoute = !isPluginPage && location.pathname.includes('/runners')
+  const isAgentTab = !isPluginPage && /\/agent\/?$/.test(location.pathname)
+  const isCheckpointsOpen = !isPluginPage && location.pathname.includes('/checkpoints')
 
   return (
     <div className="app">
       <TitleBar />
       <HookToastContainer />
+      <PluginHost />
       <SpotlightSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
       <RawEventsModal />
       <div className="mobile-bar">
@@ -153,11 +161,11 @@ export default function App() {
           <div className="main__content">
             {/* a render error stays inside the page and clears when the route changes */}
             <ErrorBoundary key={location.pathname}>
-              {isHome ? <HomeView /> : isUsage ? <UsagePage /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isFlowsRoute ? <FlowsView /> : isGitRoute ? <GitView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
+              {isHome ? <HomeView /> : isSettings ? <SettingsPage /> : isUsage ? <UsagePage /> : isPluginPage ? <PluginPage /> : isAgentsRoute ? <AgentsView /> : isKanbanRoute ? <KanbanView /> : isRunningRoute ? <RunningView /> : isFlowsRoute ? <FlowsView /> : isGitRoute ? <GitView /> : isRunnersRoute ? <RunnersView /> : isAgentTab ? null : <ChatView />}
             </ErrorBoundary>
           </div>
           {/* same button on every tab except the chat; the Agent tab already shows the panel */}
-          {!isHome && !isUsage && !isAgentTab && (isAgentsRoute || isKanbanRoute || isRunningRoute || isFlowsRoute || isGitRoute) && <OrchestratorOpenButton />}
+          {!isHome && !isUsage && !isAgentTab && (isAgentsRoute || isKanbanRoute || isRunningRoute || isFlowsRoute || isGitRoute || isPluginPage) && <OrchestratorOpenButton />}
         </main>
         {!isHome && !isUsage && <OrchestratorPanel full={isAgentTab} />}
         <aside

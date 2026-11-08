@@ -9,6 +9,8 @@ import { ProjectEnvironmentModal } from '../Sidebar/ProjectEnvironmentModal'
 import { ProjectEnvInfo } from './ProjectEnvInfo'
 import { AlertsBell } from './AlertsBell'
 import { UsageMeters } from './UsageMeters'
+import { usePlugins } from '../../store/plugins'
+import { PluginIcon } from '../Plugins/PluginIcon'
 
 // Top bar of a project: its name and menu, the Supervisor | Work | Running | Git | Automate tabs, and the
 // Runners / Agents actions at the right.
@@ -21,6 +23,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const renameProject = useStore(s => s.renameProject)
   const importSession = useStore(s => s.importSession)
   const importRef = useRef<HTMLInputElement>(null)
+  const pluginPages = usePlugins(s => s.ui.pages)
   const runningCount = useStore(s => s.sessions.filter(x => x.card_id && (s.sessionStatus[x.id] ?? x.status) === 'running').length)
 
   const isMobile = useIsMobile()
@@ -38,13 +41,15 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   // At phone width the actions live in the mobile bar (App.tsx), next to the logo.
 
   const base = `/projects/${project.id}`
-  const onAgents = pathname.includes('/agents')
-  const onAgentTab = /\/agent\/?$/.test(pathname)
-  const onKanban = pathname.includes('/kanban')
-  const onFlows = pathname.includes('/flows')
-  const onGit = /\/git\/?$/.test(pathname)
+  // a plugin's page id could be any word, also one of the ones below
+  const onPlugin = pathname.includes(`${base}/plugins/`)
+  const onAgents = !onPlugin && pathname.includes('/agents')
+  const onAgentTab = !onPlugin && /\/agent\/?$/.test(pathname)
+  const onKanban = !onPlugin && pathname.includes('/kanban')
+  const onFlows = !onPlugin && pathname.includes('/flows')
+  const onGit = !onPlugin && /\/git\/?$/.test(pathname)
   // The running list and the chats opened from it share the Running tab.
-  const onRunning = pathname.includes('/running') || pathname.includes('/sessions/')
+  const onRunning = !onPlugin && (pathname.includes('/running') || pathname.includes('/sessions/'))
 
   async function saveName() {
     if (name.trim() && name.trim() !== project!.name) await renameProject(project!.id, name.trim())
@@ -164,6 +169,19 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
           className={`project-tab${onFlows ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/flows`)}
         >Automate</button>
+        {pluginPages.map(pg => {
+          const to = `${base}/plugins/${encodeURIComponent(pg.pluginId)}/${encodeURIComponent(pg.id)}`
+          return (
+            <button
+              key={`${pg.pluginId}/${pg.id}`}
+              className={`project-tab project-tab--plugin${pathname === to ? ' project-tab--active' : ''}`}
+              onClick={() => navigate(to)}
+            >
+              <PluginIcon pluginId={pg.pluginId} path={pg.icon} size={13} fallback={<></>} />
+              {pg.label}
+            </button>
+          )
+        })}
       </nav>
 
       {isMobile ? (mobileSlot && createPortal(actions, mobileSlot)) : actions}

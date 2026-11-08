@@ -179,9 +179,9 @@ type OrchestratorChat struct {
 	Session
 	ProjectName string `json:"project_name"`
 	FirstUser   string `json:"-"` // raw content of the first user message, for the preview
-	// OnlyAIMode: Google AI Mode answered it and claude never did, so claude has no
-	// conversation to resume. AI Mode reports no token usage; every claude turn does.
-	OnlyAIMode bool `json:"-"`
+	// OnlyPlugin: a plugin's model answered it and claude never did, so claude has no
+	// conversation to resume. A plugin reports no token usage; every claude turn does.
+	OnlyPlugin bool `json:"-"`
 }
 
 // ListOrchestratorChats lists the orchestrator conversations that have messages, the latest
@@ -189,7 +189,7 @@ type OrchestratorChat struct {
 func ListOrchestratorChats(db *sql.DB, projectID string) ([]OrchestratorChat, error) {
 	rows, err := db.Query(`SELECT s.id, COALESCE(p.name,''),
 		COALESCE((SELECT content FROM messages m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.seq LIMIT 1),''),
-		EXISTS(SELECT 1 FROM aimode_conversations a WHERE a.session_id=s.id)
+		EXISTS(SELECT 1 FROM plugin_conversations a WHERE a.session_id=s.id)
 			AND NOT EXISTS(SELECT 1 FROM turn_usage u WHERE u.session_id=s.id)
 		FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
 		WHERE s.kind=? AND (?='' OR s.project_id=?) AND s.message_count>0
@@ -199,12 +199,12 @@ func ListOrchestratorChats(db *sql.DB, projectID string) ([]OrchestratorChat, er
 	}
 	type row struct {
 		id, project, first string
-		onlyAIMode         bool
+		onlyPlugin         bool
 	}
 	var found []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.project, &r.first, &r.onlyAIMode); err != nil {
+		if err := rows.Scan(&r.id, &r.project, &r.first, &r.onlyPlugin); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -217,13 +217,13 @@ func ListOrchestratorChats(db *sql.DB, projectID string) ([]OrchestratorChat, er
 		if err != nil {
 			continue
 		}
-		out = append(out, OrchestratorChat{Session: s, ProjectName: r.project, FirstUser: r.first, OnlyAIMode: r.onlyAIMode})
+		out = append(out, OrchestratorChat{Session: s, ProjectName: r.project, FirstUser: r.first, OnlyPlugin: r.onlyPlugin})
 	}
 	return out, nil
 }
 
-// MoveOrchestratorChat assigns an orchestrator conversation to another project (its Google AI
-// Mode conversation goes with it). The chat stops being the current one of the project it left.
+// MoveOrchestratorChat assigns an orchestrator conversation to another project (the conversation
+// a plugin keeps for it goes with it). The chat stops being the current one of the project it left.
 func MoveOrchestratorChat(db *sql.DB, id, projectID string) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -237,7 +237,7 @@ func MoveOrchestratorChat(db *sql.DB, id, projectID string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return sql.ErrNoRows
 	}
-	if _, err := tx.Exec(`UPDATE aimode_conversations SET project_id=? WHERE session_id=?`, projectID, id); err != nil {
+	if _, err := tx.Exec(`UPDATE plugin_conversations SET project_id=? WHERE session_id=?`, projectID, id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -271,8 +271,8 @@ func GetSession(db *sql.DB, id string) (Session, error) {
 
 func ListSessions(db *sql.DB, projectID string) ([]Session, error) {
 	rows, err := db.Query(
-		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, worktree_removed FROM sessions WHERE project_id=? AND kind<>? ORDER BY last_active DESC`,
-		projectID, SessionKindOrchestrator,
+		`SELECT id, project_id, name, model, status, parent_id, message_count, created_at, last_active, account_id, context_usage, card_id, agent_id, worktree_removed FROM sessions WHERE project_id=? AND kind NOT IN (?,?) ORDER BY last_active DESC`,
+		projectID, SessionKindOrchestrator, SessionKindPlugin,
 	)
 	if err != nil {
 		return nil, err
@@ -440,6 +440,13 @@ func GetMessage(db *sql.DB, messageID string) (Message, error) {
 	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	m.Starred = starred != 0
 	return m, nil
+}
+
+// LastAssistantMessage is the text of the newest assistant message of a session, or "".
+func LastAssistantMessage(db *sql.DB, sessionID string) string {
+	var content string
+	_ = db.QueryRow(`SELECT content FROM messages WHERE session_id=? AND role='assistant' ORDER BY seq DESC LIMIT 1`, sessionID).Scan(&content)
+	return content
 }
 
 func ListMessages(db *sql.DB, sessionID string) ([]Message, error) {
@@ -1489,8 +1496,8 @@ type Agent struct {
 	// ("" = use the project's). The AI belongs to the runner it is set with.
 	RunnerID    string `json:"runner_id"`
 	AIProfileID string `json:"ai_profile_id"`
-	// AutoMode runs claude with --permission-mode auto: it decides on its own which
-	// tools are safe, so lucode's approval hook is not installed for this agent.
+	// AutoMode runs claude with --permission-mode auto. lucode's hook stays: rules and
+	// flows still apply, and claude decides what they leave open instead of a person.
 	AutoMode bool `json:"auto_mode"`
 	// Worktree makes claude work in its own git worktree (--worktree). WorktreeBaseRef
 	// is the worktree.baseRef setting passed through --settings: "head" (the

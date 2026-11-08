@@ -2,12 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { marked, type Token, type TokensList } from 'marked'
-import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces, IconZoomIn, IconZoomOut, IconZoomReset, IconArrowsMaximize, IconX } from '@tabler/icons-react'
+import { IconVolume, IconVolumeOff, IconCopy, IconCheck, IconStar, IconStarFilled, IconBraces, IconZoomIn, IconZoomOut, IconZoomReset, IconArrowsMaximize, IconX, IconClock, IconChevronRight, IconPoint, IconRobot } from '@tabler/icons-react'
 import Zoom from 'react-medium-image-zoom'
 import 'react-medium-image-zoom/dist/styles.css'
+import { HookHeader } from '../Hook/HookHeader'
 import { ToolInputRenderer } from '../Hook/HookToolInput'
+import { useHookCountdown } from '../Hook/useHookCountdown'
+import { hookAction, hookOutcome, hookSummary, type HookOutcome } from '../Hook/hookSummary'
 import { ToolExecutionMessage } from './ToolExecutionMessage'
 import { highlightCode } from '../../lib/highlight'
+import { sanitizeHtml, sanitizeUntrustedHtml } from '../../lib/sanitizeHtml'
+import { mermaidIsInert } from '../../lib/htmlPolicy'
+import { PluginChatActions } from '../Plugins/PluginActions'
 import { renderMermaid } from '../../lib/mermaid'
 import type { Message, ToolInputField } from '../../types'
 
@@ -32,9 +38,10 @@ interface Props {
   isStarred?: boolean
   onStar?: (messageId: string) => void
   onViewRawData?: (messageId: string) => void
+  untrusted?: boolean // written by a plugin's model: nothing in it may load by itself
 }
 
-export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking, isStarred, onStar, onViewRawData }: Props) {
+export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, onStopSpeaking, isStarred, onStar, onViewRawData, untrusted }: Props) {
   const [copied, setCopied] = useState(false)
 
   const handleSpeak = () => {
@@ -60,7 +67,7 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
         transition={{ duration: 0.15, ease: 'easeOut' }}
       >
         <div className={`msg__bubble${isBeingRead ? ' msg__bubble--reading' : ''}`}>
-          <BubbleContent message={message} sendHookRespond={sendHookRespond} />
+          <BubbleContent message={message} sendHookRespond={sendHookRespond} untrusted={untrusted} />
         </div> 
       </motion.div>
       <div className={`msg__info msg--${message.role}`}>
@@ -119,6 +126,7 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
                       <div className="tooltip tooltip--up">Raw turn data</div>
                     </div>
                   )}
+                  {message.role === 'assistant' && <PluginChatActions message={message} />}
                 </>
               </div>
             )}
@@ -128,13 +136,13 @@ export function MessageBubble({ message, sendHookRespond, isBeingRead, onSpeak, 
   )
 }
 
-function BubbleContent({ message, sendHookRespond }: { message: Message; sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always', reason?: string, rule?: { tool: string; input_regex?: Record<string, string> }) => void }) {
+function BubbleContent({ message, sendHookRespond, untrusted }: { message: Message; untrusted?: boolean; sendHookRespond?: (toolUseId: string, decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always', reason?: string, rule?: { tool: string; input_regex?: Record<string, string> }) => void }) {
   switch (message.role) {
     case 'user':
       return <UserContent content={message.content} />
 
     case 'assistant':
-      return <MarkdownContent content={message.content} />
+      return <MarkdownContent content={message.content} untrusted={untrusted} />
 
     case 'thinking':
       return (
@@ -153,26 +161,26 @@ function BubbleContent({ message, sendHookRespond }: { message: Message; sendHoo
       )
 
     case 'hook': {
-      const hookData = JSON.parse(message.content) as {
-        tool_name: string
-        tool_input: unknown
-        decision: 'pending' | 'approve' | 'deny' | 'timeout'
-        tool_use_id?: string
-        tool_input_schema?: ToolInputField[] | null
-      }
-      return (
-        <HookMessage
+      const hookData = JSON.parse(message.content) as HookData
+      return hookData.decision === 'pending' ? (
+        <PendingHookCard
           hookData={hookData}
+          createdAt={message.created_at}
           sendHookRespond={sendHookRespond}
         />
+      ) : (
+        <AnsweredHook hookData={hookData} />
       )
     }
 
     case 'system':
       return <p className="msg__system-notice">{message.content}</p>
 
-    case 'tool_execution':
-      return <ToolExecutionMessage content={message.content} />
+    case 'tool_execution': {
+      // A call the hub logged says who decided it, and reads like any answered approval.
+      const logged = parseLoggedTool(message.content)
+      return logged ? <AnsweredHook hookData={logged} /> : <ToolExecutionMessage content={message.content} />
+    }
 
     default:
       return <pre className="msg__code">{message.content}</pre>
@@ -231,14 +239,14 @@ type Segment = { kind: 'html'; html: string } | { kind: 'mermaid'; source: strin
 
 // The markdown as html pieces with the mermaid blocks apart, so each diagram is a React
 // component of its own (the html is React's: drawing into it by hand would be undone on re-render).
-function splitSegments(content: string): Segment[] {
+function splitSegments(content: string, untrusted?: boolean): Segment[] {
   const tokens = marked.lexer(content)
   const out: Segment[] = []
   let buf: Token[] = []
   const flush = () => {
     if (!buf.length) return
     const piece = Object.assign([...buf], { links: tokens.links }) as unknown as TokensList
-    out.push({ kind: 'html', html: marked.parser(piece) })
+    out.push({ kind: 'html', html: (untrusted ? sanitizeUntrustedHtml : sanitizeHtml)(marked.parser(piece)) })
     buf = []
   }
   for (const t of tokens) {
@@ -251,12 +259,12 @@ function splitSegments(content: string): Segment[] {
   return out
 }
 
-function MarkdownContent({ content }: { content: string }) {
-  const segments = useMemo(() => splitSegments(content), [content])
+function MarkdownContent({ content, untrusted }: { content: string; untrusted?: boolean }) {
+  const segments = useMemo(() => splitSegments(content, untrusted), [content, untrusted])
   return (
     <div className="msg__markdown">
       {segments.map((seg, i) => seg.kind === 'mermaid'
-        ? <MermaidDiagram key={i} source={seg.source} />
+        ? <MermaidDiagram key={i} source={seg.source} sourceOnly={untrusted && !mermaidIsInert(seg.source)} />
         : <div key={i} className="msg__md-part" dangerouslySetInnerHTML={{ __html: seg.html }} />)}
     </div>
   )
@@ -264,14 +272,15 @@ function MarkdownContent({ content }: { content: string }) {
 
 // A mermaid block: the diagram once drawn; as code while it loads, if it is still streaming in
 // or if it is not valid mermaid.
-function MermaidDiagram({ source }: { source: string }) {
+function MermaidDiagram({ source, sourceOnly }: { source: string; sourceOnly?: boolean }) {
   const [svg, setSvg] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     setSvg(null)
+    if (sourceOnly) return // drawing it could load what it names
     renderMermaid(source).then(r => { if (!cancelled) setSvg(r) })
     return () => { cancelled = true }
-  }, [source])
+  }, [source, sourceOnly])
   if (svg) return <DiagramView svg={svg} />
   const { html } = highlightCode(source, '')
   return <pre><code className="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>
@@ -394,23 +403,62 @@ function fmt(n: number): string {
 interface HookData {
   tool_name: string
   tool_input: unknown
-  decision: 'pending' | 'approve' | 'deny' | 'timeout'
+  // 'pending', or the UI's decision as the server stored it (see hookOutcome)
+  decision: string
   tool_use_id?: string
   tool_input_schema?: ToolInputField[] | null
+  decided_by?: string
+  reason?: string
 }
 
-const DECISION_ICON: Record<string, string> = {
-  pending: '⏳',
-  approve: '✓',
-  deny: '✕',
-  timeout: '⏱',
+function parseLoggedTool(content: string): HookData | null {
+  try {
+    const data = JSON.parse(content) as HookData
+    return data.decision ? data : null
+  } catch {
+    return null
+  }
 }
 
-function HookMessage({
+const OUTCOME_ICON: Record<HookOutcome, typeof IconCheck> = {
+  allowed: IconCheck,
+  denied: IconX,
+  auto: IconRobot,
+  timeout: IconClock,
+  unknown: IconPoint,
+}
+
+/** An answered approval: one quiet line in the history, with the details on demand. */
+function AnsweredHook({ hookData }: { hookData: HookData }) {
+  const { label, outcome } = hookOutcome(hookData.decision, hookData.decided_by)
+  const OutcomeIcon = OUTCOME_ICON[outcome]
+  const summary = hookSummary(hookData.tool_name, hookData.tool_input)
+
+  return (
+    <details className={`hook-done hook-done--${outcome}`}>
+      <summary className="hook-done__row">
+        <OutcomeIcon size={14} stroke={2.25} className="hook-done__icon" aria-hidden="true" />
+        <span className="hook-done__status">{label}</span>
+        <span className="hook-done__tool">{hookData.tool_name}</span>
+        {summary && <span className="hook-done__summary">{summary}</span>}
+        <IconChevronRight size={14} className="hook-done__chevron" aria-hidden="true" />
+      </summary>
+      <div className="hook-done__body">
+        {hookData.reason && <p className="hook-done__reason">{hookData.reason}</p>}
+        <ToolInputRenderer toolName={hookData.tool_name} input={hookData.tool_input} />
+      </div>
+    </details>
+  )
+}
+
+/** An approval waiting for the user. */
+function PendingHookCard({
   hookData,
+  createdAt,
   sendHookRespond,
 }: {
   hookData: HookData
+  createdAt: string
   sendHookRespond?: (
     toolUseId: string,
     decision: 'approve' | 'deny' | 'allow_always' | 'allow_with_rule' | 'deny_always',
@@ -418,7 +466,7 @@ function HookMessage({
     rule?: { tool: string; input_regex?: Record<string, string> }
   ) => void
 }) {
-  const isPending = hookData.decision === 'pending'
+  const remaining = useHookCountdown(createdAt)
   const [editOpen, setEditOpen] = useState(false)
   const [regexByField, setRegexByField] = useState<Record<string, string>>({})
 
@@ -467,35 +515,34 @@ function HookMessage({
   }
 
   return (
-    <div className="msg__hook">
-      <div className="msg__hook-header">
-        <div className="msg__hook-title">
-          ⚙ Tool Use — {hookData.tool_name}
-          <span className={`msg__hook-decision-icon msg__hook-decision-icon--${hookData.decision}`}>
-            {DECISION_ICON[hookData.decision]}
-          </span>
-        </div>
-      </div>
+    <div className="msg__hook" role="group" aria-label={`Approval request: ${hookAction(hookData.tool_name)}`}>
+      <HookHeader toolName={hookData.tool_name} remaining={remaining} />
       <div className="msg__hook-input">
         <ToolInputRenderer toolName={hookData.tool_name} input={hookData.tool_input} />
       </div>
-      {isPending && (
-        <div className="msg__hook-actions">
-          <button className="btn btn--deny" onClick={handleDeny}>
-            Deny
-          </button>
-          <button className="btn btn--approve" onClick={handleApprove}>
-            Approve
-          </button>
-          <button className="btn btn--approve" onClick={handleAllowAlways}>
-            Allow always
-          </button>
-          <button className="btn" onClick={() => setEditOpen((v) => !v)}>
+      <div className="msg__hook-actions">
+        <div className="msg__hook-actions-group">
+          <button
+            className="hook-btn hook-btn--quiet"
+            aria-expanded={editOpen}
+            onClick={() => setEditOpen((v) => !v)}
+          >
             Edit permission…
           </button>
+          <button className="hook-btn hook-btn--quiet" onClick={handleAllowAlways}>
+            Allow always
+          </button>
         </div>
-      )}
-      {editOpen && isPending && (
+        <div className="msg__hook-actions-group msg__hook-actions-group--main">
+          <button className="hook-btn hook-btn--deny" onClick={handleDeny}>
+            Deny
+          </button>
+          <button className="hook-btn hook-btn--approve" onClick={handleApprove}>
+            Approve
+          </button>
+        </div>
+      </div>
+      {editOpen && (
         <div className="msg__hook-edit">
           <div className="msg__hook-edit-title">Allow {hookData.tool_name} only when input matches these regexes:</div>
           {schema.length === 0 ? (
@@ -516,10 +563,10 @@ function HookMessage({
             ))
           )}
           <div className="msg__hook-edit-actions">
-            <button className="btn" onClick={() => setEditOpen(false)}>
+            <button className="hook-btn hook-btn--quiet" onClick={() => setEditOpen(false)}>
               Cancel
             </button>
-            <button className="btn btn--approve" onClick={handleSubmitRule}>
+            <button className="hook-btn hook-btn--approve" onClick={handleSubmitRule}>
               Allow with rule
             </button>
           </div>

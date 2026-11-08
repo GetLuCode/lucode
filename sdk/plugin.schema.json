@@ -1,0 +1,306 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://lucode.dev/schemas/plugin.schema.json",
+  "title": "lucode plugin manifest (plugin.json)",
+  "description": "Unknown fields are an error: nothing a plugin asks for may go unseen by the admin who reviews it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "version", "sdk"],
+  "anyOf": [
+    { "required": ["targets"] },
+    { "required": ["main"] }
+  ],
+  "not": {
+    "description": "Use targets or the old top-level main, not both for the server.",
+    "required": ["main", "targets"],
+    "properties": { "targets": { "required": ["server"] } }
+  },
+  "properties": {
+    "$schema": { "type": "string", "description": "Accepted by editors only. Remove it before packaging: the hub refuses unknown fields." },
+    "id": {
+      "type": "string",
+      "maxLength": 100,
+      "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$",
+      "description": "Like acme.hello. lucode.* is reserved for the plugins that ship with lucode."
+    },
+    "name": { "type": "string", "pattern": "\\S" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
+      "description": "Semver."
+    },
+    "sdk": { "const": 1 },
+    "description": { "type": "string" },
+    "author": { "type": "string" },
+    "homepage": { "type": "string", "pattern": "^https?://" },
+    "icon": { "$ref": "#/definitions/image" },
+    "targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "server": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["main"],
+          "properties": {
+            "main": { "$ref": "#/definitions/jsFile" },
+            "permissions": { "$ref": "#/definitions/serverPermissions" }
+          }
+        },
+        "runner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["main"],
+          "properties": {
+            "main": { "$ref": "#/definitions/jsFile" },
+            "permissions": { "$ref": "#/definitions/runnerPermissions" }
+          }
+        }
+      }
+    },
+    "main": { "$ref": "#/definitions/jsFile", "description": "Old form: the server target's main file." },
+    "permissions": { "$ref": "#/definitions/serverPermissions", "description": "Old form: the server target's permissions." },
+    "contributes": { "$ref": "#/definitions/contributes" },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What lucode-plugin build compiles: source to the output the manifest names. The hub ignores it.",
+      "properties": {
+        "server": { "$ref": "#/definitions/packagePath", "description": "Compiled to targets.server.main." },
+        "runner": { "$ref": "#/definitions/packagePath", "description": "Compiled to targets.runner.main." },
+        "pages": {
+          "type": "object",
+          "description": "Page id to its source (.tsx, .jsx, .ts or .js), compiled to the page's ui.",
+          "additionalProperties": { "$ref": "#/definitions/packagePath" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "localId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+    "rpcName": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+    "packagePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "(^/|\\\\|:|(^|/)\\.{1,2}(/|$)|//|[<>\"|?*\\u0000])" }
+    },
+    "jsFile": { "allOf": [{ "$ref": "#/definitions/packagePath" }, { "pattern": "\\.js$" }] },
+    "image": { "allOf": [{ "$ref": "#/definitions/packagePath" }, { "pattern": "\\.(svg|png|webp|jpg|jpeg)$" }] },
+    "target": { "enum": ["server", "runner"] },
+    "http": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hosts"],
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^(\\*\\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$" },
+          "description": "Host names. *.example.org matches names under it, never example.org itself. No addresses, ports or a bare *."
+        }
+      }
+    },
+    "serverPermissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "storage": { "type": "boolean" },
+        "conversations": { "type": "boolean" },
+        "sessions": { "const": "read" },
+        "board": { "enum": ["read", "write"] },
+        "flows": { "type": "boolean" },
+        "http": { "$ref": "#/definitions/http" },
+        "relay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["providers"],
+          "properties": {
+            "providers": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+              "description": "Webhook providers (telegram, ...) whose events the plugin gets through the hub's relay. Each is a grant of its own."
+            }
+          }
+        },
+        "browser": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["origins"],
+          "properties": {
+            "origins": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "pattern": "^https://([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$" }
+            }
+          }
+        }
+      }
+    },
+    "runnerPermissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fs": { "enum": ["read", "write"] },
+        "git": { "const": "read" },
+        "exec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commands"],
+          "properties": {
+            "commands": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$" },
+              "description": "Base names, not paths."
+            }
+          }
+        },
+        "http": { "$ref": "#/definitions/http" }
+      }
+    },
+    "timeoutSeconds": { "type": "integer", "minimum": 0, "maximum": 900 },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "models": { "type": "array", "items": { "$ref": "#/definitions/model" } },
+        "conversations": { "type": "array", "items": { "$ref": "#/definitions/conversation" } },
+        "pages": { "type": "array", "items": { "$ref": "#/definitions/page" } },
+        "settings": { "type": "array", "items": { "$ref": "#/definitions/setting" } },
+        "blueprints": { "type": "array", "items": { "$ref": "#/definitions/blueprint" } },
+        "flowNodes": { "type": "array", "items": { "$ref": "#/definitions/flowNode" } },
+        "chatActions": { "type": "array", "items": { "$ref": "#/definitions/action" } },
+        "cardActions": { "type": "array", "items": { "$ref": "#/definitions/action" } }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": {
+          "allOf": [
+            { "$ref": "#/definitions/localId" },
+            { "not": { "pattern": "^(claude|sonnet|opus|haiku|fable|anthropic|ollama|local)([-_.:].*)?$" } }
+          ]
+        },
+        "label": { "type": "string", "pattern": "\\S" },
+        "mode": { "type": "string" },
+        "hint": { "type": "string" },
+        "icon": { "$ref": "#/definitions/image" },
+        "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{3,8}$" },
+        "images": { "type": "boolean" },
+        "loader": { "type": "string", "description": "\"skeleton\" draws the skeleton loader; anything else the plain dots." },
+        "waitingText": { "type": "string" },
+        "timeoutSeconds": { "$ref": "#/definitions/timeoutSeconds" }
+      }
+    },
+    "conversation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "model", "title"],
+      "properties": {
+        "id": { "$ref": "#/definitions/localId" },
+        "model": { "type": "string" },
+        "title": { "type": "string" },
+        "emptyText": { "type": "string" },
+        "showUrl": { "type": "boolean" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "oneOf": [
+        { "required": ["render"], "not": { "anyOf": [{ "required": ["ui"] }, { "required": ["rpc"] }] } },
+        { "required": ["ui"], "not": { "required": ["render"] } }
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/localId" },
+        "label": { "type": "string" },
+        "icon": { "$ref": "#/definitions/image" },
+        "render": { "$ref": "#/definitions/rpcName", "description": "An rpc that returns a view tree." },
+        "ui": { "$ref": "#/definitions/jsFile", "description": "The page's frontend, built by lucode-plugin build. Its stylesheet is the .css beside it." },
+        "rpc": {
+          "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/definitions/rpcName" },
+          "description": "Every rpc the frontend may call. Nothing else is reachable from it."
+        }
+      }
+    },
+    "setting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "type"],
+      "properties": {
+        "key": { "$ref": "#/definitions/rpcName" },
+        "label": { "type": "string" },
+        "type": { "enum": ["text", "textarea", "number", "bool", "select", "secret"] },
+        "default": {},
+        "options": { "type": "array", "items": { "type": "string" } },
+        "help": { "type": "string" }
+      },
+      "if": { "properties": { "type": { "const": "select" } } },
+      "then": { "required": ["options"], "properties": { "options": { "minItems": 1 } } }
+    },
+    "blueprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "name", "file"],
+      "properties": {
+        "key": { "$ref": "#/definitions/localId" },
+        "name": { "type": "string", "pattern": "\\S" },
+        "description": { "type": "string" },
+        "file": { "allOf": [{ "$ref": "#/definitions/packagePath" }, { "pattern": "^blueprints/.*\\.json$" }] }
+      }
+    },
+    "flowNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": { "$ref": "#/definitions/localId" },
+        "label": { "type": "string", "pattern": "\\S" },
+        "description": { "type": "string" },
+        "icon": { "$ref": "#/definitions/image" },
+        "fields": { "type": "array", "items": { "$ref": "#/definitions/nodeField" } },
+        "ports": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+          "description": "The node's outputs. \"failed\" is always added. Name the others: with none given the node has only \"failed\"."
+        },
+        "timeoutSeconds": { "$ref": "#/definitions/timeoutSeconds" },
+        "target": { "$ref": "#/definitions/target" }
+      }
+    },
+    "nodeField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "$ref": "#/definitions/rpcName" },
+        "label": { "type": "string" },
+        "kind": { "enum": ["text", "template", "expr", "number", "select", "agent", "list", "bool", "lines"] },
+        "required": { "type": "boolean" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "default": {},
+        "help": { "type": "string" },
+        "min": { "type": "number" },
+        "port_label": { "type": "string" }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "rpc"],
+      "properties": {
+        "id": { "$ref": "#/definitions/localId" },
+        "label": { "type": "string" },
+        "icon": { "$ref": "#/definitions/image" },
+        "rpc": { "$ref": "#/definitions/rpcName" },
+        "target": { "$ref": "#/definitions/target" }
+      }
+    }
+  }
+}

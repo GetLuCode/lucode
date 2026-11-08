@@ -18,12 +18,13 @@ import (
 	"sync"
 	"time"
 
-	"claude-orchestrator/internal/aimode"
 	authclient "claude-orchestrator/internal/authclient"
 	dbpkg "claude-orchestrator/internal/db"
 	"claude-orchestrator/internal/flows"
 	natspkg "claude-orchestrator/internal/natsbus"
 	"claude-orchestrator/internal/permissions"
+	"claude-orchestrator/internal/plugins"
+	"claude-orchestrator/internal/plugins/surface"
 	sessionpkg "claude-orchestrator/internal/session"
 
 	"github.com/google/uuid"
@@ -63,10 +64,15 @@ type Handler struct {
 	startTurnFn func(sessionpkg.TurnOptions) error // overrides manager.StartTurn in tests
 
 	flows *flows.Engine // nil until StartFlows (only the hub runs it)
+
+	plugins plugins.HubHost // nil until StartPlugins (only the hub runs it)
+	uiTickets *surface.Tickets // a frontend page's script loads with one (pluginui.go)
+	relay   plugins.RelayClient // the connection to the webhook relay; nil: this hub has none
+
+	pushIcon string // path of the icon of a notification; empty: the browser's own
 }
 
 func New(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) *Handler {
-	aimode.Default.SetStore(aimodeStore{db: db}) // the local model remembers its conversations
 	return &Handler{
 		db:           db,
 		bus:          bus,
@@ -87,6 +93,10 @@ func (h *Handler) SetAuthURL(url string) {
 // runner and a turn without a runner fails with a clear message.
 func (h *Handler) SetHubOnly(v bool) { h.hubOnly = v }
 
+// SetRelay gives the plugins the hub's connection to the webhook relay. cmd/lucode makes it, so that
+// lucode-runner, which links this package, does not link the websocket client. Call it before StartPlugins.
+func (h *Handler) SetRelay(r plugins.RelayClient) { h.relay = r }
+
 func (h *Handler) SetAIAPIURL(url string) {
 	h.aiAPIURL = url
 }
@@ -100,6 +110,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/version", h.version("hub"))
 	h.registerFlows(mux)
 	h.registerGit(mux)
+	h.registerPlugins(mux)
 
 	mux.HandleFunc("POST /api/projects", h.createProject)
 	mux.HandleFunc("GET /api/projects", h.listProjects)
@@ -116,8 +127,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/orchestrator/chats", h.listOrchestratorChats)
 	mux.HandleFunc("PATCH /api/orchestrator/chats/{id}", h.updateOrchestratorChat)
 	mux.HandleFunc("POST /api/orchestrator/chats/{id}/open", h.openOrchestratorChat)
-	mux.HandleFunc("GET /api/projects/{pid}/aimode/conversations", h.listAIModeConversations)
-	mux.HandleFunc("POST /api/aimode/conversations/{id}/continue", h.continueAIModeConversation)
 	mux.HandleFunc("POST /api/sessions/{id}/turn", h.sendTurn)
 	mux.HandleFunc("DELETE /api/sessions/{id}/turn", h.cancelTurn)
 	mux.HandleFunc("GET /api/sessions/{id}/process", h.getSessionProcess)
@@ -344,14 +353,20 @@ func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// a plugin page's Worker cannot send the token: it carries a ticket the page got with it
+		if isPluginUIScript(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		if path == "/api/health" || strings.HasPrefix(path, "/api/hooks/") {
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		if token := extractBearerToken(r); token != "" {
-			if _, err := h.auth.ValidateToken(token); err == nil {
-				next.ServeHTTP(w, r)
+			if res, err := h.auth.ValidateToken(token); err == nil {
+				next.ServeHTTP(w, withAuthInfo(r, authInfo{Bearer: true, IsAdmin: res.IsAdmin}))
 				return
 			}
 		}
@@ -392,6 +407,7 @@ func recoverMiddleware(next http.Handler) http.Handler {
 func WrapWithSPA(h *Handler, spaFS fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	h.Register(mux)
+	h.pushIcon = findPushIcon(spaFS)
 	mux.Handle("/", spaHandler(spaFS))
 	return recoverMiddleware(cors(h.authMiddleware(h.remoteProxy(mux))))
 }
@@ -570,7 +586,12 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	h.manager.CloseLive(id)
-	go aimode.Default.Forget(id) // its AI Mode conversation tab, if it had one
+	if h.plugins != nil {
+		if sess, err := dbpkg.GetSession(h.db, id); err == nil {
+			h.plugins.SessionDeleted(sess.ProjectID, id)
+			h.plugins.SessionClosed(sess.ProjectID, id)
+		}
+	}
 	if err := dbpkg.DeleteSession(h.db, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -632,6 +653,13 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sess.Kind == dbpkg.SessionKindOrchestrator {
+		orchModel := body.Model
+		if orchModel == "" {
+			orchModel = sess.Model
+		}
+		if refusePluginTurnRPC(w, r, orchModel) {
+			return
+		}
 		opts, err := h.orchestratorTurnOpts(sess, proj, body.Message, body.Model, body.RunnerID, body.AIProfileID, body.Effort, body.Thinking)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -662,6 +690,12 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 			agent = &a
 			model = a.Model
 		}
+	}
+	if sess.Kind == dbpkg.SessionKindPlugin && !plugins.IsPluginModel(model) {
+		model = sess.Model // a chat on a plugin's page stays with its plugin
+	}
+	if refusePluginTurnRPC(w, r, model) {
+		return
 	}
 	provider, model := resolveProvider(body.Provider, model)
 
@@ -696,11 +730,12 @@ func (h *Handler) sendTurn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if aimode.IsModel(model) { // local model: Google AI Mode in Edge, no claude and no tools
-		opts.Executor, opts.Persistent, opts.Resume = "aimode", false, false
+	if err := h.applyPluginModel(&opts); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
 	}
 
-	if opts.Executor != "aimode" {
+	if opts.Executor != pluginExecutor {
 		// Where it runs and with which AI: the agent's runner, else the project's.
 		// On a hub this sends the turn to the runner instead of starting claude here.
 		var envAgent dbpkg.Agent
@@ -859,6 +894,10 @@ func (h *Handler) forkSession(w http.ResponseWriter, r *http.Request) {
 			WorkDirs:        proj.WorkDirs,
 			ClaudeConfigDir: h.projectConfigDir(proj),
 			ForkFrom:        id,
+		}
+		if err := h.applyPluginModel(&opts); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
 		}
 		if err := h.manager.StartTurn(opts); err != nil {
 			log.Printf("api: fork turn: %v", err)
@@ -3077,7 +3116,7 @@ func sanitizeLucodeTools(in []string) []string {
 		return nil
 	}
 	known := map[string]bool{}
-	for _, n := range append(taskmcp.Names(), taskmcp.BrowserNames()...) {
+	for _, n := range append(append(taskmcp.Names(), taskmcp.BrowserNames()...), taskmcp.FlowNames()...) {
 		known[n] = true
 	}
 	out := []string{}

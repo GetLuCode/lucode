@@ -13,7 +13,8 @@ import (
 
 // Expressions are CEL: they can read the run's data and compute a value, but they have
 // no way to touch the disk, the network or the hub, and a cost limit stops runaway ones.
-// What they can read: card, event, run and nodes (nodes.<id>.<output field>).
+// What they can read: card, event, run and input, the value that reached the node, as text.
+// What other nodes answered only reaches a node through its input.
 
 const exprCostLimit = 100_000
 
@@ -30,7 +31,7 @@ func env() (*cel.Env, error) {
 			cel.Variable("card", cel.DynType),
 			cel.Variable("event", cel.DynType),
 			cel.Variable("run", cel.DynType),
-			cel.Variable("nodes", cel.DynType),
+			cel.Variable("input", cel.StringType),
 		)
 	})
 	return exprEnv, exprEnvErr
@@ -43,6 +44,9 @@ func compile(expr string) (cel.Program, error) {
 	}
 	ast, iss := e.Compile(expr)
 	if iss != nil && iss.Err() != nil {
+		if strings.Contains(iss.Err().Error(), "undeclared reference to 'nodes'") {
+			return nil, errors.New("nodes.<id> is gone: connect that node's output to this node and use input, or read a JSON answer with Get JSON prop")
+		}
 		return nil, errors.New(strings.TrimSpace(iss.Err().Error()))
 	}
 	return e.Program(ast, cel.CostLimit(exprCostLimit))

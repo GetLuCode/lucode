@@ -12,6 +12,7 @@ import (
 
 	dbpkg "claude-orchestrator/internal/db"
 	"claude-orchestrator/internal/flows"
+	sessionpkg "claude-orchestrator/internal/session"
 
 	"github.com/google/uuid"
 )
@@ -24,6 +25,9 @@ import (
 // StartFlows starts the engine. Only the hub calls it, and it needs no NATS of its own.
 func (h *Handler) StartFlows(ctx context.Context) {
 	h.flows = flows.NewEngine(h.db, flowHost{h})
+	h.flows.EventTap = h.pluginEventTap
+	flows.MigrateStoredGraphs(h.db) // flows saved before values travelled on the edges
+	h.manager.ToolGate = func(req sessionpkg.ToolRequest) (string, string) { return h.flowToolGate(ctx, req) }
 	if projects, err := dbpkg.ListProjects(h.db); err == nil {
 		for _, p := range projects {
 			if err := flows.SeedBlueprints(h.db, p.ID); err != nil {
@@ -34,8 +38,43 @@ func (h *Handler) StartFlows(ctx context.Context) {
 	h.flows.Start(ctx)
 }
 
+// flowToolGate offers a tool request to the flows of the session's project. Any session counts,
+// with or without a card. An answer other than allow or deny leaves it open.
+func (h *Handler) flowToolGate(ctx context.Context, req sessionpkg.ToolRequest) (string, string) {
+	sess, err := dbpkg.GetSession(h.db, req.SessionID)
+	if err != nil {
+		return flows.ToolAsk, ""
+	}
+	task, agentID := "", sess.AgentID
+	if sess.CardID != "" {
+		if card, err := dbpkg.GetKanbanCard(h.db, sess.CardID); err == nil {
+			task = card.Title
+			if agentID == "" {
+				agentID = card.AgentID
+			}
+		}
+	}
+	agent := ""
+	if agentID != "" {
+		if a, err := dbpkg.GetAgent(h.db, agentID); err == nil {
+			agent = a.Name
+		}
+	}
+	v := h.flows.DecideTool(ctx, flows.ToolRequest{
+		ProjectID: sess.ProjectID, CardID: sess.CardID, SessionID: req.SessionID, ToolUseID: req.ToolUseID,
+		ToolName: req.ToolName, WorkDir: req.WorkDir, Task: task, Agent: agent, AutoMode: req.AutoMode, Input: req.Input,
+	})
+	if v.Decision == flows.ToolAsk && v.Reason != "" {
+		log.Printf("[flows] no decision on %s of session %s: %s", req.ToolName, req.SessionID, v.Reason)
+	}
+	return v.Decision, v.Reason
+}
+
 // seedProjectFlows gives a new project its base flows.
 func (h *Handler) seedProjectFlows(projectID string) {
+	if h.plugins != nil {
+		h.plugins.SeedProject(projectID)
+	}
 	if h.flows == nil {
 		return
 	}
@@ -52,8 +91,9 @@ func (h *Handler) notifyFlows() {
 }
 
 // FlowTurnEnded logs the end of a turn on a card (Manager.OnTurnEnd).
+// Its reply is the agent's last message: a Run agent gives it through its "reply" output.
 func (h *Handler) FlowTurnEnded(sessID string) {
-	h.recordTurnEvent(sessID, dbpkg.EventTurnEnded, nil)
+	h.recordTurnEvent(sessID, dbpkg.EventTurnEnded, map[string]any{"reply": dbpkg.LastAssistantMessage(h.db, sessID)})
 }
 
 func (h *Handler) recordTurnEvent(sessID, typ string, payload map[string]any) {
@@ -276,6 +316,7 @@ func (h *Handler) registerFlows(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/flow-steps/{seq}/decision", h.decideFlowApproval)
 	mux.HandleFunc("GET /api/flow-ai-settings", h.getFlowAISettings)
 	mux.HandleFunc("PUT /api/flow-ai-settings", h.putFlowAISettings)
+	h.registerFlowPush(mux)
 	mux.HandleFunc("GET /api/projects/{pid}/flows/paused", h.getFlowsPaused)
 	mux.HandleFunc("PUT /api/projects/{pid}/flows/paused", h.setFlowsPaused)
 	mux.HandleFunc("GET /api/flows/{id}", h.getFlow)
@@ -285,6 +326,7 @@ func (h *Handler) registerFlows(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/flows/{id}/publish", h.publishFlow)
 	mux.HandleFunc("PUT /api/flows/{id}/enabled", h.setFlowEnabled)
 	mux.HandleFunc("POST /api/flows/{id}/run", h.runFlow)
+	mux.HandleFunc("POST /api/flows/{id}/fork", h.forkFlow)
 	mux.HandleFunc("GET /api/flows/{id}/runs", h.listFlowRuns)
 	mux.HandleFunc("GET /api/flow-runs/{id}", h.getFlowRun)
 	mux.HandleFunc("POST /api/flow-runs/{id}/cancel", h.cancelFlowRun)
@@ -367,7 +409,7 @@ func (h *Handler) saveFlow(w http.ResponseWriter, r *http.Request) {
 		draft = body.Draft
 	}
 	if err := dbpkg.UpdateFlowDraft(h.db, f.ID, name, draft); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), flowSaveStatus(err))
 		return
 	}
 	f, _ = dbpkg.GetFlow(h.db, f.ID)
@@ -375,6 +417,10 @@ func (h *Handler) saveFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteFlow(w http.ResponseWriter, r *http.Request) {
+	if f, err := dbpkg.GetFlow(h.db, r.PathValue("id")); err == nil && f.Locked {
+		http.Error(w, "this flow belongs to a plugin: it goes away with the plugin. Switch it off to stop it.", http.StatusConflict)
+		return
+	}
 	if err := dbpkg.DeleteFlow(h.db, r.PathValue("id")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -402,6 +448,10 @@ func (h *Handler) publishFlow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if f.Locked {
+		http.Error(w, dbpkg.ErrFlowLocked.Error(), http.StatusConflict)
+		return
+	}
 	g, err := flows.ParseGraph(f.Draft)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -423,6 +473,9 @@ func (h *Handler) publishFlow(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) setFlowEnabled(w http.ResponseWriter, r *http.Request) {
 	f, ok := h.flowFor(w, r)
 	if !ok {
+		return
+	}
+	if refuseLockedFlowRPC(w, r, f) {
 		return
 	}
 	var body struct {
@@ -447,6 +500,9 @@ func (h *Handler) setFlowEnabled(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) runFlow(w http.ResponseWriter, r *http.Request) {
 	f, ok := h.flowFor(w, r)
 	if !ok {
+		return
+	}
+	if refuseLockedFlowRPC(w, r, f) {
 		return
 	}
 	var body struct {

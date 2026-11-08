@@ -27,20 +27,21 @@ type Node struct {
 	Config map[string]any `json:"config"`
 }
 
-// Edge connects an output port of a node to the next node. Data does not travel on
-// edges: every expression can read the output of any earlier node.
+// Edge connects an output of a node to the input of another. The answer the node gives
+// through that output travels on it, and its arrival is what starts the other node.
 type Edge struct {
 	From string `json:"from"`
 	Port string `json:"port"`
 	To   string `json:"to"`
 }
 
-// ParseGraph reads a stored graph.
+// ParseGraph reads a stored graph, bringing one saved in the old shape up to date.
 func ParseGraph(raw []byte) (Graph, error) {
 	var g Graph
 	if err := json.Unmarshal(raw, &g); err != nil {
 		return g, fmt.Errorf("invalid graph: %w", err)
 	}
+	g, _ = MigrateGraph(g)
 	return g, nil
 }
 
@@ -135,11 +136,18 @@ func Validate(g Graph) []Problem {
 		seen[n.ID] = true
 		def, ok := NodeTypeOf(n.Type)
 		if !ok {
+			if p, isPlugin := pluginProblem(n); isPlugin {
+				problems = append(problems, p)
+				continue
+			}
 			add(n.ID, "unknown node type %q", n.Type)
 			continue
 		}
 		if def.Category == CategoryTrigger {
 			triggers++
+		}
+		if p, bad := pluginEventProblem(n); bad {
+			problems = append(problems, p)
 		}
 		for _, f := range def.Fields {
 			val := n.str(f.Name)
@@ -206,12 +214,27 @@ func Validate(g Graph) []Problem {
 		if def, ok := NodeTypeOf(from.Type); ok && !contains(def.Ports, e.Port) {
 			add(from.ID, "%s has no output %q", def.Title, e.Port)
 		}
-		if def, ok := NodeTypeOf(to.Type); ok && def.Category == CategoryTrigger {
-			add(to.ID, "%s is a trigger: nothing can connect into it", def.Title)
+		toDef, okTo := NodeTypeOf(to.Type)
+		if okTo && toDef.Category == CategoryTrigger {
+			add(to.ID, "%s is a trigger: nothing can connect into it", toDef.Title)
+		}
+		// a JSON input takes JSON, or an output that can carry anything and is checked when it runs
+		if fromDef, ok := NodeTypeOf(from.Type); ok && okTo && toDef.Input != nil && toDef.Input.Type == PinJSON {
+			if got := fromDef.OutputType(e.Port); got != PinJSON && got != PinAny {
+				add(to.ID, "%s needs JSON, and the %q output of %s gives %s", toDef.Title, e.Port, fromDef.Title, got)
+			}
+		}
+	}
+	for _, n := range g.Nodes {
+		if n.Type == TypeGetJSONProp && n.str("template") != "" {
+			if err := CheckJSONProp(n.str("template")); err != nil {
+				add(n.ID, "Get JSON prop: %v", err)
+			}
 		}
 	}
 
 	problems = append(problems, mergeProblems(g)...)
+	problems = append(problems, toolFlowProblems(g)...)
 
 	if cycle := findCycle(g); cycle != "" {
 		add(cycle, "this node is in a loop: loops must go through the \"again\" output of a Retry node, which limits them")
@@ -336,6 +359,19 @@ func findCycle(g Graph) string {
 		}
 	}
 	return ""
+}
+
+// distinct keeps the first of each repeated id, in order.
+func distinct(ids []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func contains(list []string, s string) bool {

@@ -1,0 +1,40 @@
+{
+  "id": "acme.hello",
+  "name": "Hello",
+  "version": "0.1.0",
+  "sdk": 1,
+  "description": "A starting point: a page on the server and a flow node on the runner.",
+  "author": "Your name",
+  "icon": "assets/icon.svg",
+  "targets": {
+    "server": {
+      "main": "server.js",
+      "permissions": { "flows": true }
+    },
+    "runner": {
+      "main": "runner.js",
+      "permissions": { "fs": "read" }
+    }
+  },
+  "contributes": {
+    "pages": [
+      { "id": "main", "label": "Hello", "icon": "assets/icon.svg", "render": "renderMain" }
+    ],
+    "settings": [
+      { "key": "greeting", "label": "Greeting", "type": "text", "default": "Hello", "help": "What the page says." }
+    ],
+    "flowNodes": [
+      {
+        "id": "read_file",
+        "label": "Read a file",
+        "description": "Reads a file of the card's workspace on its runner. \"text\" gives what it holds, as text.",
+        "target": "runner",
+        "fields": [
+          { "name": "path", "label": "Path", "kind": "text", "required": true, "default": "README.md" }
+        ],
+        "ports": ["text"],
+        "timeoutSeconds": 30
+      }
+    ]
+  }
+}

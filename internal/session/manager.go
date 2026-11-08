@@ -75,6 +75,16 @@ type Manager struct {
 	// workDirsBySession caches the first work_dir per session so
 	// permission lookups don't need to re-derive it.
 	workDirsBySession map[string]string
+
+	logMu sync.Mutex // tool calls arrive concurrently and each one takes the next message seq
+
+	// ToolGate gets the tool calls no rule decided, before a person does. It returns "allow"
+	// or "deny" with the reason the agent reads; anything else leaves it open. Set by the hub
+	// before turns start. It blocks, for a limited time.
+	ToolGate func(ToolRequest) (decision, reason string)
+
+	// PluginTurn answers a turn of executor "plugin". Set by the hub; a runner has none.
+	PluginTurn func(ctx context.Context, req PluginTurnRequest, progress func(string)) (string, error)
 }
 
 func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings string) *Manager {
@@ -95,15 +105,13 @@ func NewManager(db *sql.DB, bus *natspkg.Bus, backendNATSURL, claudeSettings str
 		workDirsBySession:  make(map[string]string),
 	}
 	bus.OnHookRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
-		m.onHookRequest(sessID, toolUseID, toolName, toolInput)
+		m.onHookRequest(sessID, toolUseID, toolName, toolInput, time.Now().UTC())
 	}
 	bus.OnHookRespond = func(sessID, toolUseID, decision, reason, ruleJSON string) {
 		m.onHookRespond(sessID, toolUseID, decision, reason, ruleJSON)
 	}
 	bus.OnHookDisconnect = func(sessID, toolUseID string) {}
-	bus.OnPermissionRequest = func(sessID, toolUseID, toolName string, toolInput json.RawMessage) (string, string) {
-		return m.onPermissionRequest(sessID, toolUseID, toolName, toolInput)
-	}
+	bus.OnPermissionRequest = m.onPermissionRequest
 	return m
 }
 
@@ -230,8 +238,8 @@ func (m *Manager) StartTurn(opts TurnOptions) error {
 	m.procs[opts.SessionID] = ps
 	m.mu.Unlock()
 
-	if opts.Executor == "aimode" {
-		go m.runWithAIMode(ctx, ps, opts)
+	if opts.Executor == "plugin" {
+		go m.runWithPlugin(ctx, ps, opts)
 	} else if opts.Executor == "claude" && opts.RunnerID != "" {
 		go m.runWithRemoteCLI(ctx, ps, opts)
 	} else if opts.Executor == "claude" {
@@ -592,9 +600,10 @@ func (m *Manager) broadcastError(sessID, msg string) {
 	log.Printf("[manager] error sess=%s: %s", sessID[:8], msg)
 }
 
-func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) {
+// onHookRequest shows a person the request. createdAt is when the hook asked, which is what the
+// countdown on the page runs from: a flow may already have used part of that time.
+func (m *Manager) onHookRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage, createdAt time.Time) {
 	inputStr := string(toolInput)
-	createdAt := time.Now().UTC()
 
 	_ = dbpkg.InsertPendingHook(m.db, dbpkg.PendingHook{
 		SessionID: sessID,
@@ -641,8 +650,7 @@ func (m *Manager) expireApproval(sessID, toolUseID string) {
 }
 
 func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason, ruleJSON string) {
-	hook, err := dbpkg.GetPendingHook(m.db, sessID, toolUseID)
-	if err == nil {
+	if hook, err := dbpkg.GetPendingHook(m.db, sessID, toolUseID); err == nil {
 		content, _ := json.Marshal(map[string]any{
 			"tool_use_id": toolUseID,
 			"tool_name":   hook.ToolName,
@@ -650,6 +658,7 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason, ruleJSON st
 			"decision":    decision,
 			"reason":      reason,
 		})
+		m.logMu.Lock()
 		seq, _ := dbpkg.NextMessageSeq(m.db, sessID)
 		dbpkg.InsertMessage(m.db, dbpkg.Message{
 			ID:        uuid.New().String(),
@@ -658,6 +667,7 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason, ruleJSON st
 			Content:   string(content),
 			Seq:       seq,
 		})
+		m.logMu.Unlock()
 	}
 
 	// Persist a session-scope rule if the user picked "Allow always"
@@ -702,31 +712,103 @@ func (m *Manager) onHookRespond(sessID, toolUseID, decision, reason, ruleJSON st
 	})
 }
 
-// onPermissionRequest is invoked synchronously by the bus when aiapi
-// asks for permission to execute a tool. The flow:
+// approvalTimeout is how long an approval can take, counted from when the hook asked. The hook
+// gives up at permissionTimeout (cmd/lucodehook); the margin lets the hub answer first, so the
+// agent reads the real reason and the page stops waiting at the same moment.
+const (
+	approvalTimeout = 4 * time.Minute
+	approvalMargin  = 5 * time.Second
+)
+
+// ToolRequest is a tool call that no rule decided, offered to the ToolGate.
+type ToolRequest struct {
+	SessionID string
+	ToolUseID string
+	ToolName  string
+	WorkDir   string
+	AutoMode  bool
+	Input     json.RawMessage
+}
+
+// Who decided a tool call, as the web's tool log shows it.
+const (
+	decidedByLucode = "lucode"
+	decidedByRule   = "rule"
+	decidedByFlow   = "flow"
+	decidedByAuto   = "auto"
+	decidedByPerson = "person"
+)
+
+// onPermissionRequest is invoked by the bus, once per request and concurrently, when the hook
+// asks for permission to execute a tool. Whatever the answer, the call reaches the session's
+// tool log: an approval a person answers is already there as its own message.
+func (m *Manager) onPermissionRequest(req natspkg.PermissionRequest) (string, string) {
+	decision, reason, by := m.decideTool(req)
+	if by != decidedByPerson {
+		m.logToolCall(req, decision, reason, by)
+	}
+	return decision, reason
+}
+
+// logToolCall keeps a tool call in the session's history and shows it on the page. Requests run
+// concurrently, and the sequence of a message has to be read and written as one step.
+func (m *Manager) logToolCall(req natspkg.PermissionRequest, decision, reason, by string) {
+	input := req.ToolInput
+	if len(input) == 0 {
+		input = json.RawMessage(`{}`)
+	}
+	id := uuid.New().String()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	fields := map[string]any{
+		"tool_name": req.ToolName, "tool_input": input, "tool_use_id": req.ToolUseID,
+		"timestamp": now, "decision": decision, "decided_by": by, "reason": reason,
+	}
+	content, _ := json.Marshal(fields)
+	m.logMu.Lock()
+	seq, _ := dbpkg.NextMessageSeq(m.db, req.SessionID)
+	err := dbpkg.InsertMessage(m.db, dbpkg.Message{ID: id, SessionID: req.SessionID, Role: "tool_execution", Content: string(content), Seq: seq})
+	m.logMu.Unlock()
+	if err != nil {
+		log.Printf("[manager] log tool call sess=%s tool=%s: %v", req.SessionID, req.ToolName, err)
+	}
+	fields["type"] = "tool_execution"
+	fields["session_id"] = req.SessionID
+	fields["message_id"] = id
+	m.bus.BroadcastToRole(req.SessionID, natspkg.RoleClient, fields)
+}
+
+// decideTool answers a tool call and says who decided, in this order:
 //
-//  1. Resolve the session's PermissionStore (lazy-loaded from
+//  1. Tools of lucode itself, and a turn where something was already denied.
+//  2. The session's PermissionStore (lazy-loaded from
 //     %USERPROFILE%/.lucode/settings.json + <workdir>/.lucode/settings.json
-//     + the session_permissions table).
-//  2. If the store returns Allow or Deny, return immediately. No UI
-//     prompt, no NATS round-trip — the rule is enough.
-//  3. Otherwise (Ask / Miss), record the request in pendingApprovals,
-//     call onHookRequest to broadcast hook_pending to the WS, and
-//     block until onHookRespond signals us back. The same hook
-//     pipeline used by the legacy PreToolUse flow handles the user
-//     interaction; we just wait for the answer.
+//     + the session_permissions table). Allow and Deny are final, and so is an
+//     explicit Ask, which goes straight to a person.
+//  3. The ToolGate (a project's flow), which can allow it, deny it or leave it open.
+//  4. What is left open goes to claude's auto mode if it runs in it. Otherwise to a person:
+//     record the request in pendingApprovals, call onHookRequest to broadcast hook_pending
+//     to the WS, and block until onHookRespond signals us back.
 //
-// Returns ("allow"|"deny", reason). Reason is set from the matched
-// rule (for store-driven decisions) or the user's response.
-func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolInput json.RawMessage) (string, string) {
+// The decision is allow, deny or auto. The reason comes from the matched rule, the flow or the
+// user's response.
+func (m *Manager) decideTool(req natspkg.PermissionRequest) (string, string, string) {
+	askedAt := time.Now().UTC()
+	sessID, toolUseID, toolName, toolInput := req.SessionID, req.ToolUseID, req.ToolName, req.ToolInput
+	autoMode := req.PermissionMode == "auto"
+
 	// The task tools only report on the agent's own task; they never need approval
 	// (and must stay usable after a denial so the agent can report it as blocked).
 	if taskmcp.IsTaskTool(toolName) {
-		return "allow", "lucode task tool"
+		return "allow", "lucode task tool", decidedByLucode
+	}
+	// The flow tools only read flows and write drafts, which run nothing until a person publishes
+	// them; asking on each edit would rule out working on a flow together, live.
+	if taskmcp.IsFlowTool(toolName) {
+		return "allow", "only writes unpublished drafts", decidedByLucode
 	}
 	// ToolSearch only loads the schemas of deferred tools (how claude finds the task tools).
 	if toolName == "ToolSearch" {
-		return "allow", "loads tool schemas only"
+		return "allow", "loads tool schemas only", decidedByLucode
 	}
 
 	// If a tool was already denied this turn, stop immediately and instruct
@@ -735,29 +817,46 @@ func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolIn
 	alreadyDenied := m.deniedThisTurn[sessID]
 	m.pendingApprovalsMu.Unlock()
 	if alreadyDenied {
-		return "deny", "A tool call was already denied during this turn. Stop executing tools, explain to the user what you were attempting, and ask how they would like to proceed."
+		return "deny", "A tool call was already denied during this turn. Stop executing tools, explain to the user what you were attempting, and ask how they would like to proceed.", decidedByLucode
 	}
 
-	workDir := m.workDirFor(sessID)
-	store, err := permissions.LoadForSession(workDir, permDBAdapter{m.db}, sessID)
+	store, err := permissions.LoadForSession(m.workDirFor(sessID), permDBAdapter{m.db}, sessID)
 	if err != nil {
 		log.Printf("[manager] permission store load failed sess=%s: %v", sessID[:8], err)
 		m.markDeniedThisTurn(sessID)
-		return "deny", "permission store unavailable"
+		return "deny", "permission store unavailable", decidedByLucode
 	}
 
 	match, err := store.Match(toolName, toolInput)
 	if err != nil {
 		log.Printf("[manager] permission match error sess=%s tool=%s: %v", sessID[:8], toolName, err)
 		m.markDeniedThisTurn(sessID)
-		return "deny", "permission match error: " + err.Error()
+		return "deny", "permission match error: " + err.Error(), decidedByLucode
 	}
 	switch match.Decision {
 	case permissions.Allow:
-		return "allow", ruleReason(match)
+		return "allow", ruleReason(match), decidedByRule
 	case permissions.Deny:
 		m.markDeniedThisTurn(sessID)
-		return "deny", ruleReason(match)
+		return "deny", ruleReason(match), decidedByRule
+	}
+
+	// No rule decided: a flow of the project may. An explicit Ask rule is not left open: it says
+	// a person answers this, also in auto mode, the way claude treats its own ask rules.
+	if match.Decision != permissions.Ask {
+		if m.ToolGate != nil {
+			decision, reason := m.ToolGate(ToolRequest{SessionID: sessID, ToolUseID: toolUseID, ToolName: toolName, WorkDir: req.WorkDir, AutoMode: autoMode, Input: toolInput})
+			switch decision {
+			case "allow":
+				return decision, reason, decidedByFlow
+			case "deny":
+				m.markDeniedThisTurn(sessID)
+				return decision, reason, decidedByFlow
+			}
+		}
+		if autoMode {
+			return "auto", "", decidedByAuto
+		}
 	}
 
 	// Ask / Miss: ask the user. Register the wait channel first so we
@@ -765,10 +864,9 @@ func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolIn
 	ch := m.registerApproval(sessID, toolUseID)
 	defer m.unregisterApproval(sessID, toolUseID)
 
-	m.onHookRequest(sessID, toolUseID, toolName, toolInput)
+	m.onHookRequest(sessID, toolUseID, toolName, toolInput, askedAt)
 
-	// Block for up to 4 minutes (matches the legacy hook timeout).
-	timer := time.NewTimer(4 * time.Minute)
+	timer := time.NewTimer(time.Until(askedAt.Add(approvalTimeout - approvalMargin)))
 	defer timer.Stop()
 	select {
 	case resp := <-ch:
@@ -784,11 +882,11 @@ func (m *Manager) onPermissionRequest(sessID, toolUseID, toolName string, toolIn
 		if decision == "deny" {
 			m.markDeniedThisTurn(sessID)
 		}
-		return decision, resp.reason
+		return decision, resp.reason, decidedByPerson
 	case <-timer.C:
 		m.markDeniedThisTurn(sessID)
 		m.expireApproval(sessID, toolUseID)
-		return "deny", "user did not respond"
+		return "deny", "user did not respond", decidedByPerson
 	}
 }
 

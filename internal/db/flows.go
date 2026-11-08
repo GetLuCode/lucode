@@ -26,6 +26,8 @@ const (
 	EventApprovalDecided = "approval.decided"
 	EventCallDone        = "flow.call_done"
 	EventTaskDone        = "task.done"
+	// An agent wants to use a tool and no rule decided it. Someone is waiting for the answer.
+	EventToolRequested = "tool.requested"
 )
 
 // Run and step statuses.
@@ -145,11 +147,23 @@ CREATE TABLE IF NOT EXISTS flow_settings (
     project_id TEXT PRIMARY KEY,
     paused     INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint   TEXT PRIMARY KEY,
+    p256dh     TEXT NOT NULL,
+    auth       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 `)
 	if err != nil {
 		return fmt.Errorf("create flow tables: %w", err)
 	}
-	return nil
+	// flows.draft_agent — the agent that changed the draft since it was last published
+	db.Exec(`ALTER TABLE flows ADD COLUMN draft_agent TEXT NOT NULL DEFAULT ''`)
+	// flow_steps.input — the value that reached the step, as JSON ('' for a trigger)
+	db.Exec(`ALTER TABLE flow_steps ADD COLUMN input TEXT NOT NULL DEFAULT ''`)
+	migrateFlowPluginColumns(db)
+	return migratePlugins(db)
 }
 
 type dbExec interface {
@@ -186,6 +200,50 @@ func insertFlowEvent(x dbExec, projectID, typ, cardID, sessionID string, payload
 func RecordFlowEvent(db *sql.DB, projectID, typ, cardID, sessionID string, payload map[string]any) error {
 	cause := EventCause{Source: "system"}
 	return insertFlowEvent(db, projectID, typ, cardID, sessionID, payload, cause, inheritedDepth(db, cardID, cause))
+}
+
+// RecordToolRequest logs a tool request. It starts its own chain: it changes nothing on the
+// card, and a card deep in a chain of flows must not lose its approvals to the loop limit.
+func RecordToolRequest(db *sql.DB, projectID, cardID, sessionID string, payload map[string]any) error {
+	return insertFlowEvent(db, projectID, EventToolRequested, cardID, sessionID, payload, EventCause{Source: "agent"}, 0)
+}
+
+// OpenToolFlowRuns are the runs still deciding a tool request. Their answer has nowhere to go
+// after a hub restart, because the request it answers was lost with the restart.
+func OpenToolFlowRuns(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT id FROM flow_runs WHERE status IN (?,?) AND json_extract(event,'$.type')=?`, RunRunning, RunQueued, EventToolRequested)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// PruneToolFlowRuns drops old finished runs of tool requests. There is one per tool call, and
+// each one keeps the tool's input.
+func PruneToolFlowRuns(db *sql.DB, age time.Duration) error {
+	cut := time.Now().UTC().Add(-age).Format("2006-01-02T15:04:05.000Z")
+	const old = `SELECT id FROM flow_runs WHERE status NOT IN (?,?) AND finished_at<? AND json_extract(event,'$.type')=?`
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM flow_steps WHERE run_id IN (`+old+`)`, RunRunning, RunQueued, cut, EventToolRequested); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM flow_runs WHERE id IN (`+old+`)`, RunRunning, RunQueued, cut, EventToolRequested); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // RecordFlowChain leaves a mark that a flow acted on a card without changing its list, such
@@ -265,17 +323,28 @@ type Flow struct {
 	Enabled          bool            `json:"enabled"`
 	CreatedAt        string          `json:"created_at"`
 	UpdatedAt        string          `json:"updated_at"`
+	// DraftAgent is who to review before publishing: the agent that last changed the draft.
+	// A person's later edit does not clear it, because their save holds the agent's change too.
+	DraftAgent string `json:"draft_agent"`
+	// A plugin's blueprint in this project: Locked flows can run and be switched on and off,
+	// and a copy (ForkedFrom names the original) is what gets edited.
+	PluginID        string `json:"plugin_id"`
+	PluginBlueprint string `json:"plugin_blueprint"`
+	Locked          bool   `json:"locked"`
+	ForkedFrom      string `json:"forked_from"`
 }
 
-const flowCols = `id, project_id, name, draft, published_version, enabled, created_at, updated_at`
+const flowCols = `id, project_id, name, draft, published_version, enabled, created_at, updated_at, draft_agent, plugin_id, plugin_blueprint, locked, forked_from`
 
 func scanFlow(row interface{ Scan(...any) error }) (Flow, error) {
 	var f Flow
 	var draft string
-	var enabled int
-	err := row.Scan(&f.ID, &f.ProjectID, &f.Name, &draft, &f.PublishedVersion, &enabled, &f.CreatedAt, &f.UpdatedAt)
+	var enabled, locked int
+	err := row.Scan(&f.ID, &f.ProjectID, &f.Name, &draft, &f.PublishedVersion, &enabled, &f.CreatedAt, &f.UpdatedAt, &f.DraftAgent,
+		&f.PluginID, &f.PluginBlueprint, &locked, &f.ForkedFrom)
 	f.Draft = json.RawMessage(draft)
 	f.Enabled = enabled != 0
+	f.Locked = locked != 0
 	return f, err
 }
 
@@ -327,9 +396,34 @@ func AllActiveFlows(db *sql.DB) ([]Flow, error) {
 	return queryFlows(db, `enabled=1 AND published_version>0`)
 }
 
+// flowLockedCheck says why an update of a locked flow touched nothing. This layer refuses it, so
+// every route that saves a draft is covered, the flow_* tools included.
+func flowLockedCheck(db *sql.DB, res sql.Result, id string) error {
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return err
+	}
+	var locked int
+	if err := db.QueryRow(`SELECT locked FROM flows WHERE id=?`, id).Scan(&locked); err == nil && locked != 0 {
+		return ErrFlowLocked
+	}
+	return nil
+}
+
 func UpdateFlowDraft(db *sql.DB, id, name string, draft json.RawMessage) error {
-	_, err := db.Exec(`UPDATE flows SET name=?, draft=?, updated_at=? WHERE id=?`, name, string(draft), FlowNow(), id)
-	return err
+	res, err := db.Exec(`UPDATE flows SET name=?, draft=?, updated_at=? WHERE id=? AND locked=0`, name, string(draft), FlowNow(), id)
+	if err != nil {
+		return err
+	}
+	return flowLockedCheck(db, res, id)
+}
+
+// SaveFlowDraftByAgent stores a draft an agent wrote, and remembers who until it is published.
+func SaveFlowDraftByAgent(db *sql.DB, id, name string, draft json.RawMessage, agent string) error {
+	res, err := db.Exec(`UPDATE flows SET name=?, draft=?, draft_agent=?, updated_at=? WHERE id=? AND locked=0`, name, string(draft), agent, FlowNow(), id)
+	if err != nil {
+		return err
+	}
+	return flowLockedCheck(db, res, id)
 }
 
 func SetFlowEnabled(db *sql.DB, id string, enabled bool) error {
@@ -344,6 +438,14 @@ func PublishFlow(db *sql.DB, id string, graph json.RawMessage) (int, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
+	// take the write lock first: a read followed by a write fails if another writer got in between
+	if _, err := tx.Exec(`UPDATE flows SET updated_at=updated_at WHERE id=?`, id); err != nil {
+		return 0, err
+	}
+	var locked int
+	if err := tx.QueryRow(`SELECT locked FROM flows WHERE id=?`, id).Scan(&locked); err == nil && locked != 0 {
+		return 0, ErrFlowLocked
+	}
 	var v int
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(version),0)+1 FROM flow_versions WHERE flow_id=?`, id).Scan(&v); err != nil {
 		return 0, err
@@ -351,7 +453,7 @@ func PublishFlow(db *sql.DB, id string, graph json.RawMessage) (int, error) {
 	if _, err := tx.Exec(`INSERT INTO flow_versions (flow_id, version, graph) VALUES (?,?,?)`, id, v, string(graph)); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`UPDATE flows SET published_version=?, enabled=1, updated_at=? WHERE id=?`, v, FlowNow(), id); err != nil {
+	if _, err := tx.Exec(`UPDATE flows SET published_version=?, enabled=1, draft_agent='', updated_at=? WHERE id=?`, v, FlowNow(), id); err != nil {
 		return 0, err
 	}
 	return v, tx.Commit()
@@ -556,6 +658,7 @@ type FlowStep struct {
 	RunID      string          `json:"run_id"`
 	NodeID     string          `json:"node_id"`
 	FromNode   string          `json:"from_node"`
+	Input      json.RawMessage `json:"input,omitempty"` // the value the node received, as JSON; empty for a trigger
 	Status     string          `json:"status"`
 	Port       string          `json:"port"`
 	Output     json.RawMessage `json:"output"`
@@ -566,13 +669,16 @@ type FlowStep struct {
 	FinishedAt string          `json:"finished_at"`
 }
 
-const flowStepCols = `seq, run_id, node_id, from_node, status, port, output, error, wait_key, wake_at, started_at, finished_at`
+const flowStepCols = `seq, run_id, node_id, from_node, input, status, port, output, error, wait_key, wake_at, started_at, finished_at`
 
 func scanFlowStep(row interface{ Scan(...any) error }) (FlowStep, error) {
 	var s FlowStep
-	var out string
-	err := row.Scan(&s.Seq, &s.RunID, &s.NodeID, &s.FromNode, &s.Status, &s.Port, &out, &s.Error, &s.WaitKey, &s.WakeAt, &s.StartedAt, &s.FinishedAt)
+	var out, in string
+	err := row.Scan(&s.Seq, &s.RunID, &s.NodeID, &s.FromNode, &in, &s.Status, &s.Port, &out, &s.Error, &s.WaitKey, &s.WakeAt, &s.StartedAt, &s.FinishedAt)
 	s.Output = json.RawMessage(out)
+	if in != "" {
+		s.Input = json.RawMessage(in)
+	}
 	return s, err
 }
 
@@ -645,8 +751,9 @@ func WaitFlowStep(db *sql.DB, seq int64, key, wakeAt string, output json.RawMess
 }
 
 // FinishFlowStep closes a step and queues the nodes that follow it, in one transaction,
-// so a stop can neither repeat the step nor lose what comes after it.
-func FinishFlowStep(db *sql.DB, s FlowStep, status, port string, output json.RawMessage, errMsg string, next []string) error {
+// so a stop can neither repeat the step nor lose what comes after it. value is what reaches
+// each of them: the answer the step gave through that output.
+func FinishFlowStep(db *sql.DB, s FlowStep, status, port string, output json.RawMessage, errMsg string, next []string, value json.RawMessage) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -660,7 +767,7 @@ func FinishFlowStep(db *sql.DB, s FlowStep, status, port string, output json.Raw
 		return err
 	}
 	for _, node := range next {
-		if _, err := tx.Exec(`INSERT INTO flow_steps (run_id, node_id, from_node, status) VALUES (?,?,?,?)`, s.RunID, node, s.NodeID, StepPending); err != nil {
+		if _, err := tx.Exec(`INSERT INTO flow_steps (run_id, node_id, from_node, input, status) VALUES (?,?,?,?,?)`, s.RunID, node, s.NodeID, string(value), StepPending); err != nil {
 			return err
 		}
 	}

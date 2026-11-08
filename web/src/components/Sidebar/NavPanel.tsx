@@ -1,27 +1,27 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from '../../store'
 import type { Project } from '../../types'
 import { IconAdjustments, IconChartBar, IconLogout, IconCpu } from '@tabler/icons-react'
 import { WorkspacePicker } from './WorkspacePicker'
 import { getProjectColor, getProjectInitials } from './projectStyle'
-import { SettingsModal } from '../Settings/SettingsModal'
 import { TaskManagerPanel } from '../TaskManager/TaskManagerPanel'
 import { useAuthStore } from '../../store/auth'
 import * as api from '../../api'
+import { dropPushOnSignOut } from '../../lib/push'
 
 // The icon rail: projects, usage, task manager, settings and sign out.
 // Everything about the active project, and the search, live in the project header.
 export function NavPanel({ mobileOpen = false, onMobileClose }: { mobileOpen?: boolean; onMobileClose?: () => void }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const projects = useStore(s => s.projects)
   const activeProjectId = useStore(s => s.activeProjectId)
   const setActiveProject = useStore(s => s.setActiveProject)
   const createProject = useStore(s => s.createProject)
 
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
   const [showTaskManager, setShowTaskManager] = useState(false)
 
   const handleSelectProject = async (id: string) => {
@@ -82,11 +82,10 @@ export function NavPanel({ mobileOpen = false, onMobileClose }: { mobileOpen?: b
         <button className="nav-panel__rail-btn" title="Task Manager" onClick={() => setShowTaskManager(true)}>
           <IconCpu size={16} />
         </button>
-        <button className="nav-panel__rail-btn" title="Settings" onClick={() => setShowSettings(true)}>
+        <button className="nav-panel__rail-btn" title="Settings" onClick={() => navigate('/settings', { state: { from: location.pathname } })}>
           <IconAdjustments size={16} />
         </button>
         <LogoutButton />
-        <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
         <TaskManagerPanel isOpen={showTaskManager} onClose={() => setShowTaskManager(false)} />
       </div>
 
@@ -106,6 +105,7 @@ function LogoutButton() {
   if (!token) return null
 
   async function handleLogout() {
+    await dropPushOnSignOut() // while the session still lets it tell the hub
     try { await api.logout() } catch { /* ignore */ }
     clearAuth()
   }

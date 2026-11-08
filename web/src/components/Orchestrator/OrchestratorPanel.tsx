@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX, IconCode, IconHistory } from '@tabler/icons-react'
+import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, IconPlayerStop, IconMicrophone, IconVolume, IconVolumeOff, IconSettings, IconMessagePlus, IconPaperclip, IconX, IconCode, IconHistory, IconInfoCircle } from '@tabler/icons-react'
 import { useStore } from '../../store'
+import { usePlugins } from '../../store/plugins'
+import { conversationsOfModel, isPluginModel, pluginOriginLabel, normalizeModelId, parsePluginModel } from '../../lib/plugins'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from '../Chat/MessageBubble'
@@ -10,9 +12,10 @@ import { ThinkingIndicator } from '../Chat/ThinkingIndicator'
 import { ContextBar } from '../Chat/ContextBar'
 import { CacheBadge, useCacheCountdown } from '../Chat/CacheBadge'
 import { ClaudeProcess } from '../Chat/ClaudeProcess'
-import { HistoryPopover, HistorySidebar, latestConversation } from './ConversationHistory'
+import { HistoryPopover, HistorySidebar, latestConversation, type HistorySource } from './ConversationHistory'
 import { OrchestratorEdit } from './OrchestratorEdit'
 import { ModelIcon } from './ModelIcon'
+import { PluginOrigin } from '../Plugins/PluginIcon'
 import { EnvPicker } from './EnvPicker'
 import { useMic } from '@/hooks/useMic'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -21,7 +24,7 @@ import { useWorkerTTS } from '@/hooks/useWorkerTTS'
 import { markSpoken, wasSpoken } from '@/lib/spokenLog'
 import { VoiceSettingsDialog } from './VoiceSettingsDialog'
 import { getAutoSend, getHotword, getSttEngine } from '@/lib/audioDevices'
-import type { AIProfile, Message, Runner, Session } from '../../types'
+import type { AIProfile, Message, PluginConversationContribution, Runner, Session } from '../../types'
 import './OrchestratorPanel.css'
 
 const EMPTY_MESSAGES: Message[] = []
@@ -41,14 +44,10 @@ const CLAUDE_MODELS = [
   { value: 'sonnet', label: 'Sonnet 5.5' },
   { value: 'opus', label: 'Opus 5.5' },
 ]
-// Gemini mode: Google's AI Mode in an Edge that lucode drives. No runner, no model choice,
-// no claude, no tools, no tokens.
-const GEMINI_MODEL = 'local:aimode'
-const MODELS = [...CLAUDE_MODELS, { value: GEMINI_MODEL, label: 'Google AI Mode (Edge)' }]
-const MODES = [
-  { value: 'supervisor', label: 'Supervisor', hint: 'Claude, on a runner' },
-  { value: 'gemini', label: 'Gemini', hint: 'Google AI Mode (Edge)' },
-]
+// The modes are the Supervisor plus whatever models the enabled plugins contribute. A plugin's
+// model answers on the hub: no runner, no model choice, no claude, no tools, no tokens.
+const SUPERVISOR_MODE = { value: 'supervisor', label: 'Supervisor', hint: 'Claude, on a runner' }
+const panelCanHold = (kind?: string) => kind === 'orchestrator' || kind === 'plugin'
 
 const lsGet = (k: string, def: string) => {
   try { return localStorage.getItem(k) ?? def } catch { return def }
@@ -68,13 +67,31 @@ function seedContextUsage(s: Session) {
   } catch { /* malformed: the next turn measures it again */ }
 }
 
+// A conversation inside a plugin's page: the model is fixed, and its chats come from the plugin.
+export interface EmbeddedConversation {
+  pluginId: string
+  model: string
+  label: string
+  source: PluginConversationContribution
+  rowId: string // a saved conversation to open, when the page names one
+}
+
+async function openEmbedded(projectId: string, embed: EmbeddedConversation): Promise<Session> {
+  const rows = await api.listPluginConversations(embed.pluginId, projectId, embed.source.id)
+  const row = embed.rowId ? rows.find(r => r.id === embed.rowId) : rows.find(r => r.session_exists)
+  return row
+    ? api.continuePluginConversation(embed.pluginId, row.id, 'page')
+    : api.createPluginConversation(embed.pluginId, projectId, embed.model)
+}
+
 // `full`: the Agent tab, where the panel fills the page whether or not it is collapsed as a side panel.
-export function OrchestratorPanel({ full = false }: { full?: boolean }) {
+// `embed`: inside a plugin's page, which it fills, with its own chats and no share in the side panel's state.
+export function OrchestratorPanel({ full = false, embed }: { full?: boolean; embed?: EmbeddedConversation }) {
   const projectId = useStore(s => s.activeProjectId)
   const peersVersion = useStore(s => s.peersVersion)
   const loadMessages = useStore(s => s.loadMessages)
   const storedOpen = useStore(s => s.orchOpen)
-  const open = full || storedOpen
+  const open = full || !!embed || storedOpen
   const setOpen = useStore(s => s.setOrchOpen)
   const setOrchCache = useStore(s => s.setOrchCache)
   const navigate = useNavigate()
@@ -86,7 +103,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const [input, setInput] = useState('')
   // References sent from other tabs wait here for the question that goes with them.
   const allRefs = useStore(s => s.orchRefs)
-  const refs = allRefs.filter(r => r.projectId === projectId)
+  const refs = embed ? [] : allRefs.filter(r => r.projectId === projectId)
   const removeRef = useStore(s => s.removeOrchRef)
   const clearRefs = useStore(s => s.clearOrchRefs)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -154,7 +171,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   // The Supervisor tab shows the history beside the chat (it can be hidden); elsewhere it is a popover.
   const isMobile = useIsMobile()
-  const hasSidebar = full && !isMobile
+  const hasSidebar = (full || !!embed) && !isMobile
   const [historyOpen, setHistoryOpen] = useState(() => lsGet(LS.historyOpen, '1') === '1')
   const [historyVersion, setHistoryVersion] = useState(0)
 
@@ -182,7 +199,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const running = sending || status === 'running' || status === 'waiting_hook'
   const cache = useCacheCountdown(status, session?.last_active, sid ?? '')
   // the button that reopens the panel (wherever it is drawn) shows this clock
-  useEffect(() => { setOrchCache(cache) }, [cache, setOrchCache])
+  useEffect(() => { if (!embed) setOrchCache(cache) }, [cache, setOrchCache, embed])
 
   const toggle = (v: boolean) => setOpen(v)
 
@@ -192,7 +209,8 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     let cancelled = false
     setSession(null)
     setError('')
-    api.getOrchestrator(projectId)
+    const opening = embed ? openEmbedded(projectId, embed) : api.getOrchestrator(projectId)
+    opening
       .then(async s => {
         if (cancelled) return
         await loadMessages(s.id)
@@ -201,7 +219,8 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
       })
       .catch(e => { if (!cancelled) setError(String(e?.message ?? e)) })
     return () => { cancelled = true }
-  }, [projectId, loadMessages])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, loadMessages, embed?.pluginId, embed?.model, embed?.rowId, embed?.source.id])
 
   // The saved choice of this project. Nothing below ever overwrites it by itself: a
   // runner that has not been discovered yet (or is off) must not lose the user's pick.
@@ -218,22 +237,34 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     lsSet(LS.lastRunner, v)
     if (projectId) lsSet(LS.runner(projectId), v)
   }
-  const [model, setModel] = useState('sonnet')
+  const pluginUI = usePlugins(s => s.ui)
+  const pluginsLoaded = usePlugins(s => s.loaded)
+  const [model, setModel] = useState(embed?.model ?? 'sonnet')
   useEffect(() => {
+    if (embed) { setModel(embed.model); return }
     if (!projectId) return
-    const saved = lsGet(LS.model(projectId), 'sonnet')
-    setModel(MODELS.some(m => m.value === saved) ? saved : 'sonnet')
-  }, [projectId])
+    const saved = normalizeModelId(lsGet(LS.model(projectId), 'sonnet'))
+    setModel(isPluginModel(saved) || CLAUDE_MODELS.some(m => m.value === saved) ? saved : 'sonnet')
+  }, [projectId, embed?.model]) // eslint-disable-line react-hooks/exhaustive-deps
   const setOrchModel = useStore(s => s.setOrchModel)
-  useEffect(() => { setOrchModel(model) }, [model, setOrchModel]) // the buttons that reopen the panel show its mark
-  const isLocalModel = model.startsWith('local:') // answered by a browser: no cache, context or process to show
+  useEffect(() => { if (!embed) setOrchModel(model) }, [model, setOrchModel, embed]) // the buttons that reopen the panel show its mark
+  const answeredByPlugin = isPluginModel(model) // no cache, context or process to show
+  const pluginModel = pluginUI.models.find(m => m.value === model)
+  const modes = [SUPERVISOR_MODE, ...pluginUI.models.map(m => ({ value: m.value, label: m.mode, hint: m.hint || m.label }))]
+  const pluginOfMode = (value: string) => pluginUI.models.find(m => m.value === value)
+  const activeMode = answeredByPlugin ? model : SUPERVISOR_MODE.value
   const pickModel = (v: string) => {
     setModel(v)
-    if (projectId) lsSet(LS.model(projectId), v)
+    if (projectId && !embed) lsSet(LS.model(projectId), v)
   }
-  // The Claude model to come back to when leaving Gemini mode.
+  // The Claude model to come back to when leaving a plugin's model.
   const lastClaudeModel = useRef('sonnet')
-  if (!isLocalModel) lastClaudeModel.current = model
+  if (!answeredByPlugin) lastClaudeModel.current = model
+  const historySource: HistorySource = embed
+    ? { kind: 'plugin', conversations: embed.source, page: true }
+    : pluginModel ? { kind: 'plugin', conversations: conversationsOfModel(pluginUI, pluginModel) } : { kind: 'supervisor' }
+  // Said once when a saved plugin model is gone: the plugin is off or removed.
+  const [modelGone, setModelGone] = useState('')
   const [modeOpen, setModeOpen] = useState(false)
   const [switchingMode, setSwitchingMode] = useState(false)
   // An empty chat left behind by changing mode, used again instead of creating one per change.
@@ -287,7 +318,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
       return
     }
     el.scrollTop = el.scrollHeight
-  }, [sid, messages.length, streamingText, open])
+  }, [sid, messages.length, streamingText, open, running])
 
   // A conversation opens on its latest messages; the older ones come on request.
   const hasOlder = useStore(s => (sid ? s.messagePagination[sid]?.hasMore : false) ?? false)
@@ -319,13 +350,13 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   }
   const sendText = (typed: string) => {
     const img = imageRef.current
-    const pending = useStore.getState().orchRefs.filter(r => r.projectId === projectId)
+    const pending = embed ? [] : useStore.getState().orchRefs.filter(r => r.projectId === projectId)
     // an image or a reference alone is a message too
-    if ((!typed && !img && pending.length === 0) || !sid || running || switchingMode || (runnerOffline && !isLocalModel)) return
+    if ((!typed && !img && pending.length === 0) || !sid || running || switchingMode || (runnerOffline && !answeredByPlugin)) return
     const text = [...pending.map(r => r.text), typed].filter(Boolean).join('\n\n')
     setInput('')
     setImage(null)
-    if (projectId) clearRefs(projectId)
+    if (projectId && !embed) clearRefs(projectId)
     dictBase.current = ''
     useStore.setState(s => ({ pendingSend: { ...s.pendingSend, [sid]: true } }))
     api.sendOrchestratorTurn(sid, text || '(see the attached image)', { runnerId, aiProfileId: effectiveAi, model }, img).catch(e => {
@@ -342,10 +373,10 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   const cancel = () => { if (sid) api.cancelTurn(sid).catch(console.error) }
 
   // A conversation picked from the history: its chat comes back with its messages (or, if it
-  // was an ordinary chat, it is opened). The next message continues it: on the same Google page
-  // in Gemini mode, resuming the same claude conversation in Supervisor mode.
+  // was an ordinary chat, it is opened). The next message continues it: with the plugin that holds
+  // it in a plugin's mode, resuming the same claude conversation in Supervisor mode.
   const continueConversation = async (s: Session) => {
-    if (s.kind !== 'orchestrator') { navigate(`/projects/${s.project_id}/sessions/${s.id}`); return }
+    if (!panelCanHold(s.kind)) { navigate(`/projects/${s.project_id}/sessions/${s.id}`); return }
     setError('')
     try {
       await showChat(s)
@@ -363,20 +394,22 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   }
 
   // Each mode has its own conversations: changing mode brings back the latest one of the new
-  // mode, or an empty chat if it has none, so claude and Google never answer in the same chat
+  // mode, or an empty chat if it has none, so claude and a plugin never answer in the same chat
   // by accident. What is typed in the box stays, to be sent in the new mode.
   const pickMode = async (v: string) => {
     setModeOpen(false)
-    const gemini = v === 'gemini'
-    if (gemini === isLocalModel) return
-    const nextModel = gemini ? GEMINI_MODEL : lastClaudeModel.current
+    if (v === activeMode) return
+    setModelGone('')
+    const target = pluginUI.models.find(m => m.value === v)
+    const nextModel = target ? target.value : lastClaudeModel.current
+    const nextSource: HistorySource = target ? { kind: 'plugin', conversations: conversationsOfModel(pluginUI, target) } : { kind: 'supervisor' }
     if (!projectId || !sid) { pickModel(nextModel); return } // still loading: nothing to leave
     const leavingEmpty = messages.length === 0
     const stale = () => useStore.getState().activeProjectId !== projectId
     setSwitchingMode(true)
     setError('')
     try {
-      const latest = await latestConversation(projectId, gemini)
+      const latest = await latestConversation(projectId, nextSource)
       let next: Session | null = null
       if (latest) {
         if (latest.sessionId !== sid) next = await latest.open()
@@ -400,14 +433,26 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
     }
   }
 
+  // The plugin behind a saved model was turned off or removed: back to the Supervisor, saying so,
+  // with the Supervisor's own conversation, so it never answers inside the plugin's chat.
+  const goneTried = useRef('') // once per model: a failed switch must not retry for ever
+  useEffect(() => {
+    if (embed || !pluginsLoaded || !answeredByPlugin || pluginModel || !sid || running || switchingMode) return
+    if (goneTried.current === model) return
+    goneTried.current = model
+    const gone = parsePluginModel(model)
+    void pickMode(SUPERVISOR_MODE.value).then(() => setModelGone(gone?.modelId ?? model))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embed, pluginsLoaded, answeredByPlugin, pluginModel, sid, running, switchingMode, model])
+
   // A fresh conversation with an empty context window; the old one is closed.
   const startNewSession = async () => {
     if (!projectId || running) return
-    if (messages.length > 0 && !confirm('Start a new orchestrator session?\n\nThe current conversation is closed and its context is cleared.')) return
+    if (messages.length > 0 && !confirm('Start a new conversation?\n\nThe current conversation is closed and its context is cleared.')) return
     tts.stop()
     setError('')
     try {
-      const s = await api.newOrchestratorSession(projectId)
+      const s = embed ? await api.createPluginConversation(embed.pluginId, projectId, embed.model) : await api.newOrchestratorSession(projectId)
       await loadMessages(s.id)
       setInput('')
       dictBase.current = ''
@@ -436,7 +481,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
 
   const historyProps = {
     projectId,
-    gemini: isLocalModel,
+    source: historySource,
     currentId: sid,
     disabled: running || switchingMode,
     // a new chat enters the list with its first message, and its count changes when a turn ends
@@ -445,44 +490,52 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
   }
 
   return (
-    <aside className={`orch${full ? ' orch--full' : ''}`} onWheel={forwardWheel}>
+    <aside className={`orch${full ? ' orch--full' : ''}${embed ? ' orch--embed' : ''}`} onWheel={forwardWheel}>
       <header className="orch__header">
         <ModelIcon model={model} size={17} className="orch__model-icon" />
         <span className="orch__title">
-          <Popover open={modeOpen} onOpenChange={setModeOpen}>
+          {embed ? <span className="orch__fixed-title">{embed.label}</span> : <Popover open={modeOpen} onOpenChange={setModeOpen}>
             <PopoverTrigger asChild>
               <button type="button" className="orch__mode-btn" disabled={running || switchingMode} title="Mode" aria-label="Mode">
-                {MODES.find(m => m.value === (isLocalModel ? 'gemini' : 'supervisor'))?.label}
+                {modes.find(m => m.value === activeMode)?.label ?? 'Supervisor'}
+                {answeredByPlugin && <span className="orch__mode-plugin">plugin</span>}
                 <IconChevronDown size={14} />
               </button>
             </PopoverTrigger>
             <PopoverContent side="bottom" align="start" className="env-picker">
               <div className="env-picker__section">
                 <div className="env-picker__title">Mode</div>
-                {MODES.map(m => {
-                  const active = m.value === (isLocalModel ? 'gemini' : 'supervisor')
+                {modes.map((m, index) => {
+                  const active = m.value === activeMode
+                  const plugin = pluginOfMode(m.value)
                   return (
+                    <Fragment key={m.value}>
+                    {index === 1 && <div className="env-picker__divider" />}
+                    {index === 1 && <div className="env-picker__title">From plugins</div>}
                     <button
-                      key={m.value}
                       type="button"
-                      className={`env-picker__item${active ? ' env-picker__item--active' : ''}`}
+                      className={`env-picker__item${active ? ' env-picker__item--active' : ''}${plugin ? ' env-picker__item--plugin' : ''}`}
                       onClick={() => pickMode(m.value)}
                     >
+                      <ModelIcon model={m.value === SUPERVISOR_MODE.value ? lastClaudeModel.current : m.value} size={16} className="env-picker__icon" />
                       <span className="env-picker__item-text">
                         <span>{m.label}</span>
                         <span className="env-picker__hint">{m.hint}</span>
+                        {plugin && <span className="env-picker__origin">{pluginOriginLabel(plugin)}</span>}
                       </span>
                       {active && <IconCheck size={13} className="env-picker__check" />}
                     </button>
+                    </Fragment>
                   )
                 })}
               </div>
             </PopoverContent>
-          </Popover>
+          </Popover>}
         </span>
-        {!isLocalModel && <CacheBadge cache={cache} />}
-        {sid && !isLocalModel && <ClaudeProcess sessionId={sid} />}
-        {sid && <OrchestratorEdit projectId={projectId} sessionId={sid} onSaved={() => setHistoryVersion(v => v + 1)} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
+        {embed && <PluginOrigin pluginId={embed.pluginId} className="orch__origin" />}
+        {!answeredByPlugin && <CacheBadge cache={cache} />}
+        {sid && !answeredByPlugin && <ClaudeProcess sessionId={sid} />}
+        {sid && !embed && <OrchestratorEdit projectId={projectId} sessionId={sid} onSaved={() => setHistoryVersion(v => v + 1)} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
         {hasSidebar ? (
           <button
             className={`orch__icon-btn${historyOpen ? ' orch__icon-btn--on' : ''}`}
@@ -514,7 +567,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         <button className="orch__icon-btn" onClick={() => setVoiceOpen(true)} title="Voice settings">
           <IconSettings size={16} />
         </button>
-        {!full && (
+        {!full && !embed && (
           <button className="orch__icon-btn" onClick={() => toggle(false)} title="Hide">
             <IconLayoutSidebarRightCollapse size={16} />
           </button>
@@ -523,8 +576,15 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
 
       <div className="orch__body">
       <div className="orch__main">
+      {modelGone && (
+        <div className="orch__notice" role="status">
+          <IconInfoCircle size={15} aria-hidden />
+          <span>The model “{modelGone}” is no longer available: its plugin is off or was removed. You are back on the Supervisor.</span>
+          <button className="orch__ref-remove" onClick={() => setModelGone('')} aria-label="Dismiss"><IconX size={12} /></button>
+        </div>
+      )}
       {/* the side panel is too narrow for the details: they open in the middle of the screen */}
-      {sid && !isLocalModel && <ContextBar sessionId={sid} placement={full ? 'panel' : 'viewport'} />}
+      {sid && !answeredByPlugin && <ContextBar sessionId={sid} placement={full ? 'panel' : 'viewport'} />}
 
       <div className="orch__messages" ref={scrollRef}>
         {hasOlder && (
@@ -534,12 +594,13 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         )}
         {error && <div className="orch__error">{error}</div>}
         {!error && messages.length === 0 && !running && (
-          <div className="orch__empty">Tell me what you want done. I plan it on the board and hand it to the agents.</div>
+          <div className="orch__empty">{answeredByPlugin ? `Ask ${pluginModel?.label ?? 'away'}.` : 'Tell me what you want done. I plan it on the board and hand it to the agents.'}</div>
         )}
         {messages.map(m => (
           <div key={m.id} className="orch__msg">
             <MessageBubble
               message={m}
+              untrusted={answeredByPlugin}
               sendHookRespond={sendHookRespond}
               isBeingRead={speakingId === m.id}
               onSpeak={speakMessage}
@@ -580,7 +641,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
           className="orch__textarea"
           rows={3}
           value={input}
-          placeholder={!sid ? 'Loading…' : refs.length > 0 ? 'What do you want to know about this?' : 'Message the orchestrator…'}
+          placeholder={!sid ? 'Loading…' : refs.length > 0 ? 'What do you want to know about this?' : answeredByPlugin ? `Message ${pluginModel?.label ?? 'the model'}…` : 'Message the orchestrator…'}
           disabled={!sid}
           onChange={e => {
             setInput(e.target.value)
@@ -598,7 +659,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
         />
         <div className="orch__controls">
           {/* "default" stands for no preconfigured AI (stored as an empty id) */}
-          {!isLocalModel && <EnvPicker
+          {!answeredByPlugin && <EnvPicker
             runner={runnerId}
             runners={[
               ...(canRunLocally ? [{ value: 'local', label: selfName }] : []),
@@ -616,15 +677,15 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
             models={CLAUDE_MODELS}
             onModel={pickModel}
           />}
-          <span className="orch__env-summary" title={isLocalModel ? 'Google AI Mode (Edge)' : 'Runner · AI · Model'}>
-            {isLocalModel
-              ? 'Google AI Mode (Edge)'
-              : <>{runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'} · {MODELS.find(m => m.value === model)?.label ?? model}</>}
+          <span className="orch__env-summary" title={answeredByPlugin ? pluginModel?.hint || pluginModel?.label : 'Runner · AI · Model'}>
+            {answeredByPlugin
+              ? <>{pluginModel && pluginOriginLabel(pluginModel)}{pluginModel?.hint ? ` · ${pluginModel.hint}` : ''}</>
+              : <>{runnerName}{runnerOffline ? ' (offline)' : ''} · {profiles.find(p => p.id === effectiveAi)?.name ?? 'default'} · {CLAUDE_MODELS.find(m => m.value === model)?.label ?? model}</>}
           </span>
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden onChange={e => { attachFile(e.target.files?.[0]); e.target.value = '' }} />
-          <button className={`orch__icon-btn${image ? ' orch__icon-btn--on' : ''}`} onClick={() => fileRef.current?.click()} disabled={!sid || running} title="Attach an image (or paste one)" aria-label="Attach an image">
+          {(!answeredByPlugin || pluginModel?.images) && <button className={`orch__icon-btn${image ? ' orch__icon-btn--on' : ''}`} onClick={() => fileRef.current?.click()} disabled={!sid || running} title="Attach an image (or paste one)" aria-label="Attach an image">
             <IconPaperclip size={16} />
-          </button>
+          </button>}
           <button
             className={`orch__mic orch__mic--${mic.state}`}
             onClick={toggleMic}
@@ -636,7 +697,7 @@ export function OrchestratorPanel({ full = false }: { full?: boolean }) {
           {running ? (
             <button className="orch__send orch__send--stop" onClick={cancel} title="Stop (Esc)"><IconPlayerStop size={15} /></button>
           ) : (
-            <button className="orch__send" onClick={send} disabled={!canSend || !sid || (runnerOffline && !isLocalModel)} title={runnerOffline && !isLocalModel ? 'The selected runner is offline' : 'Send (Enter)'}><IconSend size={15} /></button>
+            <button className="orch__send" onClick={send} disabled={!canSend || !sid || (runnerOffline && !answeredByPlugin)} title={runnerOffline && !answeredByPlugin ? 'The selected runner is offline' : 'Send (Enter)'}><IconSend size={15} /></button>
           )}
         </div>
       </div>

@@ -1,0 +1,56 @@
+{
+  "id": "lucode.webhooks",
+  "name": "Webhooks",
+  "version": "1.0.0",
+  "sdk": 1,
+  "description": "Posts a message to a Slack or Discord incoming webhook from a flow.",
+  "author": "lucode",
+  "icon": "assets/icon.svg",
+  "targets": {
+    "server": {
+      "main": "main.js",
+      "permissions": {
+        "flows": true,
+        "http": { "hosts": ["hooks.slack.com", "discord.com"] }
+      }
+    }
+  },
+  "contributes": {
+    "settings": [
+      {
+        "key": "webhook_url",
+        "label": "Webhook address",
+        "type": "secret",
+        "help": "An incoming webhook address of Slack (https://hooks.slack.com/services/...) or Discord (https://discord.com/api/webhooks/...). Anyone holding it can post to that channel, so it stays on the hub."
+      }
+    ],
+    "flowNodes": [
+      {
+        "id": "send",
+        "label": "Send to webhook",
+        "description": "Posts a message to the webhook in this plugin's settings. Takes \"failed\" if the address is not allowed or the service refuses. \"sent\" gives JSON: service, status.",
+        "icon": "assets/icon.svg",
+        "fields": [
+          {
+            "name": "message",
+            "label": "Message",
+            "kind": "template",
+            "required": true,
+            "default": "{{card.title}} is done.",
+            "help": "Long messages are cut. Mentions in it do not notify anyone."
+          }
+        ],
+        "ports": ["sent"],
+        "timeoutSeconds": 30
+      }
+    ],
+    "blueprints": [
+      {
+        "key": "card_done",
+        "name": "Tell the channel when a card is done",
+        "description": "When a card enters Done, posts it to the webhook. Set the webhook address in the plugin's settings first.",
+        "file": "blueprints/card_done.json"
+      }
+    ]
+  }
+}

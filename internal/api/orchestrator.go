@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"claude-orchestrator/internal/aimode"
 	dbpkg "claude-orchestrator/internal/db"
 	sessionpkg "claude-orchestrator/internal/session"
 	"claude-orchestrator/internal/taskmcp"
@@ -36,7 +35,7 @@ func orchestratorTools() []string {
 		}
 		out = append(out, n)
 	}
-	return append(out, taskmcp.BrowserNames()...)
+	return append(append(out, taskmcp.BrowserNames()...), taskmcp.FlowNames()...)
 }
 
 // orchestratorCaller is the identity the agent-management tools see: an agent of
@@ -58,6 +57,7 @@ Your tools (in Claude Code they appear as mcp__lucode__<name>):
 - get_task_image(name, task_id): see a picture attached to a task.
 - agent_list(): the agents of the project and whether each is working.
 - agent_create / agent_update / agent_delete: manage the project's agents. Use agent_list first. Give each a clear role in its personality.
+- flow_list, flow_get, flow_catalog, flow_create, flow_update: prepare the project's automations with the user, who sees your changes live in the Automate tab. You only write drafts: the user publishes them. Read a flow again before changing it.
 - send_to_agent(to, message, task_id, requires_answer?): talk to an agent that has a task in progress; task_id (the task the message is about) is required. The answer comes back later as a message.
 - git_diff(mode, path?, sha?, base?, head?, runner_id?, repo?, worktree?): read a diff of a repository of the project. It only reads, and it works even if the repository is on another runner than you.
 
@@ -122,7 +122,9 @@ func (h *Handler) newOrchestrator(w http.ResponseWriter, r *http.Request) {
 		delete(orchEnvs, old.ID)
 		delete(orchModels, old.ID)
 		orchEnvMu.Unlock()
-		go aimode.Default.Forget(old.ID)
+		if h.plugins != nil {
+			h.plugins.SessionClosed(pid, old.ID)
+		}
 	}
 	sess, err := h.createOrchestrator(pid)
 	if err != nil {
@@ -139,14 +141,8 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 	if model == "" {
 		model = sess.Model
 	}
-	if aimode.IsModel(model) {
-		// A local model: Google's AI Mode in Edge, on the machine of this hub. It runs no
-		// claude, so the runner, the AI and the lucode tools do not apply to it (a runner
-		// saved in the picker is ignored, not an error).
-		return sessionpkg.TurnOptions{
-			SessionID: sess.ID, ProjectID: sess.ProjectID, Message: message, Model: model,
-			Executor: "aimode", AgentName: "orchestrator",
-		}, nil
+	if pluginOpts, handled, err := h.pluginTurnOpts(sess, message, model); handled {
+		return pluginOpts, err
 	}
 	if runnerID == "" {
 		runnerID = "local" // explicit: do not inherit the project's runner
@@ -206,6 +202,9 @@ func (h *Handler) handleOrchestratorTool(sessID string, sess dbpkg.Session, tool
 	toolName := strings.TrimPrefix(tool, "mcp__lucode__")
 	if taskmcp.IsBrowserTool(toolName) {
 		return h.handleBrowserTool(toolName, args)
+	}
+	if taskmcp.IsFlowTool(toolName) {
+		return h.handleFlowTool(sess.ProjectID, "Supervisor", toolName, args)
 	}
 	var a struct {
 		To             string   `json:"to"`

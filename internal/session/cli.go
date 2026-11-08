@@ -57,8 +57,8 @@ func InstallHookSettings(hookBinary []byte) string {
 	return settingsPath
 }
 
-// permissionModeOf is the claude --permission-mode of a turn ("" = the default
-// flow, where every tool call goes through lucode's approval hook).
+// permissionModeOf is the claude --permission-mode of a turn. Every tool call goes through
+// lucode's hook either way; in "auto", claude decides what rules and flows leave open.
 func permissionModeOf(opts TurnOptions) string {
 	if opts.AutoMode {
 		return "auto"

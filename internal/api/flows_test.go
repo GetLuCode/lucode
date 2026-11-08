@@ -59,7 +59,7 @@ func TestFlowReactsToABoardMove(t *testing.T) {
 			{ID: "g", Type: flows.TypeAddTag, Config: map[string]any{"tag": "seen"}},
 			{ID: "m", Type: flows.TypeMoveCard, Config: map[string]any{"to_kind": "done"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: "next", To: "c"}, {From: "c", Port: "next", To: "g"}, {From: "g", Port: "next", To: "m"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "c"}, {From: "c", Port: flows.PortText, To: "g"}, {From: "g", Port: flows.PortTag, To: "m"}},
 	})
 	card := newCard(t, h, pid, lists["todo"], "the task")
 	if _, err := h.moveCardToKind(card, dbpkg.KanbanReview); err != nil {
@@ -90,7 +90,7 @@ func TestEveryMoveLogsAnEvent(t *testing.T) {
 			{ID: "t", Type: flows.TypeCardMoved},
 			{ID: "c", Type: flows.TypeComment, Config: map[string]any{"text": "{{event.source}}:{{event.to_kind}}"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: "next", To: "c"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "c"}},
 	})
 	card := newCard(t, h, pid, lists["todo"], "x")
 
@@ -122,9 +122,9 @@ func TestFlowMoveObeysTheBoardRules(t *testing.T) {
 		Nodes: []flows.Node{
 			{ID: "t", Type: flows.TypeCardMoved, Config: map[string]any{"to_kind": "review"}},
 			{ID: "m", Type: flows.TypeMoveCard, Config: map[string]any{"to_kind": "inprogress"}},
-			{ID: "c", Type: flows.TypeComment, Config: map[string]any{"text": "{{nodes.m.reason}}"}},
+			{ID: "c", Type: flows.TypeComment, Config: map[string]any{"text": "{{input}}"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: "next", To: "m"}, {From: "m", Port: "rejected", To: "c"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "m"}, {From: "m", Port: "rejected", To: "c"}},
 	})
 	card := newCard(t, h, pid, lists["todo"], "no agent")
 	if _, err := h.moveCardToKind(card, dbpkg.KanbanReview); err != nil {
@@ -156,7 +156,7 @@ func TestFlowRunsAgentOnce(t *testing.T) {
 			{ID: "a", Type: flows.TypeRunAgent, Config: map[string]any{"agent": "dev", "prompt": "check {{card.title}}"}},
 			{ID: "c", Type: flows.TypeComment, Config: map[string]any{"text": "agent finished"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: "next", To: "a"}, {From: "a", Port: "next", To: "c"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "a"}, {From: "a", Port: flows.PortReply, To: "c"}},
 	})
 	card := newCard(t, h, pid, lists["todo"], "the task")
 	if _, err := h.moveCardToKind(card, dbpkg.KanbanReview); err != nil {

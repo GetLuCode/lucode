@@ -27,15 +27,12 @@ import { SessionInfoModal } from './SessionInfoModal'
 import { fetchIdeas } from '../../lib/ideasStorage'
 import { listOllamaModels, cancelTurn } from '../../api'
 import type { Message } from '../../types'
+import { usePlugins } from '../../store/plugins'
+import { isPluginModel, normalizeModelId, parsePluginModel } from '../../lib/plugins'
 
 // Stable references — never inline [] or {} in Zustand selectors,
 // they create a new reference every render → "getSnapshot should be cached" infinite loop.
 const EMPTY_MESSAGES: Message[] = []
-
-// Local "models": no API and no tokens. Google's AI Mode runs in an Edge that lucode drives.
-const LOCAL_MODELS = [
-  { label: 'Google AI Mode (Edge)', value: 'local:aimode' },
-]
 
 const CLAUDE_MODELS = [
   { label: 'Haiku 5.5',  value: 'haiku' },
@@ -109,7 +106,9 @@ function ChatViewFull() {
   )
   
   const [input, setInput] = useState('')
-  const [model, setModelRaw] = useState(() => localStorage.getItem('pref_model') ?? 'MiniMax-M2.7')
+  const [model, setModelRaw] = useState(() => normalizeModelId(localStorage.getItem('pref_model') ?? 'MiniMax-M2.7'))
+  const pluginModels = usePlugins(s => s.ui.models)
+  const pluginsLoaded = usePlugins(s => s.loaded)
   const [effort, setEffortRaw] = useState(() => localStorage.getItem('pref_effort') ?? 'auto')
   const [thinking, setThinkingRaw] = useState(() => localStorage.getItem('pref_thinking') ?? 'adaptive')
   const setModel = (v: string) => { localStorage.setItem('pref_model', v); setModelRaw(v) }
@@ -334,8 +333,17 @@ function ChatViewFull() {
   // Sync model selector to the active session's model
   useEffect(() => {
     const s = sessions.find(s => s.id === activeSessionId)
-    if (s?.model) setModelRaw(s.model)
+    if (s?.model) setModelRaw(normalizeModelId(s.model))
   }, [activeSessionId, sessions])
+
+  // The saved choice for new chats is a plugin's model that is gone: fall back, and say so. A
+  // session that used it keeps its label: a turn there gets the hub's clear error.
+  useEffect(() => {
+    if (activeSessionId || !pluginsLoaded || !isPluginModel(model) || pluginModels.some(m => m.value === model)) return
+    usePlugins.getState().toast(`“${parsePluginModel(model)?.modelId ?? model}” is no longer available: its plugin is off or was removed. New chats use Sonnet.`, 'warning')
+    setModel('sonnet')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId, pluginsLoaded, pluginModels, model])
 
   // Stop TTS as soon as voice input is detected (interim = browser heard something)
   useEffect(() => {
@@ -600,9 +608,10 @@ function ChatViewFull() {
             <span className="chat__session-name" title={headerName}>{headerName}</span>
             {session?.card_id && activeProjectId && <TaskStatus projectId={activeProjectId} cardId={session.card_id} />}
             <span className="chat__header-model-badge">
-              {[...CLAUDE_MODELS, ...MINIMAX_MODELS, ...LOCAL_MODELS].find(m => m.value === model)?.label
+              {[...CLAUDE_MODELS, ...MINIMAX_MODELS].find(m => m.value === model)?.label
+                ?? pluginModels.find(m => m.value === model)?.label
                 ?? ollamaModels.find(m => `ollama:${m.name}` === model)?.label
-                ?? model.replace(/^ollama:/, '')}
+                ?? (isPluginModel(model) ? `${parsePluginModel(model)?.modelId ?? model} (plugin off)` : model.replace(/^ollama:/, ''))}
             </span>
             <IconChevronDown size={13} className="chat__header-chevron" />
           </button>
@@ -704,15 +713,15 @@ function ChatViewFull() {
                       </>
                     )}
 
-                    {/* Local models: answered by a browser, not an API */}
-                    <div className="chat__header-dropdown-divider" />
-                    <div className="chat__header-dropdown-label">Local</div>
-                    {LOCAL_MODELS.map(m => (
+                    {/* Models that plugins contribute: answered on the hub, not by an API of ours */}
+                    {pluginModels.length > 0 && <div className="chat__header-dropdown-divider" />}
+                    {pluginModels.length > 0 && <div className="chat__header-dropdown-label">Plugins</div>}
+                    {pluginModels.map(m => (
                       <button
                         key={m.value}
                         className={`chat__header-dropdown-item${model === m.value ? ' chat__header-dropdown-item--active' : ''}`}
                         onClick={() => { setModel(m.value); setHeaderMenuOpen(false) }}
-                        title="Opens Edge on google.com, enters AI Mode and forwards the chat to it"
+                        title={m.hint || undefined}
                       >
                         <span>{m.label}</span>
                         {model === m.value && <IconCheck size={12} className="chat__header-dropdown-check" />}
@@ -775,6 +784,7 @@ function ChatViewFull() {
             >
               <MessageBubble
                 message={messages[virtualItem.index]}
+                untrusted={isPluginModel(session?.model ?? model)}
                 sendHookRespond={sendHookRespond}
                 isBeingRead={speakingMessageId === messages[virtualItem.index]?.id}
                 onSpeak={handleSpeakMessage}

@@ -1,28 +1,18 @@
-import { useId } from 'react'
+import { IconSparkles } from '@tabler/icons-react'
+import { usePlugins } from '../../store/plugins'
+import { isPluginModel, normalizeModelId } from '../../lib/plugins'
+import { PluginIcon } from '../Plugins/PluginIcon'
 
-// Whether a model of the picker is answered by Gemini (the local Google AI Mode one) or by Claude.
-export const isGeminiModel = (model: string) => model.startsWith('local:')
-
-// The mark of the model in use, in its own color: Claude's orange burst, or Gemini's
-// blue-to-pink four-pointed star (the local Google AI Mode model).
+// The mark of the model in use: Claude's orange burst, or the icon a plugin's manifest gives its
+// model (fetched with the token and drawn as an image, never as inline SVG), in its accent color.
 export function ModelIcon({ model, size = 16, className }: { model: string; size?: number; className?: string }) {
-  const gradient = useId()
-  if (isGeminiModel(model)) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" className={className} role="img" aria-label="Gemini">
-        <defs>
-          <linearGradient id={gradient} x1="3" y1="21" x2="21" y2="3" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="#4285F4" />
-            <stop offset="0.5" stopColor="#9B72CB" />
-            <stop offset="1" stopColor="#D96570" />
-          </linearGradient>
-        </defs>
-        <path
-          fill={`url(#${gradient})`}
-          d="M12 1.5c.6 5.6 4.9 9.9 10.5 10.5-5.6.6-9.9 4.9-10.5 10.5C11.4 16.9 7.1 12.6 1.5 12 7.1 11.4 11.4 7.1 12 1.5z"
-        />
-      </svg>
-    )
+  const id = normalizeModelId(model)
+  const plugin = usePlugins(s => s.ui.models.find(m => m.value === id))
+  if (isPluginModel(id)) {
+    const fallback = <IconSparkles size={size} className={className} color={plugin?.accent ?? 'var(--text-muted)'} role="img" aria-label={plugin?.label ?? 'Plugin model'} />
+    return plugin?.icon
+      ? <PluginIcon pluginId={plugin.pluginId} path={plugin.icon} size={size} className={className} alt={plugin.label} fallback={fallback} />
+      : fallback
   }
   const rays = Array.from({ length: 10 }, (_, i) => i * 36)
   return (
