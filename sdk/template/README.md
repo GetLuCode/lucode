@@ -25,7 +25,9 @@ lucode-plugin pack my-plugin -o my-plugin.zip
 ```
 
 It runs the same checks as the hub, and leaves out `*.d.ts` and names starting with `.` or `_`. `lucode-plugin new
-yourname.something` starts a smaller plugin than this one.
+yourname.something` starts a plugin with a TypeScript backend, a page in Preact and tests (`lucode-plugin test`);
+`-plain` starts a smaller one than this, with nothing to build. Pages that draw themselves: "Frontend pages" in
+`docs/plugin-sdk.md`.
 
 ## Install
 

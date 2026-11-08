@@ -24,11 +24,21 @@ import (
 
 const usage = `lucode-plugin checks, packs and starts lucode plugins.
 
+  lucode-plugin new <id> [-dir path] [-plain]
+                                        starts a plugin in a new folder (default: the last part of the
+                                        id): a backend and a Preact page, or with -plain one JS file
+                                        whose page is a view tree
+  lucode-plugin build <dir>             compiles what plugin.json's "build" names: the backend for the
+                                        plugin runtime, each page's frontend (JSX, TypeScript, CSS)
+                                        for the browser
+  lucode-plugin test <dir> [-run text]  builds, then runs test/**/*.test.{js,ts}: rpcs and flow nodes
+                                        in the plugin runtime, pages in the browser's page runtime
   lucode-plugin validate <dir|zip>      everything the hub checks on an upload, and the blueprints
-  lucode-plugin pack <dir> [-o out.zip] validates, then writes the zip (default <id>-<version>.zip)
-  lucode-plugin new <id> [-dir path]    starts a plugin in a new folder (default: the last part of the id)
+  lucode-plugin pack <dir> [-o out.zip] builds, validates, then writes the zip (default
+                                        <id>-<version>.zip)
 
-Names starting with . or _ and *.d.ts files stay out of the zip.
+Names starting with . or _, *.d.ts files, node_modules, test/, the build's sources and the files of
+a JS toolchain (package.json, tsconfig.json, lockfiles) stay out of the zip.
 `
 
 func main() {
@@ -50,11 +60,15 @@ func run(args []string, out io.Writer) error {
 		return cmdPack(args[1:], out)
 	case "new":
 		return cmdNew(args[1:], out)
+	case "build":
+		return cmdBuild(args[1:], out)
+	case "test":
+		return cmdTest(args[1:], out)
 	case "help", "-h", "--help":
 		fmt.Fprint(out, usage)
 		return nil
 	}
-	return fmt.Errorf("unknown command %q: use validate, pack or new", args[0])
+	return fmt.Errorf("unknown command %q: use new, build, test, validate or pack", args[0])
 }
 
 // parse reads one positional argument, with the flags before or after it.
@@ -95,12 +109,15 @@ func cmdValidate(args []string, out io.Writer) error {
 		}
 		defer os.RemoveAll(tmp)
 		zipFile = filepath.Join(tmp, "plugin.zip")
-		if err := writeZip(target, zipFile); err != nil {
+		if err := writeZip(target, zipFile, skipped(target)); err != nil {
 			return err
 		}
 	}
 	m, err := check(zipFile, *bundled)
 	if err != nil {
+		if info.IsDir() && m.Build != nil && strings.Contains(err.Error(), "which is not in the zip") {
+			return fmt.Errorf("%w (run lucode-plugin build %s first)", err, target)
+		}
 		return err
 	}
 	report(out, m, "valid")
@@ -123,8 +140,11 @@ func cmdPack(args []string, out io.Writer) error {
 		return err
 	}
 	defer os.RemoveAll(tmp)
+	if err := runBuild(dir, out); err != nil {
+		return err
+	}
 	built := filepath.Join(tmp, "plugin.zip")
-	if err := writeZip(dir, built); err != nil {
+	if err := writeZip(dir, built, skipped(dir)); err != nil {
 		return err
 	}
 	m, err := check(built, *bundled)
@@ -157,7 +177,7 @@ func report(out io.Writer, m plugins.Manifest, what string) {
 
 // writeZip packs a folder the way the hub expects: forward slashes, plugin.json at the root. What
 // stays out is what go:embed also leaves out of a bundled plugin, so both ship the same files.
-func writeZip(dir, dest string) error {
+func writeZip(dir, dest string, skip map[string]bool) error {
 	var files []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -167,6 +187,12 @@ func writeZip(dir, dest string) error {
 			return nil
 		}
 		name := d.Name()
+		if rel, err := filepath.Rel(dir, p); err == nil && skip[filepath.ToSlash(rel)] {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -338,6 +364,7 @@ func checkBlueprints(pkg *plugins.Package) error {
 func cmdNew(args []string, out io.Writer) error {
 	fset := flag.NewFlagSet("new", flag.ContinueOnError)
 	dirFlag := fset.String("dir", "", "the folder to create")
+	plain := fset.Bool("plain", false, "one JS file whose page is a view tree, with nothing to build")
 	id, err := parse(fset, args)
 	if err != nil {
 		return err
@@ -351,16 +378,25 @@ func cmdNew(args []string, out io.Writer) error {
 	}
 	short := id[strings.LastIndex(id, ".")+1:]
 	name := strings.ToUpper(short[:min(1, len(short))]) + short[min(1, len(short)):]
-	manifest := strings.NewReplacer("__ID__", id, "__NAME__", name).Replace(newManifest)
-	// the same parser as the hub: a bad id or a reserved one stops here, before anything is written
-	if _, err := plugins.ParseManifest([]byte(manifest), plugins.ParseOptions{}); err != nil {
-		return err
-	}
+	fill := strings.NewReplacer("__ID__", id, "__NAME__", name)
 	files := map[string]string{
-		"plugin.json":     manifest,
+		"plugin.json":     newManifest,
 		"main.js":         newMain,
 		"assets/icon.svg": newIcon,
-		"README.md":       strings.ReplaceAll(newReadme, "__NAME__", name),
+		"README.md":       newReadme,
+	}
+	if !*plain {
+		files = frontendTemplate()
+	}
+	for rel, body := range files {
+		if strings.HasSuffix(rel, ".d.ts") {
+			continue // the SDK's own text, which may hold the placeholders' letters
+		}
+		files[rel] = fill.Replace(body)
+	}
+	// the same parser as the hub: a bad id or a reserved one stops here, before anything is written
+	if _, err := plugins.ParseManifest([]byte(files["plugin.json"]), plugins.ParseOptions{}); err != nil {
+		return err
 	}
 	for rel, body := range files {
 		p := filepath.Join(dir, filepath.FromSlash(rel))
@@ -371,7 +407,11 @@ func cmdNew(args []string, out io.Writer) error {
 			return err
 		}
 	}
-	fmt.Fprintf(out, "%s is ready in %s\n  lucode-plugin validate %s\n  lucode-plugin pack %s\n", id, dir, dir, dir)
+	next := "validate"
+	if !*plain {
+		next = "test"
+	}
+	fmt.Fprintf(out, "%s is ready in %s\n  lucode-plugin %s %s\n  lucode-plugin pack %s\n", id, dir, next, dir, dir)
 	return nil
 }
 

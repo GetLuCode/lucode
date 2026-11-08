@@ -57,6 +57,20 @@
 }
 .plugin-page--fill .plugin-page__body { display: flex; padding: 0; overflow: hidden; }
 .plugin-page--fill .pv-conversation { flex: 1; height: auto; border: 0; border-radius: 0; }
+/* A page with a frontend of its own. Containment makes this box the edge of everything the page
+   draws: fixed positions are relative to it, and nothing paints outside it. */
+.plugin-surface-wrap { display: flex; flex-direction: column; gap: 10px; min-height: 100%; }
+.plugin-surface {
+  position: relative; flex: 1; min-height: 240px;
+  contain: layout paint style; isolation: isolate; overflow: auto;
+}
+.plugin-surface__notice {
+  display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 10px;
+  border: 1px solid var(--hook-border); border-radius: var(--radius);
+  color: var(--warning); font-size: 12px; overflow-wrap: anywhere;
+}
+.plugin-surface__notice .plugin-icon-btn { margin-left: auto; }
+
 .plugin-page__failure {
   display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: 460px; margin: 48px auto;
   text-align: center; color: var(--error);

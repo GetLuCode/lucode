@@ -122,6 +122,7 @@ export function mergeContributions(raw: unknown): PluginUI {
       label: str(o.label) || id,
       icon: str(o.icon),
       render: str(o.render),
+      ui: str(o.ui) !== '',
     })),
     chatActions: list('chatActions', (o, pluginId, id) => ({ pluginId, id, label: str(o.label) || id, icon: str(o.icon), rpc: str(o.rpc) })).filter(a => a.rpc),
     cardActions: list('cardActions', (o, pluginId, id) => ({ pluginId, id, label: str(o.label) || id, icon: str(o.icon), rpc: str(o.rpc) })).filter(a => a.rpc),

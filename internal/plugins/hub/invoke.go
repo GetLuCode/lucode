@@ -27,13 +27,18 @@ func (h *Host) invokeServer(ctx context.Context, l *loadedPlugin, path []string,
 	})
 }
 
-// rpcAllowed is the allowlist of the browser's road in: what a contribution names, or what a
-// view tree of this plugin offered as an action.
+// rpcAllowed is the allowlist of the browser's road in: what a contribution names (a frontend
+// page names its rpcs one by one), or what a view tree of this plugin offered as an action.
 func rpcAllowed(l *loadedPlugin, name string) bool {
 	c := l.manifest.Contributes
 	for _, p := range c.Pages {
 		if p.Render == name {
 			return true
+		}
+		for _, r := range p.RPC {
+			if r == name {
+				return true
+			}
 		}
 	}
 	for _, list := range [][]plugins.ActionDef{c.ChatActions, c.CardActions} {

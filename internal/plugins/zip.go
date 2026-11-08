@@ -173,6 +173,9 @@ func CheckZip(file string, opts ParseOptions) (Manifest, error) {
 		if d.Icon != "" {
 			need = append(need, d.Icon)
 		}
+		if d.UI != "" {
+			need = append(need, d.UI)
+		}
 	}
 	for _, d := range m.Contributes.FlowNodes {
 		if d.Icon != "" {

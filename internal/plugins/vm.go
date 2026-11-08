@@ -23,6 +23,7 @@ import (
 // Limits of one invocation of plugin code.
 const (
 	MaxCodeBytes     = 5 << 20  // one .js file
+	MaxStyleBytes    = 1 << 20  // a frontend page's stylesheet
 	MaxPayloadBytes  = 32 << 20 // what an invocation receives or returns (a turn can carry an image)
 	MaxCallBytes     = 16 << 20 // one value through a host function
 	maxCallStack     = 2000     // call depth of the script

@@ -2,12 +2,17 @@
 
 How to write a lucode plugin. To install and run them, see `docs/plugins.md`.
 
-In `sdk/`: `lucode-plugin.d.ts` (types), `plugin.schema.json` (the manifest) and `template/` (a minimal
-plugin to copy). `internal/plugins/bundled/board-digest` and `webhooks` are two complete examples.
+In `sdk/`: `lucode-plugin.d.ts` (types of the backend), `lucode-ui.d.ts` (of a frontend page), `lucode-test.d.ts`
+(of a test), `plugin.schema.json` (the manifest) and `template/` (a minimal plugin to copy). `lucode-plugin new` writes
+the three type files into a new plugin. `internal/plugins/bundled/board-digest` and `webhooks` are two complete examples.
 
 ## What you are writing
 
-Plain CommonJS JavaScript, in one or two entry files, that exports functions. lucode calls them. A fresh VM
+A backend: plain CommonJS JavaScript, in one or two entry files, that exports functions. lucode calls them.
+Optionally, a frontend for each page: Preact, built by `lucode-plugin build`, run in a Worker of the browser
+("Frontend pages" below). You can write both in TypeScript and let the build make the JavaScript.
+
+The backend's rules: A fresh VM
 runs each call, so nothing you put in a variable survives to the next one: keep state with `lucode.memory` or
 `lucode.storage`. Handlers are synchronous. There are no timers, no `process`, no `fetch`, no `URL`, no
 `TextEncoder`: what you get is standard JavaScript plus the `lucode` global.
@@ -36,15 +41,22 @@ Windows reserves; symlinks; names that differ only by case.
 ```
 go build -o lucode-plugin ./cmd/lucode-plugin
 
-lucode-plugin new acme.hello              # starts a plugin in ./hello
+lucode-plugin new acme.hello              # starts a plugin in ./hello: a backend and a Preact page
+lucode-plugin new acme.hello -plain       # one JS file whose page is a view tree, nothing to build
+lucode-plugin build hello                 # compiles what plugin.json's "build" names
+lucode-plugin test hello                  # builds, then runs test/**/*.test.{js,ts}
 lucode-plugin validate hello              # a folder or a zip
-lucode-plugin pack hello -o hello.zip     # validates, then writes it (default <id>-<version>.zip)
+lucode-plugin pack hello -o hello.zip     # builds, validates, then writes it (default <id>-<version>.zip)
 ```
+
+None of them needs Node or `node_modules`: the compiler (esbuild) and Preact 11.2.0 are inside the binary. `npm install`
+in a plugin made by `new` is only for your editor's types.
 
 `validate` and `pack` run everything the hub checks on an upload, then two things the hub would only tell you after
 installing: entry files that do not compile, and blueprints that would not publish. They list the permissions the review
 dialog will show. Your code is loaded in the sandbox to compile it and no handler is called, but its top level does run.
-Names starting with `.` or `_` and `*.d.ts` files stay out of the zip, so tests can live in a `_test` folder. `-bundled`
+Names starting with `.` or `_`, `*.d.ts` files, `node_modules`, `test/`, the build's sources and a JS toolchain's files
+(`package.json`, `tsconfig.json`, lockfiles) stay out of the zip. `-bundled`
 allows a `lucode.*` id, for the plugins in this repository.
 
 ## Manifest
@@ -100,7 +112,8 @@ are refused. **Ask for the least that works**: every line is one more thing an a
                "waitingText": "Waiting…", "timeoutSeconds": 720 }],
   "conversations": [{ "id": "mine", "model": "mine", "title": "My conversations",
                       "emptyText": "None yet.", "showUrl": true }],   // needs conversations
-  "pages": [{ "id": "main", "label": "Hello", "icon": "assets/i.svg", "render": "renderMain" }],
+  "pages": [{ "id": "main", "label": "Hello", "icon": "assets/i.svg", "render": "renderMain" },
+            { "id": "board", "label": "Board", "ui": "dist/board.js", "rpc": ["listItems", "addItem"] }],
   "settings": [{ "key": "primer", "label": "Primer", "type": "textarea", "default": "", "help": "..." }],
   "blueprints": [{ "key": "ask", "name": "Ask", "description": "...", "file": "blueprints/ask.json" }],
   "flowNodes": [{ "id": "ask", "label": "Ask", "description": "...", "icon": "assets/x.svg", "target": "server",
@@ -114,6 +127,8 @@ are refused. **Ask for the least that works**: every line is one more thing an a
 Rules the hub checks:
 
 - Models and pages need a server target. Settings too: they never reach a runner by themselves.
+- A page has `render` (an rpc that returns a view tree) or `ui` (a frontend script in the zip), not both. A page with
+  `ui` lists in `rpc` every rpc its frontend calls, 64 at most; nothing else is reachable from it.
 - A model's id cannot start with `claude`, `sonnet`, `opus`, `haiku`, `fable`, `anthropic`, `ollama` or `local`. On
   the wire it becomes `plugin:<pluginId>/<modelId>`: the plugin's id comes from the host, so a manifest cannot claim
   another plugin's model.
@@ -345,6 +360,126 @@ submit the rpc receives the action's args, each value by its key, and all of the
 names a `conversations` contribution or a saved conversation, and `model` is one of your models. Its sessions are of kind
 `plugin` and stay out of the session list.
 
+## Building
+
+`"build"` in `plugin.json` names the sources; the outputs are the files the manifest already names. The hub ignores it.
+
+```json
+"targets": { "server": { "main": "dist/server.js", "permissions": { "storage": true } } },
+"contributes": { "pages": [{ "id": "main", "label": "Notes", "ui": "dist/main.js", "rpc": ["listItems", "addItem"] }] },
+"build": { "server": "src/server.ts", "pages": { "main": "src/ui/main.tsx" } }
+```
+
+- **Backend** (`server`, `runner`): one CommonJS file, everything bundled, lowered to ES2017, which the plugin runtime
+  parses. `export const rpc = {...}` and `module.exports = {...}` both work. Node's modules (`fs`, ...) are not there and
+  fail the build. JSON, `.txt` and `.md` imports are inlined.
+- **Frontend** (`pages`): one script for the browser, ES2020, JSX through Preact's runtime. `preact`, `preact/hooks` and
+  `preact/jsx-runtime` are the copy in the binary, whatever `node_modules` holds; `preact/compat` and the rest are not
+  available. Images and fonts you import are inlined as `data:`. CSS you import becomes the `.css` beside the script
+  (`dist/main.js` → `dist/main.css`), which the hub serves as the page's stylesheet.
+
+## Frontend pages
+
+A page with `ui` draws itself, with Preact and its own CSS, instead of returning view trees. Its code never runs in
+lucode's page: the browser runs it in a Worker of its own, and everything it shows passes through the app first.
+
+```tsx
+import { render } from "preact";
+import { useEffect, useState } from "preact/hooks";
+import { rpc } from "@lucode/ui";
+import "./style.css";
+
+function App() {
+  const [items, setItems] = useState<string[]>([]);
+  useEffect(() => { rpc<{ items: string[] }>("listItems").then(r => setItems(r.items)); }, []);
+  return <ul>{items.map(i => <li>{i}</li>)}</ul>;
+}
+render(<App />, document.body); // document.body is the page's area
+```
+
+**`@lucode/ui`** (types in `sdk/lucode-ui.d.ts`): `rpc(name, args)` calls an rpc of the backend and resolves with its
+answer, or rejects with its error; the rpc gets `args.projectId` as from any page. `context` (`pluginId`, `pluginName`,
+`pluginVersion`, `pageId`, `projectId`). `toast(message, tone)`. `openLink(url)` (http and https, in a new tab).
+`asset(path)`, an image of the zip for `<img src>`. `on("webhook" | "theme", fn)`. The same object is the global `lucode`
+in the Worker, for plain JavaScript.
+
+What the page can do:
+
+- **Call the rpcs its page lists in `rpc`, and nothing else.** The app refuses any other before it leaves the browser,
+  and the hub refuses it again. There is no other way out: the Worker's script is served with
+  `Content-Security-Policy: default-src 'none'`, so the browser blocks `fetch`, `XMLHttpRequest`, `WebSocket`,
+  `importScripts`, `import()`, nested workers and `eval`, and the runtime also removes them along with `indexedDB`,
+  `caches`, `BroadcastChannel`, `navigator.storage` and `navigator.locks`. To reach the network, write an rpc and use
+  `lucode.http` in the backend, with its permission.
+- **Draw HTML and SVG, with its own CSS.** What it builds reaches the app as operations, applied to a shadow root of
+  the page's area after these checks:
+  - **Tags:** the usual HTML for text, lists, tables, forms and inputs; SVG shapes, text and gradients. `script`,
+    `style`, `iframe`, `object`, `embed`, `link`, `meta`, `template`, `dialog`, media, `canvas`, and SVG's `use`,
+    `image` and `foreignObject` become hidden placeholders.
+  - **Attributes:** listed per tag. Never `on*`, a `style` attribute (use the `style` prop), `popover`, `action` or
+    `formaction`. A link is http, https, mailto or `#`. An image is `data:image/...` or `asset(path)`. `<input
+    type="file">` becomes a text field.
+  - **CSS** in a stylesheet or a style: `url()` only of `data:` images and fonts, or `#ids`. No `@import`, no
+    `image-set()`. A stylesheet that breaks this is left out whole, and the page says why.
+  - **Events:** pointer, mouse, keyboard, focus, input, form, wheel and scroll. A form never submits and a link never
+    navigates by itself; a clicked link opens in a new tab unless your handler calls `preventDefault()`.
+- **Its area is its edge.** The area is contained, so `position: fixed` is relative to it and nothing paints outside
+  it. The page takes the focus only from itself or right after someone used it. The theme comes in as variables:
+  `--lc-bg`, `--lc-surface`, `--lc-hover`, `--lc-input`, `--lc-border`, `--lc-text`, `--lc-muted`, `--lc-accent`,
+  `--lc-on-accent`, `--lc-danger`, `--lc-warning`, `--lc-radius`, `--lc-font`, `--lc-mono`.
+
+The Worker's document is small: `createElement`, `createElementNS`, `createTextNode`, `appendChild`, `insertBefore`,
+`removeChild`, `remove`, attributes, `style`, `value`, `checked`, `addEventListener`, `focus`, `blur`, and
+`querySelector` with tag, `#id`, `.class` and `[attr]`. There is no `innerHTML` (it throws) and no layout:
+`getBoundingClientRect` gives zeros. Libraries that need a real DOM do not work.
+
+| Limit | Value | When passed |
+|---|---|---|
+| Elements on a page | 50,000 | the page stops: "has more than 50000 elements" |
+| Messages from the Worker | 5,000 a second | the page stops |
+| rpcs waiting at once | 32 | the call fails: "too many calls at once" |
+| Script, stylesheet | 5 MB, 1 MB | the hub does not serve it |
+| Pointer moves, wheel, scroll | one a frame | coalesced |
+
+The page's reload button starts a new Worker. A frontend page does not open through a remote instance (the instance
+picker), because a Worker cannot carry that header. Its rpcs have the usual 15 seconds.
+
+## Testing
+
+`lucode-plugin test <dir>` builds, then runs every `test/**/*.test.{js,ts,jsx,tsx}`. Nothing leaves the machine: the
+backend runs in the same plugin runtime as the hub's, with storage, settings and `lucode.flows.emit` in memory, and a
+frontend page runs in the same Worker runtime as the browser's, on a virtual clock. Types: `sdk/lucode-test.d.ts`.
+
+```ts
+test("adds an item from the page", () => {
+  const page = plugin.page("main");
+  page.input("input", "Buy milk");
+  page.click("text=Add");
+  assert.equal(page.text("ul"), "Buy milk");
+  assert.deepEqual(plugin.rpc("listItems").items.map(i => i.text), ["Buy milk"]);
+});
+
+test("refuses an empty item", () => {
+  assert.throws(() => plugin.rpc("addItem", { text: " " }), "needs some text");
+});
+```
+
+- `plugin.rpc(name, args, { projectId })` and `plugin.node(id, input)` call the backend as the hub does, with every
+  permission the manifest asks for. `plugin.storage`, `plugin.setSetting`, `plugin.events()` and `plugin.logs()` read
+  or set what the backend sees. Each test starts with empty storage and default settings.
+- `plugin.page(id)` opens a frontend page, with its first rpcs answered. `click`, `input`, `select`, `check`, `submit`,
+  `key` and `dispatch` send events as the browser would, and each one returns when the page has settled (its rpcs
+  answered, a second of timers run), so a test needs no `await`. `wait(ms)` lets more time pass. `text`, `html`,
+  `count`, `exists`, `attr`, `value`, `checked` and `disabled` read the page; `toasts()`, `opened()`, `calls()` and
+  `errors()` say what it did. A selector is a tag, `#id`, `.class` or `[attr=value]`, with spaces for descendants, or
+  `text=Words`.
+- A page's rpcs go through its `rpc` list here too: a call it does not list fails as in the browser.
+- `assert` has `ok`, `equal`, `notEqual`, `deepEqual`, `includes`, `match`, `throws` and `fail`. `test.only` and
+  `test.skip` work, and `-run text` keeps the tests whose name has `text`.
+- Not there: the board, sessions, conversations, the browser, the relay, other runners, runner targets and real HTTP.
+  A call to one says it is not available here. What the test runner does not check is how the browser lays the page
+  out: open it in lucode for that.
+
 ## Flow nodes and blueprints
 
 A node's type in a graph is `plugin.<pluginId>.<nodeId>`, and its category is `action`. The palette and form come from the
@@ -412,6 +547,11 @@ pending is an error. Just write synchronous code.
 - What goes to and from a runner is encrypted and signed once an operator has paired it (`docs/plugins.md`). Nothing of yours
   needs to do that. A runner node on an unpaired runner takes `failed`.
 - `browser` is high risk: code you run in a page can send what it reads anywhere, whatever your origins say.
+- A frontend page is code the browser runs for whoever opens it. It cannot reach the network or the app, but it can
+  draw anything inside its area, a form asking for a password included. The app frames it with your plugin's name.
+  Do not ask for what lucode would never ask for.
+- An rpc a page lists can be called by anyone who can open the page, with any arguments: check them in the backend as
+  you would any input.
 
 ## Known limitations
 

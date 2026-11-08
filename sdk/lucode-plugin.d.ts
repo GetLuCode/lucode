@@ -524,10 +524,17 @@ declare namespace Lucode {
     main?: string;
     /** Old form of targets.server.permissions. */
     permissions?: ServerPermissions;
+    /** For lucode-plugin build: source to output. The hub ignores it. */
+    build?: { server?: string; runner?: string; pages?: { [pageId: string]: string } };
     contributes?: {
       models?: { id: string; label: string; mode?: string; hint?: string; icon?: string; accent?: string; images?: boolean; loader?: string; waitingText?: string; timeoutSeconds?: number }[];
       conversations?: { id: string; model: string; title: string; emptyText?: string; showUrl?: boolean }[];
-      pages?: { id: string; label: string; icon?: string; render: string }[];
+      /**
+       * A page draws view trees (render: an rpc that returns one), or has a frontend of its own (ui:
+       * a script lucode-plugin build makes, which runs in a Worker of the browser with Preact). A
+       * frontend reaches only the rpcs listed in rpc. Types of the frontend: lucode-ui.d.ts.
+       */
+      pages?: ({ id: string; label: string; icon?: string } & ({ render: string } | { ui: string; rpc?: string[] }))[];
       settings?: SettingDef[];
       blueprints?: { key: string; name: string; description?: string; file: string }[];
       flowNodes?: { id: string; label: string; description?: string; icon?: string; fields?: NodeField[]; ports?: string[]; timeoutSeconds?: number; target?: Target }[];

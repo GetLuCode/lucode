@@ -24,6 +24,7 @@ import (
 	natspkg "claude-orchestrator/internal/natsbus"
 	"claude-orchestrator/internal/permissions"
 	"claude-orchestrator/internal/plugins"
+	"claude-orchestrator/internal/plugins/surface"
 	sessionpkg "claude-orchestrator/internal/session"
 
 	"github.com/google/uuid"
@@ -65,6 +66,7 @@ type Handler struct {
 	flows *flows.Engine // nil until StartFlows (only the hub runs it)
 
 	plugins plugins.HubHost // nil until StartPlugins (only the hub runs it)
+	uiTickets *surface.Tickets // a frontend page's script loads with one (pluginui.go)
 	relay   plugins.RelayClient // the connection to the webhook relay; nil: this hub has none
 
 	pushIcon string // path of the icon of a notification; empty: the browser's own
@@ -347,6 +349,12 @@ func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 
 		// Auth routes are proxied to authapi — no local auth check needed
 		if strings.HasPrefix(path, "/api/auth/") || path == "/api/apikeys" || strings.HasPrefix(path, "/api/apikeys/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// a plugin page's Worker cannot send the token: it carries a ticket the page got with it
+		if isPluginUIScript(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

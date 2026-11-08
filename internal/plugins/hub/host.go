@@ -368,6 +368,16 @@ func (h *Host) warnings(m plugins.Manifest) []string {
 		}
 		out = append(out, "Its runner code is delivered to every online runner whose policy allows plugins.")
 	}
+	for _, p := range m.Contributes.Pages {
+		if p.UI == "" {
+			continue
+		}
+		calls := "no calls"
+		if len(p.RPC) > 0 {
+			calls = "only these calls: " + strings.Join(p.RPC, ", ")
+		}
+		out = append(out, fmt.Sprintf("Its page %q draws itself: its code runs in your browser, apart from lucode, with no network, and reaches its plugin through %s.", p.Label, calls))
+	}
 	return out
 }
 
@@ -884,6 +894,38 @@ func (h *Host) Asset(id, rel string) ([]byte, string, error) {
 		return nil, "", plugins.ErrNotFound
 	}
 	return raw, ctype, nil
+}
+
+// PageUI is a frontend page's script and stylesheet (empty when it has none). The browser runs the
+// script in a worker of its own; the plugin must be on.
+func (h *Host) PageUI(id, pageID string) (plugins.PageDef, []byte, []byte, plugins.Manifest, error) {
+	l, err := h.usable(id)
+	if err != nil {
+		return plugins.PageDef{}, nil, nil, plugins.Manifest{}, err
+	}
+	if l.pkg == nil {
+		return plugins.PageDef{}, nil, nil, l.manifest, plugins.ErrNotFound
+	}
+	for _, p := range l.manifest.Contributes.Pages {
+		if p.ID != pageID {
+			continue
+		}
+		if p.UI == "" {
+			return p, nil, nil, l.manifest, fmt.Errorf("the page %q of %s draws view trees and has no frontend", pageID, l.manifest.Name)
+		}
+		script, err := l.pkg.ReadFile(p.UI, plugins.MaxCodeBytes)
+		if err != nil {
+			return p, nil, nil, l.manifest, plugins.ErrNotFound
+		}
+		var style []byte
+		if _, serr := os.Stat(filepath.Join(l.pkg.Dir, filepath.FromSlash(p.Style()))); serr == nil {
+			if style, err = l.pkg.ReadFile(p.Style(), plugins.MaxStyleBytes); err != nil {
+				return p, nil, nil, l.manifest, err
+			}
+		}
+		return p, script, style, l.manifest, nil
+	}
+	return plugins.PageDef{}, nil, nil, l.manifest, plugins.ErrNotFound
 }
 
 // UI merges what the enabled plugins add to the web.

@@ -10,10 +10,18 @@ Plugin code is JavaScript that runs in a sandbox lucode embeds. It has no access
 processes or to the network on its own. It only has the calls lucode gives it, and most of those need
 a permission you grant when you install it.
 
-No code of a plugin ever runs in your browser, because the page holds your login. What a plugin sends
+No code of a plugin ever runs in lucode's page, because the page holds your login. What a plugin sends
 does reach the page, always through lucode:
 
-- A plugin's page is data that lucode draws with its own components, with no styles of its own.
+- A plugin's page is data that lucode draws with its own components, with no styles of its own, unless
+  the page draws itself (below).
+- **A page that draws itself** (the review dialog says so, with the calls it can make) runs its code in
+  your browser, in a Worker apart from lucode's page. The browser keeps that Worker off the network, and
+  it cannot read your login, lucode's data or other tabs. It can only ask its own plugin for the calls the
+  dialog lists, which lucode checks again. What it draws passes through lucode first: no scripts, no
+  frames, no outside images or styles, nothing outside the page's own area. It can still draw anything
+  inside that area, a form included: trust a plugin's page as much as you trust the plugin, and never
+  type there a password lucode would not ask for.
 - Its icons are images, shown in an `<img>`, where an svg runs nothing.
 - Answers from its model are shown like any chat answer: markdown turned into HTML and cleaned. Scripts,
   forms and styles are removed, and it keeps none of the app's classes. In an answer from a plugin's model,

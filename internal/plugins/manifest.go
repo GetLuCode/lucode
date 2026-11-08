@@ -60,6 +60,8 @@ type Manifest struct {
 	Permissions *Permissions `json:"permissions,omitempty"`
 
 	Contributes Contributes `json:"contributes"`
+	// Build is for lucode-plugin; the hub ignores it.
+	Build *BuildDef `json:"build,omitempty"`
 }
 
 // Targets says which targets a plugin has.
@@ -148,12 +150,34 @@ type ConversationDef struct {
 	ShowURL   bool   `json:"showUrl,omitempty"`
 }
 
-// PageDef is a page the plugin draws with view trees.
+// PageDef is a page of the plugin: either view trees an rpc returns (Render), or a frontend of its
+// own (UI), a script the browser runs in a worker, whose only way out is the rpcs listed in RPC.
 type PageDef struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Icon   string `json:"icon,omitempty"`
-	Render string `json:"render"`
+	ID     string   `json:"id"`
+	Label  string   `json:"label"`
+	Icon   string   `json:"icon,omitempty"`
+	Render string   `json:"render,omitempty"`
+	UI     string   `json:"ui,omitempty"`
+	RPC    []string `json:"rpc,omitempty"`
+}
+
+// Style is the stylesheet beside a frontend page's script: dist/main.js → dist/main.css.
+func (d PageDef) Style() string {
+	if d.UI == "" {
+		return ""
+	}
+	return strings.TrimSuffix(d.UI, ".js") + ".css"
+}
+
+// MaxPageRPCs is how many rpcs one frontend page may call.
+const MaxPageRPCs = 64
+
+// BuildDef is what lucode-plugin build compiles, source to output. The hub never reads it: a zip
+// holds the outputs, which the manifest names as usual (targets.*.main, pages[].ui).
+type BuildDef struct {
+	Server string            `json:"server,omitempty"`
+	Runner string            `json:"runner,omitempty"`
+	Pages  map[string]string `json:"pages,omitempty"`
 }
 
 // SettingDef is a value an admin sets.
@@ -323,7 +347,10 @@ func (m *Manifest) validate(opts ParseOptions) error {
 			return err
 		}
 	}
-	return m.checkContributes()
+	if err := m.checkContributes(); err != nil {
+		return err
+	}
+	return m.checkBuild()
 }
 
 func checkPermissions(target string, p Permissions) error {
@@ -409,6 +436,77 @@ func checkIcon(where, p string) error {
 	return nil
 }
 
+// checkPage: a page is drawn one way, view trees or a frontend, and a frontend names every rpc it
+// may call, because that list is all the browser lets it reach.
+func checkPage(d PageDef) error {
+	switch {
+	case d.Render != "" && d.UI != "":
+		return fmt.Errorf(`plugin.json: page %q: use "render" or "ui", not both`, d.ID)
+	case d.UI != "":
+		if err := checkPluginPath(d.UI); err != nil || path.Ext(d.UI) != ".js" {
+			return fmt.Errorf("plugin.json: page %q: ui %q must be a .js file in the zip", d.ID, d.UI)
+		}
+		if len(d.RPC) > MaxPageRPCs {
+			return fmt.Errorf("plugin.json: page %q lists %d rpcs, and %d is the most", d.ID, len(d.RPC), MaxPageRPCs)
+		}
+		seen := map[string]bool{}
+		for _, name := range d.RPC {
+			if !rpcNameRe.MatchString(name) {
+				return fmt.Errorf("plugin.json: page %q: rpc %q is not an rpc name", d.ID, name)
+			}
+			if seen[name] {
+				return fmt.Errorf("plugin.json: page %q lists the rpc %q twice", d.ID, name)
+			}
+			seen[name] = true
+		}
+	case d.Render != "":
+		if !rpcNameRe.MatchString(d.Render) {
+			return fmt.Errorf("plugin.json: page %q: render %q is not an rpc name", d.ID, d.Render)
+		}
+		if len(d.RPC) > 0 {
+			return fmt.Errorf(`plugin.json: page %q: "rpc" is for a page with "ui"; a view tree offers its rpcs as actions`, d.ID)
+		}
+	default:
+		return fmt.Errorf(`plugin.json: page %q needs "render" (an rpc that returns a view tree) or "ui" (its frontend)`, d.ID)
+	}
+	return nil
+}
+
+func (m *Manifest) checkBuild() error {
+	b := m.Build
+	if b == nil {
+		return nil
+	}
+	sources := []string{b.Server, b.Runner}
+	if b.Server != "" && m.Targets.Server == nil {
+		return errors.New(`plugin.json: build.server needs targets.server, which names where it goes`)
+	}
+	if b.Runner != "" && m.Targets.Runner == nil {
+		return errors.New(`plugin.json: build.runner needs targets.runner, which names where it goes`)
+	}
+	for id, src := range b.Pages {
+		found := false
+		for _, p := range m.Contributes.Pages {
+			if p.ID == id && p.UI != "" {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf(`plugin.json: build.pages names %q, which is not a page with "ui"`, id)
+		}
+		sources = append(sources, src)
+	}
+	for _, src := range sources {
+		if src == "" {
+			continue
+		}
+		if err := checkPluginPath(src); err != nil {
+			return fmt.Errorf("plugin.json: build source %q must be a path inside the plugin's folder", src)
+		}
+	}
+	return nil
+}
+
 func uniqueIDs(kind string, ids []string) error {
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -473,8 +571,8 @@ func (m *Manifest) checkContributes() error {
 		if !srv {
 			return errors.New("plugin.json: pages need a server target")
 		}
-		if !rpcNameRe.MatchString(d.Render) {
-			return fmt.Errorf("plugin.json: page %q: render %q is not an rpc name", d.ID, d.Render)
+		if err := checkPage(d); err != nil {
+			return err
 		}
 		if err := checkIcon("page "+d.ID, d.Icon); err != nil {
 			return err

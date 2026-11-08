@@ -7,6 +7,7 @@ import { classifyRpcResult, type ViewNode } from '../../lib/pluginView'
 import { useStore } from '../../store'
 import { usePlugins } from '../../store/plugins'
 import { PluginIcon, PluginOrigin } from './PluginIcon'
+import { PluginSurface } from './PluginSurface'
 import { ViewEmpty, ViewRenderer } from './ViewRenderer'
 import './Plugins.css'
 
@@ -62,15 +63,17 @@ export function PluginPage() {
         <button
           className="plugin-icon-btn"
           onClick={() => setAttempt(a => a + 1)}
-          disabled={loading}
+          disabled={loading && !page.ui}
           title="Reload this page"
           aria-label="Reload this page"
         >
-          <IconRefresh size={15} className={loading ? 'plugin-spin' : undefined} />
+          <IconRefresh size={15} className={loading && !page.ui ? 'plugin-spin' : undefined} />
         </button>
       </header>}
       <div className="plugin-page__body">
-        {error ? (
+        {page.ui ? (
+          <PluginSurface key={attempt} pluginId={pluginId} pageId={pageId} projectId={projectId} />
+        ) : error ? (
           <div className="plugin-page__failure" role="alert">
             <IconAlertTriangle size={22} stroke={1.6} aria-hidden />
             <p className="pv-empty__title">This page could not load</p>

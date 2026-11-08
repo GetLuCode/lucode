@@ -61,7 +61,21 @@
     },
     "main": { "$ref": "#/definitions/jsFile", "description": "Old form: the server target's main file." },
     "permissions": { "$ref": "#/definitions/serverPermissions", "description": "Old form: the server target's permissions." },
-    "contributes": { "$ref": "#/definitions/contributes" }
+    "contributes": { "$ref": "#/definitions/contributes" },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What lucode-plugin build compiles: source to the output the manifest names. The hub ignores it.",
+      "properties": {
+        "server": { "$ref": "#/definitions/packagePath", "description": "Compiled to targets.server.main." },
+        "runner": { "$ref": "#/definitions/packagePath", "description": "Compiled to targets.runner.main." },
+        "pages": {
+          "type": "object",
+          "description": "Page id to its source (.tsx, .jsx, .ts or .js), compiled to the page's ui.",
+          "additionalProperties": { "$ref": "#/definitions/packagePath" }
+        }
+      }
+    }
   },
   "definitions": {
     "localId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
@@ -198,12 +212,21 @@
     "page": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "label", "render"],
+      "required": ["id", "label"],
+      "oneOf": [
+        { "required": ["render"], "not": { "anyOf": [{ "required": ["ui"] }, { "required": ["rpc"] }] } },
+        { "required": ["ui"], "not": { "required": ["render"] } }
+      ],
       "properties": {
         "id": { "$ref": "#/definitions/localId" },
         "label": { "type": "string" },
         "icon": { "$ref": "#/definitions/image" },
-        "render": { "$ref": "#/definitions/rpcName" }
+        "render": { "$ref": "#/definitions/rpcName", "description": "An rpc that returns a view tree." },
+        "ui": { "$ref": "#/definitions/jsFile", "description": "The page's frontend, built by lucode-plugin build. Its stylesheet is the .css beside it." },
+        "rpc": {
+          "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/definitions/rpcName" },
+          "description": "Every rpc the frontend may call. Nothing else is reachable from it."
+        }
       }
     },
     "setting": {

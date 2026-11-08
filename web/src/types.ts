@@ -476,7 +476,8 @@ export interface PluginCatalogEntry { id: string; name: string; description?: st
 export interface PluginRunnerInfo { runnerId: string; hostname: string; online: boolean; policy: string; delivered: boolean; version: string; error: string; paired?: boolean }
 export interface PluginModelContribution { pluginId: string; id: string; value: string; label: string; mode: string; hint: string; icon: string; accent?: string; images: boolean; loader: string; waitingText: string; pluginName: string }
 export interface PluginConversationContribution { pluginId: string; id: string; model: string; title: string; emptyText: string; showUrl: boolean }
-export interface PluginPageContribution { pluginId: string; id: string; label: string; icon: string; render: string }
+// `ui`: the page has a frontend of its own (it runs in a Worker), and `render` is empty.
+export interface PluginPageContribution { pluginId: string; id: string; label: string; icon: string; render: string; ui: boolean }
 export interface PluginActionContribution { pluginId: string; id: string; label: string; icon: string; rpc: string }
 export interface PluginUI { models: PluginModelContribution[]; conversations: PluginConversationContribution[]; pages: PluginPageContribution[]; chatActions: PluginActionContribution[]; cardActions: PluginActionContribution[] }
 export interface PluginConversationRow {

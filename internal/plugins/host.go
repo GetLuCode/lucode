@@ -238,6 +238,8 @@ type HubHost interface {
 	PutSettings(id string, values map[string]any) error
 	Logs(id string) ([]LogEntry, error)
 	Asset(id, rel string) ([]byte, string, error)
+	// PageUI is a frontend page's definition, script and stylesheet, with its plugin's manifest.
+	PageUI(id, pageID string) (PageDef, []byte, []byte, Manifest, error)
 	UI() UIContributions
 	RPC(ctx context.Context, id, name, projectID string, args any) (any, error)
 	CheckModel(wire string) error

@@ -435,6 +435,7 @@ func (h *Handler) registerPlugins(mux *http.ServeMux) {
 			http.NotFound(w, r)
 		}
 	})
+	h.registerPluginUI(mux, need)
 	mux.HandleFunc("POST /api/plugins/inspect", admin(h.inspectPlugin))
 	mux.HandleFunc("POST /api/plugins/install", admin(h.installPlugin))
 	mux.HandleFunc("PUT /api/plugins/{id}/enabled", admin(h.setPluginEnabled))

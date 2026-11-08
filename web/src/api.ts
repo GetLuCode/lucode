@@ -558,6 +558,12 @@ export const pairPluginRunner = (runnerId: string) =>
   req<{ code: string; command: string }>('POST', `/api/plugins/runners/${encodeURIComponent(runnerId)}/pair`)
 export const callPluginRpc = (id: string, rpc: string, projectId: string | null, args: Record<string, unknown>) =>
   req<unknown>('POST', `${pluginPath(id)}/rpc/${encodeURIComponent(rpc)}`, { projectId, args })
+// A frontend page: the address its Worker loads from (it works once, for a minute), its stylesheet
+// and the rpcs it may call.
+export const getPluginPageUI = (id: string, pageId: string, projectId: string | null) =>
+  req<{ script: string; style: string; rpc: string[] }>('POST', `${pluginPath(id)}/pages/${encodeURIComponent(pageId)}/ui`, { projectId })
+// A Worker is loaded without headers: it cannot reach another instance through X-Lucode-Remote.
+export const pluginScriptUrl = (path: string) => (activeRemoteId ? null : `${BASE}${path}`)
 export const listPluginConversations = (id: string, projectId: string, source: string) =>
   req<PluginConversationRow[]>('GET', `${pluginPath(id)}/conversations?project=${encodeURIComponent(projectId)}${source ? `&source=${encodeURIComponent(source)}` : ''}`).then(l => l ?? [])
 // `page`: the chat lives on the plugin's page; otherwise a chat that is gone comes back in the Supervisor panel.
