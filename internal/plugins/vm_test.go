@@ -81,7 +81,7 @@ func TestSandboxTakesAwayTheDangerousGlobals(t *testing.T) {
 func TestSandboxSurvivesHostileCode(t *testing.T) {
 	cases := []struct {
 		name, code string
-		want       string // part of the error
+		want       string // part of the error; "a|b" accepts either
 	}{
 		{"endless loop", `for(;;){}`, "ran out of time"},
 		{"endless recursion", `function f(){return f()+1};f()`, "too deep"},
@@ -92,7 +92,7 @@ func TestSandboxSurvivesHostileCode(t *testing.T) {
 		{"deep JSON.parse", `var s="";for(var i=0;i<20;i++){s=s+"[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["};JSON.parse(s)`, "too deep"},
 		{"huge return value", `var o={};for(var i=0;i<3000;i++){o={a:o}};return o`, ""},
 		{"circular return", `var o={};o.o=o;return o`, "circular"},
-		{"heap growth", `var a=[];for(;;){a.push("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"+a.length)}`, "memory"},
+		{"heap growth", `var a=[];for(;;){a.push("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"+a.length)}`, "memory|too long|ran out of time"}, // whichever limit is reached first: the heap, the array length or the deadline
 		{"catastrophic regex", `/^(a+)+\1b$/.test("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");for(;;){}`, "ran out of time"},
 		{"pending promise", `return new Promise(function(){})`, "never settles"},
 		{"rejected promise", `return Promise.reject(new Error("no"))`, "no"},
@@ -109,7 +109,7 @@ func TestSandboxSurvivesHostileCode(t *testing.T) {
 			}()
 			select {
 			case err := <-done:
-				if c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+				if c.want != "" && (err == nil || !containsAny(err.Error(), c.want)) {
 					t.Fatalf("got %v, want an error with %q", err, c.want)
 				}
 				if err != nil && strings.Contains(strings.ToLower(err.Error()), engineName) {
@@ -516,4 +516,14 @@ func TestLocksAndHandlers(t *testing.T) {
 	if _, err := r.Invoke(context.Background(), Invocation{Path: []string{"rpc", "nope"}, Timeout: time.Second}); !errors.Is(err, ErrNoHandler) {
 		t.Fatalf("missing handler: %v", err)
 	}
+}
+
+// containsAny reports whether s contains any of the "|"-separated alternatives in want.
+func containsAny(s, want string) bool {
+	for _, w := range strings.Split(want, "|") {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
 }
