@@ -123,6 +123,7 @@ type Contributes struct {
 	Settings      []SettingDef      `json:"settings,omitempty"`
 	Blueprints    []BlueprintDef    `json:"blueprints,omitempty"`
 	FlowNodes     []FlowNodeDef     `json:"flowNodes,omitempty"`
+	Events        []EventDef        `json:"events,omitempty"`
 	ChatActions   []ActionDef       `json:"chatActions,omitempty"`
 	CardActions   []ActionDef       `json:"cardActions,omitempty"`
 }
@@ -225,6 +226,15 @@ type FlowNodeDef struct {
 	TimeoutSeconds int         `json:"timeoutSeconds,omitempty"`
 	Target         string      `json:"target,omitempty"`
 }
+
+// EventDef is an event the plugin fires with lucode.flows.emit. Declaring it only lets the
+// Plugin event trigger offer the name: an event that is not declared still fires.
+type EventDef struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+var eventNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$`)
 
 // ActionDef is a button that calls an rpc.
 type ActionDef struct {
@@ -628,6 +638,19 @@ func (m *Manifest) checkContributes() error {
 	}
 	if err := uniqueIDs("flow node", ids); err != nil {
 		return err
+	}
+	seenEvent := map[string]bool{}
+	for _, d := range c.Events {
+		if !eventNameRe.MatchString(d.Name) {
+			return fmt.Errorf("plugin.json: the event name %q is not valid: letters, digits, _ . : - and at most 64", d.Name)
+		}
+		if seenEvent[d.Name] {
+			return fmt.Errorf("plugin.json: the event %q is there twice", d.Name)
+		}
+		seenEvent[d.Name] = true
+		if !srv || !m.Targets.Server.Permissions.Flows {
+			return fmt.Errorf("plugin.json: event %q needs the flows permission of the server target", d.Name)
+		}
 	}
 	for _, list := range [][]ActionDef{c.ChatActions, c.CardActions} {
 		ids = nil

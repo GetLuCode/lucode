@@ -128,6 +128,8 @@ Rules the hub checks:
 
 - A page with `"placement": "settings"` is not a tab of the project: it is a pane of the plugin's page in Settings,
   named with its `label` (a place for tests and diagnostics). It takes no project, so `args.projectId` can be empty.
+- `events` lists what the plugin fires with `lucode.flows.emit`, as `{ "name": "message", "description": "..." }` (needs
+  `flows`). The Plugin event trigger offers these names for the plugin chosen; an event not listed still fires.
 - Models and pages need a server target. Settings too: they never reach a runner by themselves.
 - A page has `render` (an rpc that returns a view tree) or `ui` (a frontend script in the zip), not both. A page with
   `ui` lists in `rpc` every rpc its frontend calls, 64 at most; nothing else is reachable from it.

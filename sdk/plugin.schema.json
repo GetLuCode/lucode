@@ -171,6 +171,7 @@
         "settings": { "type": "array", "items": { "$ref": "#/definitions/setting" } },
         "blueprints": { "type": "array", "items": { "$ref": "#/definitions/blueprint" } },
         "flowNodes": { "type": "array", "items": { "$ref": "#/definitions/flowNode" } },
+        "events": { "type": "array", "items": { "$ref": "#/definitions/event" } },
         "chatActions": { "type": "array", "items": { "$ref": "#/definitions/action" } },
         "cardActions": { "type": "array", "items": { "$ref": "#/definitions/action" } }
       }
@@ -257,6 +258,15 @@
         "name": { "type": "string", "pattern": "\\S" },
         "description": { "type": "string" },
         "file": { "allOf": [{ "$ref": "#/definitions/packagePath" }, { "pattern": "^blueprints/.*\\.json$" }] }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$", "description": "What lucode.flows.emit is called with." },
+        "description": { "type": "string" }
       }
     },
     "flowNode": {

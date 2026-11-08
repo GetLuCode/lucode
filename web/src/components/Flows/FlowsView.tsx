@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { fromPromise } from 'xstate'
 import { useMachine } from '@xstate/react'
@@ -668,6 +668,19 @@ function NodeForm({ type, config, disabled, pluginOff, agents, lists, nodeId, st
   onDecided(): void
 }) {
   const deciding = type.type === 'control.human_approval' && step?.status === 'waiting'
+  const installed = usePlugins(s => s.installed)
+  // The Plugin event trigger offers the plugins that can fire events and, for the one chosen, the
+  // events it declares. Both stay free text: an event a plugin does not declare still fires.
+  const suggest = (field: string): Suggestion[] => {
+    if (type.type !== 'trigger.plugin_event') return []
+    const emitters = installed.filter(p => p.enabled && p.manifest.targets?.server?.permissions?.flows === true)
+    if (field === 'plugin') return emitters.map(p => ({ value: p.manifest.id, label: p.manifest.name }))
+    if (field === 'event') {
+      const chosen = emitters.find(p => p.manifest.id === String(config.plugin ?? ''))
+      return (chosen?.manifest.contributes?.events ?? []).map(e => ({ value: e.name, label: e.description }))
+    }
+    return []
+  }
   return (
     <div className="flows-form" key={nodeId}>
       <h3 className="flows-form__title">{type.title}</h3>
@@ -688,7 +701,7 @@ function NodeForm({ type, config, disabled, pluginOff, agents, lists, nodeId, st
           ) : (
             <>
               <span>{f.label}{f.required ? ' *' : ''}</span>
-              <FieldInput field={f} value={config[f.name]} disabled={disabled} agents={agents} lists={lists} onChange={v => onChange(f.name, v)} />
+              <FieldInput field={f} value={config[f.name]} disabled={disabled} agents={agents} lists={lists} suggestions={suggest(f.name)} onChange={v => onChange(f.name, v)} />
             </>
           )}
           {f.help && <small>{f.help}</small>}
@@ -739,14 +752,18 @@ function NodePins({ type, config }: { type: FlowNodeType; config: Record<string,
   )
 }
 
-function FieldInput({ field, value, disabled, agents, lists, onChange }: {
+interface Suggestion { value: string; label?: string }
+
+function FieldInput({ field, value, disabled, agents, lists, suggestions, onChange }: {
   field: FlowNodeField
   value: unknown
   disabled: boolean
   agents: Agent[]
   lists: KanbanList[]
+  suggestions?: Suggestion[]
   onChange(v: unknown): void
 }) {
+  const listId = useId()
   const text = value === undefined || value === null ? '' : String(value)
   switch (field.kind) {
     case 'select':
@@ -783,10 +800,17 @@ function FieldInput({ field, value, disabled, agents, lists, onChange }: {
       return <textarea className="input flows-field__text flows-field__code" rows={3} spellCheck={false} value={text} disabled={disabled} onChange={e => onChange(e.target.value)} />
     default:
       return (
-        <input
-          className={`input${field.kind === 'expr' ? ' flows-field__code' : ''}`} value={text} disabled={disabled}
-          spellCheck={field.kind !== 'expr'} onChange={e => onChange(e.target.value)}
-        />
+        <>
+          <input
+            className={`input${field.kind === 'expr' ? ' flows-field__code' : ''}`} value={text} disabled={disabled}
+            spellCheck={field.kind !== 'expr'} list={suggestions?.length ? listId : undefined} onChange={e => onChange(e.target.value)}
+          />
+          {!!suggestions?.length && (
+            <datalist id={listId}>
+              {suggestions.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </datalist>
+          )}
+        </>
       )
   }
 }

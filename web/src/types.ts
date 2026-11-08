@@ -473,7 +473,7 @@ export interface PluginManifest {
   homepage?: string
   icon?: string
   targets?: PluginTargetsDecl
-  contributes?: { settings?: PluginSettingDef[] }
+  contributes?: { settings?: PluginSettingDef[]; events?: { name: string; description?: string }[] }
 }
 export interface InstalledPlugin { manifest: PluginManifest; status: string; enabled: boolean; granted?: string[]; error?: string; source?: string; targets?: PluginTargetsDecl }
 export interface PluginInspection { token: string; manifest: PluginManifest; permissions: PluginPermission[]; upgradeFrom?: string; newPermissions?: unknown; warnings?: string[] }
