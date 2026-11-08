@@ -200,8 +200,13 @@
 
 .flows-form__title { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
 .flows-form__desc { margin: 0 0 12px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
-.flows-form__id { margin: 12px 0 0; color: var(--text-muted); font-size: 11px; }
-.flows-form__id code { color: var(--text-dim); }
+.flows-pins { margin: 12px 0 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.flows-pins ul { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.flows-pins li { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
+.flows-pins li small { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+.flows-pins > small { color: var(--text-muted); font-size: 11px; }
+.flows-pin__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.flows-step__label { display: block; margin-top: 8px; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 
 .flows-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; font-size: 12px; }
 .flows-field > span { color: var(--text-dim); }

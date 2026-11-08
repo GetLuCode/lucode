@@ -41,8 +41,8 @@ func (f *fakePlugins) RunNode(_ context.Context, c PluginCall) (string, map[stri
 
 func usePlugins(t *testing.T) *fakePlugins {
 	t.Helper()
-	f := &fakePlugins{port: PortNext, output: map[string]any{"answer": "42"}, nodes: []NodeType{{
-		Type: testNode, Title: "Ask", Category: CategoryAction, Ports: []string{PortNext, "other", PortFailed},
+	f := &fakePlugins{port: "next", output: map[string]any{"answer": "42"}, nodes: []NodeType{{
+		Type: testNode, Title: "Ask", Category: CategoryAction, Ports: []string{"next", "other", PortFailed},
 		Fields: []Field{
 			{Name: "prompt", Label: "Prompt", Kind: FieldTemplate, Required: true},
 			{Name: "cond", Label: "Cond", Kind: FieldExpr},
@@ -60,9 +60,10 @@ func pluginGraph(extra ...Node) Graph {
 		Nodes: []Node{
 			{ID: "t", Type: TypeCardMoved},
 			{ID: "p", Type: testNode, Config: cfg("prompt", "say {{card.title}}", "cond", `card.title`)},
-			{ID: "c", Type: TypeComment, Config: cfg("text", "answer {{nodes.p.answer}}")},
+			{ID: "j", Type: TypeGetJSONProp, Config: cfg("template", "answer {json.answer}")},
+			{ID: "c", Type: TypeComment, Config: cfg("text", "{{input}}")},
 		},
-		Edges: []Edge{{From: "t", Port: PortNext, To: "p"}, {From: "p", Port: PortNext, To: "c"}},
+		Edges: []Edge{{From: "t", Port: PortEvent, To: "p"}, {From: "p", Port: "next", To: "j"}, {From: "j", Port: PortValue, To: "c"}},
 	}
 	g.Nodes = append(g.Nodes, extra...)
 	return g
@@ -103,7 +104,7 @@ func TestPluginNodeDoesNotHoldTheEngine(t *testing.T) {
 	slow := h.publish(pluginGraph())
 	quick := h.publish(Graph{
 		Nodes: []Node{{ID: "t", Type: TypeCardMoved}, {ID: "c", Type: TypeComment, Config: cfg("text", "quick")}},
-		Edges: []Edge{{From: "t", Port: PortNext, To: "c"}},
+		Edges: []Edge{{From: "t", Port: PortEvent, To: "c"}},
 	})
 	done := make(chan struct{})
 	go func() {
@@ -138,7 +139,7 @@ func TestPluginOutputCannotWakeAnotherStep(t *testing.T) {
 			{ID: "a", Type: TypeApproval, Config: cfg("question", "ok?")},
 			{ID: "c", Type: TypeComment, Config: cfg("text", "approved")},
 		},
-		Edges: []Edge{{From: "t", Port: PortNext, To: "a"}, {From: "a", Port: PortApproved, To: "c"}},
+		Edges: []Edge{{From: "t", Port: PortEvent, To: "a"}, {From: "a", Port: PortApproved, To: "c"}},
 	})
 	if _, err := h.e.StartManual(approval, ""); err != nil {
 		t.Fatal(err)
@@ -178,7 +179,7 @@ func TestPluginNodeFailures(t *testing.T) {
 			h := newHarness(t)
 			g := pluginGraph()
 			if c.failed {
-				g.Nodes = append(g.Nodes, Node{ID: "f", Type: TypeComment, Config: cfg("text", "failed: {{nodes.p.error}}")})
+				g.Nodes = append(g.Nodes, Node{ID: "f", Type: TypeComment, Config: cfg("text", "failed: {{input}}")})
 				g.Edges = append(g.Edges, Edge{From: "p", Port: PortFailed, To: "f"})
 			}
 			f := h.publish(g)
@@ -208,7 +209,7 @@ func TestPluginNodeSurvivesARestart(t *testing.T) {
 	defer close(p.hold)
 	h := newHarness(t)
 	g := pluginGraph()
-	g.Nodes = append(g.Nodes, Node{ID: "f", Type: TypeComment, Config: cfg("text", "failed: {{nodes.p.error}}")})
+	g.Nodes = append(g.Nodes, Node{ID: "f", Type: TypeComment, Config: cfg("text", "failed: {{input}}")})
 	g.Edges = append(g.Edges, Edge{From: "p", Port: PortFailed, To: "f"})
 	f := h.publish(g)
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
@@ -256,7 +257,7 @@ func TestPluginNodesCountAsTurns(t *testing.T) {
 			{ID: "p", Type: testNode, Config: cfg("prompt", "x")},
 			{ID: "r", Type: TypeRetry, Config: cfg("max", float64(50))},
 		},
-		Edges: []Edge{{From: "t", Port: PortNext, To: "p"}, {From: "p", Port: PortNext, To: "r"}, {From: "r", Port: PortAgain, To: "p"}},
+		Edges: []Edge{{From: "t", Port: PortEvent, To: "p"}, {From: "p", Port: "next", To: "r"}, {From: "r", Port: PortAgain, To: "p"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	for i := 0; i < 30; i++ {
@@ -280,7 +281,7 @@ func TestPluginNodesInTheValidator(t *testing.T) {
 				{ID: "p", Type: testNode, Config: cfg("prompt", "x")},
 				{ID: "d", Type: TypeToolDecision, Config: cfg("decision", ToolAsk)},
 			},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "p"}, {From: "p", Port: PortNext, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "p"}, {From: "p", Port: "next", To: "d"}},
 		}, false, "cannot be used with Tool requested"},
 		{"its trigger neither", Graph{
 			Nodes: []Node{
@@ -288,7 +289,7 @@ func TestPluginNodesInTheValidator(t *testing.T) {
 				{ID: "e", Type: TypePluginEvent, Config: cfg("plugin", "acme.hello", "event", "x")},
 				{ID: "d", Type: TypeToolDecision, Config: cfg("decision", ToolAsk)},
 			},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "d"}},
 		}, false, "cannot share a flow"},
 		{"a node of a plugin that is gone", pluginGraph(), true, "the plugin acme.hello, which is not installed"},
 		{"a trigger of a plugin that is gone", Graph{
@@ -300,15 +301,15 @@ func TestPluginNodesInTheValidator(t *testing.T) {
 				{ID: "p", Type: testNode, Config: cfg("prompt", "x")},
 				{ID: "c", Type: TypeComment, Config: cfg("text", "y")},
 			},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "p"}, {From: "p", Port: "nope", To: "c"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "p"}, {From: "p", Port: "nope", To: "c"}},
 		}, false, `has no output "nope"`},
 		{"its required field", Graph{
 			Nodes: []Node{{ID: "t", Type: TypeCardMoved}, {ID: "p", Type: testNode}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "p"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "p"}},
 		}, false, "Prompt is required"},
 		{"a bad template in its field", Graph{
 			Nodes: []Node{{ID: "t", Type: TypeCardMoved}, {ID: "p", Type: testNode, Config: cfg("prompt", "{{ card. }}")}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "p"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "p"}},
 		}, false, "Prompt"},
 	}
 	for _, c := range cases {
@@ -354,7 +355,7 @@ func TestPluginEventTrigger(t *testing.T) {
 				{ID: "e", Type: TypePluginEvent, Config: cfg("plugin", plugin, "event", event)},
 				{ID: "c", Type: TypeComment, Config: cfg("text", "got {{event.payload.x}}")},
 			},
-			Edges: []Edge{{From: "e", Port: PortNext, To: "c"}},
+			Edges: []Edge{{From: "e", Port: PortEvent, To: "c"}},
 		}
 	}
 	match := h.publish(graph("acme.hello", "done"))

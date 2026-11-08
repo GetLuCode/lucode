@@ -173,7 +173,8 @@ func flowCatalogTool() (string, error) {
 		bps = append(bps, blueprint{b.Key, b.Name, b.Description})
 	}
 	body, err := json.MarshalIndent(map[string]any{
-		"expressions": "If, Switch and {{templates}} are CEL over card, event, run and nodes.<id>.<output field>.",
+		"values":      "Values travel on the edges: a node gives its answer through the output it takes (outputs lists each one and its type: text, json or any), and that answer reaches the input of the connected nodes and starts them. There is no next output. A JSON answer is read with a data.get_json_prop node, whose template is {json.prop}; it needs a json or any output.",
+		"expressions": "If, Switch and {{templates}} are CEL over card, event, run and input, the value that reached the node as text. Other nodes' answers are not variables.",
 		"node_types":  flows.NodeTypes(),
 		"blueprints":  bps,
 	}, "", " ")

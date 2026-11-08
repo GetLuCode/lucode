@@ -150,7 +150,7 @@ function renderMain(args) {
 function digest(input) {
   const d = readBoard(staleDays(input.config && input.config.stale_days));
   keepSnapshot(input.projectId || lucode.context.projectId, d);
-  return { port: "next", output: Object.assign({ summary: sentence(d) }, d) };
+  return { port: "digest", output: Object.assign({ summary: sentence(d) }, d) };
 }
 
 module.exports = {

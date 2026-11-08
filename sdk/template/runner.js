@@ -14,7 +14,8 @@ function read_file(input) {
   if (!sdk.fs.exists(path)) throw new Error("There is no file " + path + " in this workspace.");
   const text = sdk.fs.read(path);
   sdk.log.info("read", path, text.length, "characters");
-  return { port: "next", output: { path, text: text.slice(0, MAX_CHARS) } };
+  // the output is the answer the next nodes receive: here, the text itself
+  return { port: "text", output: text.slice(0, MAX_CHARS) };
 }
 
 module.exports = {

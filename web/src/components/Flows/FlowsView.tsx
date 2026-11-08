@@ -14,7 +14,7 @@ import type { Agent, Flow, FlowBlueprint, FlowGraph, FlowNodeField, FlowNodeType
 import type { FlowCanvasHandle } from './FlowCanvas'
 import { PushDevice } from './PushDevice'
 import { editorMachine } from './editorMachine'
-import { STEP_COLORS, nodeStatuses, parseFlowGraph, unknownNodeTypes } from './flowGraph'
+import { PIN_COLORS, STEP_COLORS, inputPin, nodeStatuses, outputPins, parseFlowGraph, portLabels, unknownNodeTypes, valueText } from './flowGraph'
 import './Flows.css'
 
 // litegraph is half a megabyte: it only loads for whoever opens this tab.
@@ -22,7 +22,7 @@ const FlowCanvas = lazy(() => import('./FlowCanvas').then(m => ({ default: m.Flo
 
 type Selected = { id: string; type: string; config: Record<string, unknown> } | null
 
-const CATEGORIES: [string, string][] = [['trigger', 'Triggers'], ['control', 'Control'], ['action', 'Actions']]
+const CATEGORIES: [string, string][] = [['trigger', 'Triggers'], ['control', 'Control'], ['data', 'Data'], ['action', 'Actions']]
 
 export function FlowsView() {
   const projectId = useStore(s => s.activeProjectId)
@@ -692,21 +692,49 @@ function NodeForm({ type, config, disabled, pluginOff, agents, lists, nodeId, st
             </>
           )}
           {f.help && <small>{f.help}</small>}
-          {(f.kind === 'expr' || f.kind === 'template') && !f.help && <small>{f.kind === 'template' ? 'Insert values with {{card.title}}.' : 'Reads card, event, run and nodes.'}</small>}
+          {(f.kind === 'expr' || f.kind === 'template') && !f.help && <small>{f.kind === 'template' ? 'Insert values with {{input}} or {{card.title}}.' : 'Reads input, card, event and run.'}</small>}
         </label>
       ))}
       {type.type === 'action.ai_evaluate' && !disabled && <AIKeyField />}
-      <p className="flows-form__id">Other nodes read its output as <code>nodes.{nodeId}</code></p>
+      <NodePins type={type} config={config} />
       {step && (
         <div className="flows-step">
           <RunStatus status={step.status} />
           {step.port && step.port !== '*' && <span> through “{step.port}”</span>}
           {step.error && <p className="flows-run__error">{step.error}</p>}
+          {step.input !== undefined && step.input !== null && (
+            <><span className="flows-step__label">Received</span><pre>{valueText(step.input)}</pre></>
+          )}
           {deciding ? (
             <DecisionForm seq={step.seq} question={String((step.output as { question?: unknown })?.question ?? '')} onDecided={onDecided} />
-          ) : !!step.output && step.output !== '{}' && <pre>{JSON.stringify(step.output, null, 2)}</pre>}
+          ) : stepValue(step) !== undefined && (
+            <><span className="flows-step__label">Gave</span><pre>{valueText(stepValue(step))}</pre></>
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+// What a step gave through its output: the value the next nodes received.
+function stepValue(step: FlowStep): unknown {
+  const out = step.output as { value?: unknown } | null
+  return out && typeof out === 'object' && 'value' in out ? out.value : undefined
+}
+
+// The node's input and outputs, with what each carries: values travel on the wires.
+function NodePins({ type, config }: { type: FlowNodeType; config: Record<string, unknown> }) {
+  const input = inputPin(type)
+  const outputs = outputPins(type)
+  const labels = portLabels(type, config)
+  const pin = (name: string, kind: string, label?: string) => (
+    <li key={name}><span className="flows-pin__dot" style={{ background: PIN_COLORS[kind] ?? PIN_COLORS.any }} />{label && label !== 'unused' ? `${label} (${name})` : name}<small>{kind}</small></li>
+  )
+  return (
+    <div className="flows-pins">
+      {input && <div><span className="flows-step__label">Input</span><ul>{pin(input.name, input.type)}</ul></div>}
+      {outputs.length > 0 && <div><span className="flows-step__label">Outputs</span><ul>{outputs.map(o => pin(o.name, o.type, labels.get(o.name)))}</ul></div>}
+      <small>An output carries the node’s answer to the nodes wired to it, and starts them. Read a JSON answer with Get JSON prop.</small>
     </div>
   )
 }

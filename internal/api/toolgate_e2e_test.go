@@ -240,11 +240,11 @@ func TestToolFlowWithTheOptionalAINode(t *testing.T) {
 				"instruction": "Is it safe?", "input": "{{event.tool_name}} {{event.tool_input_text}}",
 				"outcome1": "safe", "outcome2": "ask", "model": "claude-opus-5-5", "effort": "low",
 			}},
-			{ID: "ok", Type: flows.TypeToolDecision, Config: map[string]any{"decision": "allow", "reason": "{{nodes.ai.reason}}"}},
+			{ID: "ok", Type: flows.TypeToolDecision, Config: map[string]any{"decision": "allow", "reason": "{{input}}"}},
 			{ID: "person", Type: flows.TypeToolDecision, Config: map[string]any{"decision": "ask"}},
 		},
 		Edges: []flows.Edge{
-			{From: "t", Port: "next", To: "ai"}, {From: "ai", Port: "outcome1", To: "ok"},
+			{From: "t", Port: flows.PortEvent, To: "ai"}, {From: "ai", Port: "outcome1", To: "ok"},
 			{From: "ai", Port: "outcome2", To: "person"}, {From: "ai", Port: "failed", To: "person"},
 		},
 	})
@@ -296,7 +296,7 @@ func TestToolFlowSeesTheAgent(t *testing.T) {
 			{ID: "yes", Type: flows.TypeToolDecision, Config: map[string]any{"decision": "allow", "reason": "for {{event.agent}}"}},
 			{ID: "no", Type: flows.TypeToolDecision, Config: map[string]any{"decision": "deny", "reason": "not for [{{event.agent}}]"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: "next", To: "if"}, {From: "if", Port: "true", To: "yes"}, {From: "if", Port: "false", To: "no"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "if"}, {From: "if", Port: "true", To: "yes"}, {From: "if", Port: "false", To: "no"}},
 	})
 
 	for _, c := range []struct {

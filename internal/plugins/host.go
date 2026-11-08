@@ -202,7 +202,7 @@ type NodeCall struct {
 	Config    map[string]any
 	Card      map[string]any
 	Event     map[string]any
-	Nodes     map[string]any
+	Input     any // the value that reached the node
 	Run       map[string]any
 	ProjectID string
 	CardID    string

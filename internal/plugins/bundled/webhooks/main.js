@@ -65,7 +65,7 @@ function send(input) {
       : "it answered " + res.status;
     throw new Error(service.name + " did not take the message: " + why + ".");
   }
-  return { port: "next", output: { service: service.name, status: res.status } };
+  return { port: "sent", output: { service: service.name, status: res.status } };
 }
 
 module.exports = {

@@ -1050,9 +1050,10 @@ func publishPluginFlow(t *testing.T, r *pluginRig, q string, extra ...flows.Node
 		Nodes: []flows.Node{
 			{ID: "t", Type: flows.TypeCardMoved, Config: map[string]any{"to_kind": "review"}},
 			{ID: "p", Type: "plugin.acme.hello.ask", Config: map[string]any{"q": q}},
-			{ID: "c", Type: flows.TypeComment, Config: map[string]any{"text": "said {{nodes.p.answer}}"}},
+			{ID: "j", Type: flows.TypeGetJSONProp, Config: map[string]any{"template": "said {json.answer}"}},
+			{ID: "c", Type: flows.TypeComment, Config: map[string]any{"text": "{{input}}"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: "next", To: "p"}, {From: "p", Port: "next", To: "c"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "p"}, {From: "p", Port: "next", To: "j"}, {From: "j", Port: flows.PortValue, To: "c"}},
 	}
 	return publishFlow(t, r.h, r.pid, g)
 }
@@ -1130,7 +1131,7 @@ func TestPluginEventsFireFlows(t *testing.T) {
 			{ID: "e", Type: flows.TypePluginEvent, Config: map[string]any{"plugin": "acme.hello", "event": "done"}},
 			{ID: "m", Type: flows.TypeCreateTask, Config: map[string]any{"title": "made from {{event.payload.x}}"}},
 		},
-		Edges: []flows.Edge{{From: "e", Port: "next", To: "m"}},
+		Edges: []flows.Edge{{From: "e", Port: flows.PortEvent, To: "m"}},
 	})
 	if code, _, raw := r.rpc("acme.hello", "emit", map[string]any{"x": "y"}); code != 200 {
 		t.Fatalf("%d %s", code, raw)

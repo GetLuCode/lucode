@@ -469,7 +469,7 @@ function askNode(input) {
   const run = input.run && input.run.id ? input.run.id : String(now());
   const sessID = "flow:" + run + ":" + now();
   try {
-    return { port: "next", output: { answer: ask(sessID, input.config.question, null, { keep: false, closeAfter: true }) } };
+    return { port: "answer", output: ask(sessID, input.config.question, null, { keep: false, closeAfter: true }) };
   } catch (e) {
     throw publicError(e);
   }

@@ -365,8 +365,8 @@ declare namespace Lucode {
     config: { [field: string]: Json };
     card: JsonObject | null;
     event: JsonObject | null;
-    /** Outputs of the earlier nodes of the run, by node id. */
-    nodes: { [nodeId: string]: Json };
+    /** The value that reached this node through its input: what the node before it gave. */
+    input: Json;
     run: JsonObject;
     projectId: string;
   }

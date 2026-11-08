@@ -14,7 +14,7 @@ func pushGraph(extra ...Node) Graph {
 			{ID: "t", Type: TypeManual},
 			{ID: "p", Type: TypePushNotification, Config: cfg("title", "Hello {{run.depth}}", "body", "Run {{run.flow_id}}")},
 		},
-		Edges: []Edge{{"t", PortNext, "p"}},
+		Edges: []Edge{{"t", PortEvent, "p"}},
 	}
 	g.Nodes = append(g.Nodes, extra...)
 	return g
@@ -23,8 +23,10 @@ func pushGraph(extra ...Node) Graph {
 func TestPushRendersItsTextAndContinues(t *testing.T) {
 	h := newHarness(t)
 	h.host.pushRes = PushResult{Sent: 2, Failed: 1}
-	g := pushGraph(Node{ID: "c", Type: TypeComment, Config: cfg("text", "sent {{nodes.p.sent}}, failed {{nodes.p.failed}}")})
-	g.Edges = append(g.Edges, Edge{"p", PortNext, "c"})
+	g := pushGraph(
+		Node{ID: "j", Type: TypeGetJSONProp, Config: cfg("template", "sent {json.sent}, failed {json.failed}")},
+		Node{ID: "c", Type: TypeComment, Config: cfg("text", "{{input}}")})
+	g.Edges = append(g.Edges, Edge{"p", PortResult, "j"}, Edge{"j", PortValue, "c"})
 	f := h.publish(g)
 	if _, err := h.e.StartManual(f, "c1"); err != nil {
 		t.Fatal(err)
@@ -76,7 +78,7 @@ func TestPushFailureFailsTheRunWhenNothingHandlesIt(t *testing.T) {
 func TestPushFailureTakesTheFailedOutput(t *testing.T) {
 	h := newHarness(t)
 	h.host.pushErr = errors.New("nobody home")
-	g := pushGraph(Node{ID: "c", Type: TypeComment, Config: cfg("text", "lost: {{nodes.p.error}}")})
+	g := pushGraph(Node{ID: "c", Type: TypeComment, Config: cfg("text", "lost: {{input}}")})
 	g.Edges = append(g.Edges, Edge{"p", PortFailed, "c"})
 	f := h.publish(g)
 	if _, err := h.e.StartManual(f, "c1"); err != nil {
@@ -95,7 +97,7 @@ func TestPushWithEmptyTextDoesNotSend(t *testing.T) {
 	h := newHarness(t)
 	f := h.publish(Graph{
 		Nodes: []Node{{ID: "t", Type: TypeManual}, {ID: "p", Type: TypePushNotification, Config: cfg("title", "x", "body", `{{""}}`)}},
-		Edges: []Edge{{"t", PortNext, "p"}},
+		Edges: []Edge{{"t", PortEvent, "p"}},
 	})
 	if _, err := h.e.StartManual(f, ""); err != nil {
 		t.Fatal(err)

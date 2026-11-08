@@ -32,7 +32,7 @@ type PluginCall struct {
 	Config    map[string]any
 	Card      map[string]any
 	Event     map[string]any
-	Nodes     map[string]any
+	Input     any // the value that reached the node
 	Run       map[string]any
 	ProjectID string
 	CardID    string
@@ -142,7 +142,7 @@ func (e *Engine) startPluginNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.
 	}
 	call := PluginCall{
 		Type: node.Type, Config: config, Card: asMap(scope["card"]), Event: asMap(scope["event"]),
-		Nodes: asMap(scope["nodes"]), Run: asMap(scope["run"]), ProjectID: run.ProjectID, CardID: run.CardID,
+		Input: stepInput(s), Run: asMap(scope["run"]), ProjectID: run.ProjectID, CardID: run.CardID,
 		FlowID: run.FlowID, RunID: run.ID, Depth: run.Depth,
 	}
 	e.startCall(run, key, func(ctx context.Context) (string, map[string]any, error) {

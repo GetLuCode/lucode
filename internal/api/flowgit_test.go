@@ -238,7 +238,7 @@ func TestAUserCanChangeWhereAFinishedTaskGoes(t *testing.T) {
 			{ID: "t", Type: flows.TypeTaskDone},
 			{ID: "m", Type: flows.TypeMoveCard, Config: map[string]any{"to_kind": "backlog"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: "next", To: "m"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "m"}},
 	})
 	dev := addMember(t, h, pid, lists, "Dev", "", "inprogress")
 	finishTask(t, h, dev.sess.ID)
@@ -291,7 +291,7 @@ func TestReviewGateBlueprintMergesAfterApproval(t *testing.T) {
 	settle(h)
 	settle(h)
 	pending := approvalsOf(t, h, pid)
-	if len(pending) != 1 || !strings.Contains(pending[0].Question, "Risk low on Add b") {
+	if len(pending) != 1 || !strings.Contains(pending[0].Question, "Low risk on Add b: fake answer") {
 		t.Fatalf("approvals: %+v", pending)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "b.txt")); err == nil {

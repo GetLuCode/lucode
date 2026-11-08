@@ -445,11 +445,14 @@ export interface FlowNode { id: string; type: string; x: number; y: number; conf
 export interface FlowEdge { from: string; port: string; to: string }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[] }
 export interface FlowNodeField { name: string; label: string; kind: 'text' | 'template' | 'expr' | 'number' | 'select' | 'agent' | 'list' | 'bool' | 'lines'; required?: boolean; options?: string[]; default?: unknown; help?: string; min?: number; port_label?: string }
-export interface FlowNodeType { type: string; title: string; category: 'trigger' | 'control' | 'action'; description: string; ports: string[] | null; fields: FlowNodeField[] | null; plugin_id?: string; plugin_name?: string; icon?: string; target?: PluginTarget; plugin_disabled?: boolean }
+// What a pin carries: a node's answer is text unless it says JSON; "any" passes on whatever arrives.
+export type FlowPinType = 'text' | 'json' | 'any'
+export interface FlowPin { name: string; type: FlowPinType | string }
+export interface FlowNodeType { type: string; title: string; category: 'trigger' | 'control' | 'action' | 'data'; description: string; ports: string[] | null; outputs?: FlowPin[] | null; input?: FlowPin | null; fields: FlowNodeField[] | null; plugin_id?: string; plugin_name?: string; icon?: string; target?: PluginTarget; plugin_disabled?: boolean }
 export interface Flow { id: string; project_id: string; name: string; draft: FlowGraph; published_version: number; enabled: boolean; created_at: string; updated_at: string; draft_agent?: string; plugin_id?: string; plugin_blueprint?: string; locked?: boolean; forked_from?: string }
 export interface FlowProblem { node_id?: string; message: string }
 export interface FlowRun { id: string; flow_id: string; version: number; project_id: string; card_id: string; event_id: number; event: unknown; depth: number; status: string; error: string; started_at: string; finished_at: string }
-export interface FlowStep { seq: number; run_id: string; node_id: string; from_node: string; status: string; port: string; output: unknown; error: string; wait_key: string; wake_at: string; started_at: string; finished_at: string }
+export interface FlowStep { seq: number; run_id: string; node_id: string; from_node: string; input?: unknown; status: string; port: string; output: unknown; error: string; wait_key: string; wake_at: string; started_at: string; finished_at: string }
 export interface ActiveFlowRun { run: FlowRun; flow_name: string; open: string[]; open_names: string[]; card_title: string }
 export interface FlowApproval { seq: number; run_id: string; flow_id: string; flow_name: string; node_id: string; card_id: string; card_title: string; question: string; since: string }
 export interface FlowBlueprint { key: string; name: string; description: string; seeded: boolean; plugin_id?: string; plugin_name?: string }

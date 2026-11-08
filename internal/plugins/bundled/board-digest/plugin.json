@@ -33,12 +33,12 @@
       {
         "id": "digest",
         "label": "Board digest",
-        "description": "Sums up the board. Reads as nodes.<id>.summary, .open, .in_progress, .finished_7d, .stale, .stale_tasks, .columns.",
+        "description": "Sums up the board. \"digest\" gives it as JSON: summary, open, in_progress, finished_7d, stale, stale_tasks, columns. Read one with Get JSON prop.",
         "icon": "assets/icon.svg",
         "fields": [
           { "name": "stale_days", "label": "Stale after (days)", "kind": "number", "min": 1, "help": "Empty: the plugin's setting." }
         ],
-        "ports": ["next"],
+        "ports": ["digest"],
         "timeoutSeconds": 60
       }
     ],

@@ -125,10 +125,10 @@ func TestFlowRunsAgentOnARunnerEndToEnd(t *testing.T) {
 		Nodes: []flows.Node{
 			{ID: "t", Type: flows.TypeCardMoved, Config: map[string]any{"to_kind": "review"}},
 			{ID: "a", Type: flows.TypeRunAgent, Config: map[string]any{"agent": "dev", "prompt": "Check {{card.title}}"}},
-			{ID: "ok", Type: flows.TypeComment, Config: map[string]any{"text": "turn ended on {{nodes.a.session_id}}"}},
+			{ID: "ok", Type: flows.TypeComment, Config: map[string]any{"text": "the agent said: {{input}}"}},
 			{ID: "bad", Type: flows.TypeComment, Config: map[string]any{"text": "turn failed"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: "next", To: "a"}, {From: "a", Port: "next", To: "ok"}, {From: "a", Port: "failed", To: "bad"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "a"}, {From: "a", Port: flows.PortReply, To: "ok"}, {From: "a", Port: "failed", To: "bad"}},
 	})
 	f, err := dbpkg.InsertFlow(hubDB, dbpkg.Flow{ProjectID: proj.ID, Name: "e2e", Draft: raw})
 	if err != nil {
@@ -181,7 +181,7 @@ func TestFlowRunsAgentOnARunnerEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	comments, _ := dbpkg.ListCardComments(hubDB, card.ID)
-	want := "turn ended on " + sess.ID
+	want := "the agent said: ok" // the reply of the fake claude
 	found := false
 	for _, c := range comments {
 		found = found || c.Body == want

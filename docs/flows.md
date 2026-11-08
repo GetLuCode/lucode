@@ -25,6 +25,36 @@ como debe comportarse y como reconocer cada fallo. Como probar y como anadir nod
 3. Lo lento (git, API, agente) corre aparte y vuelve como evento. Una espera queda en la base de
    datos, asi que un reinicio del hub la retoma.
 
+### Los valores viajan por los cables
+
+Como en un grafo de nodos tipo ComfyUI: cada nodo da su respuesta por la salida que toma, y esa
+respuesta llega a la entrada de los nodos conectados y los arranca. No hay salida `next`.
+
+| Pieza | Como funciona |
+|---|---|
+| Entrada | Todo nodo salvo un disparador tiene una (`input`; Get JSON prop la llama `json`). En sus campos se lee como `{{input}}`, siempre como texto. |
+| Salida | Cada una dice que lleva: `text`, `json` o `any` (pasa lo que le llego, como If, Delay o Move card). |
+| Disparador | Da el evento como JSON por su salida `event`. |
+| JSON | No se abre como variables. Para leer una propiedad se usa **Get JSON prop**: `{json.prop}`, `{json.a.b}`, `{json.files.0}`. Solo, conserva el tipo; mezclado con texto da texto. |
+| Join | Espera a todos los caminos conectados y da una lista JSON con lo que trajo cada uno, en el orden de los cables. |
+
+Siguen disponibles en plantillas y condiciones `card`, `event` y `run`. `nodes.<id>` ya no existe:
+publicar avisa con `nodes.<id> is gone: ...`.
+
+Que da cada nodo: Run agent `reply` (el ultimo mensaje del agente), AI evaluate la razon del
+modelo en cada respuesta, Git status y Merge JSON, Human approval la nota de la persona, Comment y
+Notify supervisor el texto, Create task el id de la tarjeta, Push notification `result` en JSON, y
+`failed` siempre el error como texto.
+
+Publicar rechaza conectar una salida `text` a una entrada `json` (`... needs JSON, and the "text"
+output of ... gives text`). Una salida `any` se comprueba al ejecutar: si no es JSON, Get JSON prop
+toma `failed`.
+
+**Grafos viejos.** Al arrancar, el hub reescribe borradores y versiones guardados con `next`: el
+cable sale de la primera salida del nodo, y `{{nodes.X.error}}` (o `reason`, `text`...) pasa a
+`{{input}}` cuando es justo lo que llega por ese cable. Lo demas se queda y publicar dice que
+cambiar. El editor tambien lee `next` como la primera salida.
+
 ### Borrador y version publicada
 
 - El editor guarda solo el **borrador**. Lo que se ejecuta es siempre la **version publicada**.
@@ -163,8 +193,8 @@ lucode este cerrado. El blueprint "Push when a task needs review" es un ejemplo 
 - **Solo funciona en HTTPS o localhost, y con el build.** Lo exige el navegador; en
   `http://192.168.x.x` el boton se sustituye por un aviso. Tampoco funciona en el servidor de desarrollo
   (`:5173`), donde no se registra el service worker. En iPhone hay que anadir lucode a la pantalla de inicio.
-- **Resultado.** Con al menos un dispositivo alcanzado sigue por `next`, y `nodes.<id>.sent`, `.failed` y
-  `.removed` cuentan el resto. Sin ninguno sigue por `failed`.
+- **Resultado.** Con al menos un dispositivo alcanzado sigue por `result`, que da JSON con `sent`, `failed` y
+  `removed`. Sin ninguno sigue por `failed`.
 - **Limpieza.** Un dispositivo por el que el servicio contesta 404 o 410 se olvida. Otros errores lo
   conservan.
 - **Tiempo de vida.** Un dispositivo apagado lo recibe si vuelve en menos de 24 h.

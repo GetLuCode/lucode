@@ -20,10 +20,13 @@ func TestGitStatusTakesTheOutputOfTheState(t *testing.T) {
 			h := newHarness(t)
 			h.host.git = GitState{State: state, Branch: "task/x", Base: "main", Ahead: 2, Files: []string{"M a.go"}}
 			nodes := []Node{reviewTrigger(), {ID: "g", Type: TypeGitStatus}}
-			edges := []Edge{{"t", PortNext, "g"}}
+			edges := []Edge{{"t", PortEvent, "g"}}
 			for _, p := range []string{PortClean, PortConflicts, PortDirty, PortNothing} {
-				nodes = append(nodes, Node{ID: p, Type: TypeComment, Config: cfg("text", p+" {{nodes.g.branch}} {{nodes.g.ahead}} {{nodes.g.files[0]}}")})
-				edges = append(edges, Edge{"g", p, p})
+				// the JSON answer is read with Get JSON prop, never as a variable
+				nodes = append(nodes,
+					Node{ID: "j" + p, Type: TypeGetJSONProp, Config: cfg("template", p+" {json.branch} {json.ahead} {json.files.0}")},
+					Node{ID: p, Type: TypeComment, Config: cfg("text", "{{input}}")})
+				edges = append(edges, Edge{"g", p, "j" + p}, Edge{"j" + p, PortValue, p})
 			}
 			f := h.publish(Graph{Nodes: nodes, Edges: edges})
 			h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
@@ -41,7 +44,7 @@ func TestGitStatusTakesTheOutputOfTheState(t *testing.T) {
 func TestGitStatusFailureFailsTheRunWhenNothingHandlesIt(t *testing.T) {
 	h := newHarness(t)
 	h.host.gitErr = errors.New("runner unavailable")
-	f := h.publish(Graph{Nodes: []Node{reviewTrigger(), {ID: "g", Type: TypeGitStatus}}, Edges: []Edge{{"t", PortNext, "g"}}})
+	f := h.publish(Graph{Nodes: []Node{reviewTrigger(), {ID: "g", Type: TypeGitStatus}}, Edges: []Edge{{"t", PortEvent, "g"}}})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	h.settleCalls()
 	if got := h.onlyRun(f); got.Status != dbpkg.RunFailed || got.Error != "runner unavailable" {
@@ -52,7 +55,7 @@ func TestGitStatusFailureFailsTheRunWhenNothingHandlesIt(t *testing.T) {
 func approved(merge Node) Graph {
 	return Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "ask", Type: TypeApproval, Config: cfg("question", "?")}, merge},
-		Edges: []Edge{{"t", PortNext, "ask"}, {"ask", PortApproved, merge.ID}},
+		Edges: []Edge{{"t", PortEvent, "ask"}, {"ask", PortApproved, merge.ID}},
 	}
 }
 
@@ -69,27 +72,27 @@ func TestMergeRequiresAnApprovalOnEveryPath(t *testing.T) {
 	if got := problems(approved(merge)); got != "" {
 		t.Fatalf("approved path: %s", got)
 	}
-	direct := Graph{Nodes: []Node{reviewTrigger(), merge}, Edges: []Edge{{"t", PortNext, "m"}}}
+	direct := Graph{Nodes: []Node{reviewTrigger(), merge}, Edges: []Edge{{"t", PortEvent, "m"}}}
 	if !strings.Contains(problems(direct), "without a person") {
 		t.Fatal("a Merge right after a trigger was accepted")
 	}
 	// the wrong output of the approval does not count
 	rejected := Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "ask", Type: TypeApproval, Config: cfg("question", "?")}, merge},
-		Edges: []Edge{{"t", PortNext, "ask"}, {"ask", PortRejected, "m"}},
+		Edges: []Edge{{"t", PortEvent, "ask"}, {"ask", PortRejected, "m"}},
 	}
 	if !strings.Contains(problems(rejected), "without a person") {
 		t.Fatal("a Merge after a rejection was accepted")
 	}
 	// one good path does not excuse another that goes around it
 	around := approved(merge)
-	around.Edges = append(around.Edges, Edge{"t", PortNext, "m"})
+	around.Edges = append(around.Edges, Edge{"t", PortEvent, "m"})
 	if !strings.Contains(problems(around), "without a person") {
 		t.Fatal("a second path around the approval was accepted")
 	}
 	// someone said so, on that node
 	unattended := Node{ID: "m", Type: TypeMerge, Config: cfg("strategy", "merge", "unattended", true)}
-	if got := problems(Graph{Nodes: []Node{reviewTrigger(), unattended}, Edges: []Edge{{"t", PortNext, "m"}}}); got != "" {
+	if got := problems(Graph{Nodes: []Node{reviewTrigger(), unattended}, Edges: []Edge{{"t", PortEvent, "m"}}}); got != "" {
 		t.Fatalf("unattended: %s", got)
 	}
 	keep := Node{ID: "m", Type: TypeMerge, Config: cfg("strategy", "merge", "delete_worktree", false)}
@@ -154,7 +157,7 @@ func TestMergeInterruptedByARestart(t *testing.T) {
 		h := newHarness(t)
 		f := h.publish(Graph{
 			Nodes: []Node{reviewTrigger(), {ID: "m", Type: TypeMerge, Config: cfg("strategy", "merge", "unattended", true)}},
-			Edges: []Edge{{"t", PortNext, "m"}},
+			Edges: []Edge{{"t", PortEvent, "m"}},
 		})
 		run, err := dbpkg.CreateFlowRun(h.e.db, dbpkg.FlowRun{FlowID: f.ID, Version: 1, ProjectID: "p1", CardID: "c1", Status: dbpkg.RunRunning}, []string{"m"})
 		if err != nil {

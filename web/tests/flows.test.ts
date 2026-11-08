@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { createActor, fromPromise, waitFor } from 'xstate'
 import { buildCardMachine, canMoveCard, cardState } from '../src/lib/cardMachine.ts'
 import { editorMachine } from '../src/components/Flows/editorMachine.ts'
-import { canvasType, defaultConfig, flowType, nodeStatuses, nodeSummary, parseFlowGraph, portLabels, serializeCanvas, unknownNodeTypes } from '../src/components/Flows/flowGraph.ts'
+import { canvasType, defaultConfig, flowType, inputPin, nodeStatuses, nodeSummary, outputPins, parseFlowGraph, portLabels, serializeCanvas, slotType, unknownNodeTypes, valueText } from '../src/components/Flows/flowGraph.ts'
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'))
 
@@ -23,9 +23,9 @@ test('a list without a role is the custom state', () => {
 
 test('serializing keeps ports, positions and config, and only what the hub stores', () => {
   const nodes = [
-    { id: 1, type: 'trigger/trigger.manual', pos: [10.4, 20.6], properties: { flowId: 'n1', config: {} }, outputs: [{ name: 'next', links: [7] }], extra: 'ignored' },
+    { id: 1, type: 'trigger/trigger.manual', pos: [10.4, 20.6], properties: { flowId: 'n1', config: {} }, outputs: [{ name: 'event', links: [7] }], extra: 'ignored' },
     { id: 2, type: 'control/control.if', pos: [100, 20], properties: { flowId: 'n2', config: { condition: 'true' } }, outputs: [{ name: 'true', links: [8, 9] }, { name: 'false', links: null }] },
-    { id: 3, type: 'action/action.comment', pos: [200, 0], properties: { flowId: 'n3', config: { text: 'a' } }, outputs: [{ name: 'next', links: [] }] },
+    { id: 3, type: 'action/action.comment', pos: [200, 0], properties: { flowId: 'n3', config: { text: 'a' } }, outputs: [{ name: 'text', links: [] }] },
     { id: 4, type: 'control/control.join', pos: [200, 50], properties: { flowId: 'n4' }, outputs: null },
   ]
   const links = { 7: { target_id: 2 }, 8: { target_id: 3 }, 9: { target_id: 4 } }
@@ -37,7 +37,7 @@ test('serializing keeps ports, positions and config, and only what the hub store
       { id: 'n4', type: 'control.join', x: 200, y: 50, config: {} },
     ],
     edges: [
-      { from: 'n1', port: 'next', to: 'n2' },
+      { from: 'n1', port: 'event', to: 'n2' },
       { from: 'n2', port: 'true', to: 'n3' },
       { from: 'n2', port: 'true', to: 'n4' },
     ],
@@ -89,6 +89,22 @@ test('an output shows the answer it stands for, and says so when it has none', (
   }
   const labels = portLabels(type, { outcome1: ' low ', outcome2: 'high', outcome3: '', model: 'x' })
   assert.deepEqual([...labels], [['outcome1', 'low'], ['outcome2', 'high'], ['outcome3', 'unused']])
+})
+
+test('values travel on typed pins: text, JSON or anything', () => {
+  const git = { category: 'action' as const, ports: ['clean', 'failed'], outputs: [{ name: 'clean', type: 'json' }, { name: 'failed', type: 'text' }] }
+  assert.deepEqual(outputPins(git), git.outputs)
+  // a plugin's node only names its outputs: they carry anything, and failed carries the error
+  assert.deepEqual(outputPins({ ports: ['answer', 'failed'] }), [{ name: 'answer', type: 'any' }, { name: 'failed', type: 'text' }])
+  assert.equal(inputPin({ category: 'trigger' }), null)
+  assert.deepEqual(inputPin({ category: 'action' }), { name: 'input', type: 'any' })
+  assert.deepEqual(inputPin({ category: 'data', input: { name: 'json', type: 'json' } }), { name: 'json', type: 'json' })
+  // litegraph wires an empty type to anything and refuses two different named ones
+  assert.equal(slotType({ name: 'x', type: 'any' }), '')
+  assert.equal(slotType({ name: 'x', type: 'json' }), 'json')
+  assert.equal(valueText('hi'), 'hi')
+  assert.equal(valueText({ a: 1 }), '{\n  "a": 1\n}')
+  assert.equal(valueText(null), '')
 })
 
 // ---- the editor machine ----

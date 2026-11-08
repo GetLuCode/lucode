@@ -39,7 +39,7 @@ func allowIf(condition string) Graph {
 			{ID: "yes", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAllow, "reason": "{{event.tool_name}} is fine"}},
 			{ID: "no", Type: TypeToolDecision, Config: map[string]any{"decision": ToolDeny, "reason": "not {{event.tool_name}}"}},
 		},
-		Edges: []Edge{{From: "t", Port: PortNext, To: "if"}, {From: "if", Port: PortTrue, To: "yes"}, {From: "if", Port: PortFalse, To: "no"}},
+		Edges: []Edge{{From: "t", Port: PortEvent, To: "if"}, {From: "if", Port: PortTrue, To: "yes"}, {From: "if", Port: PortFalse, To: "no"}},
 	}
 }
 
@@ -82,7 +82,7 @@ func TestToolFlowProblemsAskAPerson(t *testing.T) {
 				{ID: "if", Type: TypeIf, Config: map[string]any{"condition": `event.tool_name == "Read"`}},
 				{ID: "yes", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAllow}},
 			},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "if"}, {From: "if", Port: PortTrue, To: "yes"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "if"}, {From: "if", Port: PortTrue, To: "yes"}},
 		}, `{}`},
 		"stop before deciding": {Graph{
 			Nodes: []Node{
@@ -91,7 +91,7 @@ func TestToolFlowProblemsAskAPerson(t *testing.T) {
 				{ID: "yes", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAllow}},
 				{ID: "s", Type: TypeStop},
 			},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "if"}, {From: "if", Port: PortTrue, To: "yes"}, {From: "if", Port: PortFalse, To: "s"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "if"}, {From: "if", Port: PortTrue, To: "yes"}, {From: "if", Port: PortFalse, To: "s"}},
 		}, `{}`},
 	}
 	for name, c := range cases {
@@ -115,7 +115,7 @@ func allowMatch(tool, inputRegex string) Graph {
 			{ID: "yes", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAllow}},
 			{ID: "no", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAsk}},
 		},
-		Edges: []Edge{{From: "t", Port: PortNext, To: "m"}, {From: "m", Port: PortMatch, To: "yes"}, {From: "m", Port: PortNoMatch, To: "no"}},
+		Edges: []Edge{{From: "t", Port: PortEvent, To: "m"}, {From: "m", Port: PortMatch, To: "yes"}, {From: "m", Port: PortNoMatch, To: "no"}},
 	}
 }
 
@@ -202,7 +202,7 @@ func TestStrictestFlowWins(t *testing.T) {
 	other := func(decision string) Graph {
 		return Graph{
 			Nodes: []Node{{ID: "t", Type: TypeToolRequest}, {ID: "d", Type: TypeToolDecision, Config: map[string]any{"decision": decision}}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "d"}},
 		}
 	}
 	for _, want := range []string{ToolDeny, ToolAsk} {
@@ -372,12 +372,12 @@ func aiToolFlow() Graph {
 				"instruction": "Is this safe?", "input": "{{event.task}} {{event.tool_name}} {{event.tool_input_text}}",
 				"outcome1": "safe", "outcome2": "ask", "outcome3": "dangerous", "model": "claude-opus-5-5", "effort": "low",
 			}},
-			{ID: "ok", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAllow, "reason": "{{nodes.ai.reason}}"}},
+			{ID: "ok", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAllow, "reason": "{{input}}"}},
 			{ID: "person", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAsk}},
-			{ID: "bad", Type: TypeToolDecision, Config: map[string]any{"decision": ToolDeny, "reason": "{{nodes.ai.reason}}"}},
+			{ID: "bad", Type: TypeToolDecision, Config: map[string]any{"decision": ToolDeny, "reason": "{{input}}"}},
 		},
 		Edges: []Edge{
-			{From: "t", Port: PortNext, To: "ai"},
+			{From: "t", Port: PortEvent, To: "ai"},
 			{From: "ai", Port: PortOutcome1, To: "ok"}, {From: "ai", Port: PortOutcome2, To: "person"},
 			{From: "ai", Port: PortOutcome3, To: "bad"}, {From: "ai", Port: PortFailed, To: "person"},
 		},
@@ -438,7 +438,7 @@ func TestToolFlowSeesAutoMode(t *testing.T) {
 func TestToolFlowValidation(t *testing.T) {
 	trigger := Node{ID: "t", Type: TypeToolRequest}
 	allow := Node{ID: "d", Type: TypeToolDecision, Config: map[string]any{"decision": ToolAllow}}
-	toD := Edge{From: "t", Port: PortNext, To: "d"}
+	toD := Edge{From: "t", Port: PortEvent, To: "d"}
 	cond := Node{ID: "if", Type: TypeIf, Config: map[string]any{"condition": `true`}}
 	for _, c := range []struct {
 		name  string
@@ -447,44 +447,44 @@ func TestToolFlowValidation(t *testing.T) {
 	}{
 		{"decision without its trigger", Graph{
 			Nodes: []Node{{ID: "m", Type: TypeManual}, {ID: "d", Type: TypeToolDecision, Config: map[string]any{"decision": ToolDeny}}},
-			Edges: []Edge{{From: "m", Port: PortNext, To: "d"}},
+			Edges: []Edge{{From: "m", Port: PortEvent, To: "d"}},
 		}, "only works in a flow started by Tool requested"},
 		{"another trigger", Graph{
 			Nodes: []Node{trigger, allow, {ID: "m", Type: TypeManual}, cond},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "if"}, {From: "if", Port: PortTrue, To: "d"}, {From: "m", Port: PortNext, To: "if"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "if"}, {From: "if", Port: PortTrue, To: "d"}, {From: "m", Port: PortEvent, To: "if"}},
 		}, "cannot share a flow"},
 		{"a slow node", Graph{
 			Nodes: []Node{trigger, {ID: "w", Type: TypeRunAgent, Config: map[string]any{"prompt": "x"}}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "w"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "w"}},
 		}, "cannot be used with Tool requested"},
 		{"a person inside the flow", Graph{
 			Nodes: []Node{trigger, {ID: "w", Type: TypeApproval, Config: map[string]any{"question": "x"}}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "w"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "w"}},
 		}, "cannot be used with Tool requested"},
 		{"no decision", Graph{
 			Nodes: []Node{trigger, {ID: "s", Type: TypeStop}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "s"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "s"}},
 		}, "has no Tool decision"},
 		{"allows everything", Graph{Nodes: []Node{trigger, allow}, Edges: []Edge{toD}}, "allows every tool"},
 		{"a match of everything", Graph{
 			Nodes: []Node{trigger, allow, {ID: "m", Type: TypeMatchTool, Config: map[string]any{"tool": "*"}}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
 		}, "matches everything"},
 		{"a bad tool regex", Graph{
 			Nodes: []Node{trigger, allow, {ID: "m", Type: TypeMatchTool, Config: map[string]any{"tool": "Read("}}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
 		}, "invalid tool regex"},
 		{"a bad parameter regex", Graph{
 			Nodes: []Node{trigger, allow, {ID: "m", Type: TypeMatchTool, Config: map[string]any{"tool": "Bash", "input_regex": "command: ("}}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
 		}, "invalid regex"},
 		{"a line without a parameter", Graph{
 			Nodes: []Node{trigger, allow, {ID: "m", Type: TypeMatchTool, Config: map[string]any{"tool": "Bash", "input_regex": "just a regex"}}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
 		}, "is not parameter: regex"},
 		{"a match without its trigger", Graph{
 			Nodes: []Node{{ID: "x", Type: TypeManual}, {ID: "m", Type: TypeMatchTool, Config: map[string]any{"tool": "Bash"}}},
-			Edges: []Edge{{From: "x", Port: PortNext, To: "m"}},
+			Edges: []Edge{{From: "x", Port: PortEvent, To: "m"}},
 		}, "only works in a flow started by Tool requested"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -501,11 +501,11 @@ func TestToolFlowValidation(t *testing.T) {
 	for name, ok := range map[string]Graph{
 		"a match first": {
 			Nodes: []Node{trigger, allow, {ID: "m", Type: TypeMatchTool, Config: map[string]any{"tool": "Read"}}},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "m"}, {From: "m", Port: PortMatch, To: "d"}},
 		},
 		"a condition": {
 			Nodes: []Node{trigger, cond, allow},
-			Edges: []Edge{{From: "t", Port: PortNext, To: "if"}, {From: "if", Port: PortTrue, To: "d"}},
+			Edges: []Edge{{From: "t", Port: PortEvent, To: "if"}, {From: "if", Port: PortTrue, To: "d"}},
 		},
 		"deny everything": {
 			Nodes: []Node{trigger, {ID: "d", Type: TypeToolDecision, Config: map[string]any{"decision": ToolDeny}}},

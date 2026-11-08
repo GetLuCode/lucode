@@ -160,6 +160,8 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 	}
 	// flows.draft_agent — the agent that changed the draft since it was last published
 	db.Exec(`ALTER TABLE flows ADD COLUMN draft_agent TEXT NOT NULL DEFAULT ''`)
+	// flow_steps.input — the value that reached the step, as JSON ('' for a trigger)
+	db.Exec(`ALTER TABLE flow_steps ADD COLUMN input TEXT NOT NULL DEFAULT ''`)
 	migrateFlowPluginColumns(db)
 	return migratePlugins(db)
 }
@@ -656,6 +658,7 @@ type FlowStep struct {
 	RunID      string          `json:"run_id"`
 	NodeID     string          `json:"node_id"`
 	FromNode   string          `json:"from_node"`
+	Input      json.RawMessage `json:"input,omitempty"` // the value the node received, as JSON; empty for a trigger
 	Status     string          `json:"status"`
 	Port       string          `json:"port"`
 	Output     json.RawMessage `json:"output"`
@@ -666,13 +669,16 @@ type FlowStep struct {
 	FinishedAt string          `json:"finished_at"`
 }
 
-const flowStepCols = `seq, run_id, node_id, from_node, status, port, output, error, wait_key, wake_at, started_at, finished_at`
+const flowStepCols = `seq, run_id, node_id, from_node, input, status, port, output, error, wait_key, wake_at, started_at, finished_at`
 
 func scanFlowStep(row interface{ Scan(...any) error }) (FlowStep, error) {
 	var s FlowStep
-	var out string
-	err := row.Scan(&s.Seq, &s.RunID, &s.NodeID, &s.FromNode, &s.Status, &s.Port, &out, &s.Error, &s.WaitKey, &s.WakeAt, &s.StartedAt, &s.FinishedAt)
+	var out, in string
+	err := row.Scan(&s.Seq, &s.RunID, &s.NodeID, &s.FromNode, &in, &s.Status, &s.Port, &out, &s.Error, &s.WaitKey, &s.WakeAt, &s.StartedAt, &s.FinishedAt)
 	s.Output = json.RawMessage(out)
+	if in != "" {
+		s.Input = json.RawMessage(in)
+	}
 	return s, err
 }
 
@@ -745,8 +751,9 @@ func WaitFlowStep(db *sql.DB, seq int64, key, wakeAt string, output json.RawMess
 }
 
 // FinishFlowStep closes a step and queues the nodes that follow it, in one transaction,
-// so a stop can neither repeat the step nor lose what comes after it.
-func FinishFlowStep(db *sql.DB, s FlowStep, status, port string, output json.RawMessage, errMsg string, next []string) error {
+// so a stop can neither repeat the step nor lose what comes after it. value is what reaches
+// each of them: the answer the step gave through that output.
+func FinishFlowStep(db *sql.DB, s FlowStep, status, port string, output json.RawMessage, errMsg string, next []string, value json.RawMessage) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -760,7 +767,7 @@ func FinishFlowStep(db *sql.DB, s FlowStep, status, port string, output json.Raw
 		return err
 	}
 	for _, node := range next {
-		if _, err := tx.Exec(`INSERT INTO flow_steps (run_id, node_id, from_node, status) VALUES (?,?,?,?)`, s.RunID, node, s.NodeID, StepPending); err != nil {
+		if _, err := tx.Exec(`INSERT INTO flow_steps (run_id, node_id, from_node, input, status) VALUES (?,?,?,?,?)`, s.RunID, node, s.NodeID, string(value), StepPending); err != nil {
 			return err
 		}
 	}

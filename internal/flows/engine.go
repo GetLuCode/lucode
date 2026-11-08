@@ -258,7 +258,7 @@ func (e *Engine) Recover() {
 		if err != nil || run.Status != dbpkg.RunRunning {
 			continue
 		}
-		scope, err := e.scope(run)
+		scope, err := e.scope(run, s)
 		if err == nil {
 			err = e.startEvaluation(run, node, s, scope)
 		}
@@ -313,7 +313,7 @@ func (e *Engine) startPush(run dbpkg.FlowRun, s dbpkg.FlowStep, title, body stri
 		if err != nil {
 			return "", nil, err
 		}
-		return PortNext, map[string]any{"sent": res.Sent, "failed": res.Failed, "removed": res.Removed}, nil
+		return PortResult, map[string]any{"sent": res.Sent, "failed": res.Failed, "removed": res.Removed}, nil
 	})
 }
 
@@ -375,7 +375,7 @@ func mergeOptionsOf(node Node, scope Scope) (MergeOptions, error) {
 // blindly: the runner may still be on it. If the branch turns out merged, the hub finishes its
 // half; otherwise the run fails and says so.
 func (e *Engine) startMergeCheck(run dbpkg.FlowRun, node Node, s dbpkg.FlowStep) {
-	scope, err := e.scope(run)
+	scope, err := e.scope(run, s)
 	var opts MergeOptions
 	if err == nil {
 		opts, err = mergeOptionsOf(node, scope)
@@ -547,7 +547,7 @@ func (e *Engine) resolveWaits(ev dbpkg.FlowEvent) {
 	if ev.SessionID != "" && (ev.Type == dbpkg.EventTurnEnded || ev.Type == dbpkg.EventTurnFailed) {
 		steps, _ := dbpkg.WaitingFlowSteps(e.db, sessionWaitKey(ev.SessionID))
 		for _, s := range steps {
-			port := PortNext
+			port := PortReply
 			if ev.Type == dbpkg.EventTurnFailed {
 				port = PortFailed
 			}
@@ -566,13 +566,14 @@ func (e *Engine) resolveWaits(ev dbpkg.FlowEvent) {
 		if want := node.str("to_kind"); want != "" && want != "any" && want != fmt.Sprint(ev.Payload["to_kind"]) {
 			continue
 		}
-		e.resumeStep(s, PortEvent, ev.Payload)
+		e.resumeStep(s, PortEvent, map[string]any{"value": eventScope(ev)})
 	}
 }
 
 // resumeStep finishes a waiting step through a port, keeping what it stored when it parked.
+// extra is what the wait brought; unless it says what the step gives, resumeValue does.
 func (e *Engine) resumeStep(s dbpkg.FlowStep, port string, extra map[string]any) {
-	run, g, _, err := e.stepContext(s)
+	run, g, node, err := e.stepContext(s)
 	if err != nil || run.Status != dbpkg.RunRunning {
 		return
 	}
@@ -581,7 +582,46 @@ func (e *Engine) resumeStep(s dbpkg.FlowStep, port string, extra map[string]any)
 	for k, v := range extra {
 		output[k] = v
 	}
+	if v, has := extra["value"]; has {
+		output["value"] = v
+	} else {
+		output["value"] = resumeValue(node, port, extra, stepInput(s))
+	}
 	e.finishStep(run, g, s, port, output)
+}
+
+// resumeValue is the answer a step that waited gives through a port.
+func resumeValue(node Node, port string, extra map[string]any, input any) any {
+	if port == PortFailed {
+		if extra["error"] != nil {
+			return fmt.Sprint(extra["error"])
+		}
+		if extra["message"] != nil {
+			return fmt.Sprint(extra["message"])
+		}
+		return "the step failed"
+	}
+	if port == PortTimeout {
+		return input
+	}
+	switch node.Type {
+	case TypeDelay:
+		return input
+	case TypeApproval:
+		return valueText(extra["note"])
+	case TypeAIEvaluate:
+		return valueText(extra["reason"])
+	case TypeRunAgent:
+		return valueText(extra["reply"])
+	}
+	// what the call answered (Git status, Merge, Push notification, a plugin's node), as JSON
+	out := map[string]any{}
+	for k, v := range extra {
+		if k != "error" {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // startRuns starts the flows of the project that have a trigger for this event.
@@ -790,7 +830,7 @@ func (e *Engine) wakeDue() bool {
 		if err != nil {
 			continue
 		}
-		port := PortNext
+		port := PortOutput
 		var extra map[string]any
 		switch node.Type {
 		case TypeWaitEvent, TypeApproval:
@@ -913,7 +953,7 @@ func (e *Engine) execute(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.FlowStep
 	}
 	if res.finish != "" {
 		output, _ := json.Marshal(res.output)
-		if err := dbpkg.FinishFlowStep(e.db, s, dbpkg.StepSucceeded, "", output, "", nil); err != nil {
+		if err := dbpkg.FinishFlowStep(e.db, s, dbpkg.StepSucceeded, "", output, "", nil, nil); err != nil {
 			log.Printf("[flows] finish step: %v", err)
 		}
 		e.closeRun(run.ID, res.finish, res.reason)
@@ -937,6 +977,10 @@ func (e *Engine) execute(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.FlowStep
 
 func (e *Engine) finishStep(run dbpkg.FlowRun, g Graph, s dbpkg.FlowStep, port string, output map[string]any) {
 	body, _ := json.Marshal(output)
+	value, err := json.Marshal(output["value"])
+	if err != nil {
+		value = json.RawMessage(`null`)
+	}
 	var next []string
 	switch port {
 	case "": // nothing follows (a Join still waiting for other paths)
@@ -951,6 +995,7 @@ func (e *Engine) finishStep(run dbpkg.FlowRun, g Graph, s dbpkg.FlowStep, port s
 	default:
 		next = g.next(s.NodeID, port)
 	}
+	next = distinct(next) // two wires to the same node start it once
 	// A failure nobody handles is the run's failure, not a quiet success.
 	if port == PortFailed && len(next) == 0 {
 		msg := fmt.Sprint(output["error"])
@@ -963,7 +1008,7 @@ func (e *Engine) finishStep(run dbpkg.FlowRun, g Graph, s dbpkg.FlowStep, port s
 		e.failStep(run, s, msg)
 		return
 	}
-	if err := dbpkg.FinishFlowStep(e.db, s, dbpkg.StepSucceeded, port, body, "", next); err != nil {
+	if err := dbpkg.FinishFlowStep(e.db, s, dbpkg.StepSucceeded, port, body, "", next, value); err != nil {
 		log.Printf("[flows] finish step: %v", err)
 		return
 	}
@@ -975,7 +1020,7 @@ func (e *Engine) finishStep(run dbpkg.FlowRun, g Graph, s dbpkg.FlowStep, port s
 }
 
 func (e *Engine) failStep(run dbpkg.FlowRun, s dbpkg.FlowStep, msg string) {
-	if err := dbpkg.FinishFlowStep(e.db, s, dbpkg.StepFailed, "", nil, msg, nil); err != nil {
+	if err := dbpkg.FinishFlowStep(e.db, s, dbpkg.StepFailed, "", nil, msg, nil, nil); err != nil {
 		log.Printf("[flows] fail step: %v", err)
 	}
 	e.closeRun(s.RunID, dbpkg.RunFailed, msg)
@@ -1014,8 +1059,10 @@ func (e *Engine) runClosed(runID string) {
 	}
 }
 
-// scope builds the data expressions can read, with the card as it is right now.
-func (e *Engine) scope(run dbpkg.FlowRun) (Scope, error) {
+// scope builds the data expressions can read, with the card as it is right now: the run's
+// card, event and run, and input, the value that reached the step, as text. What other
+// nodes answered is not here: it reaches a node only through its input.
+func (e *Engine) scope(run dbpkg.FlowRun, s dbpkg.FlowStep) (Scope, error) {
 	event := map[string]any{}
 	_ = json.Unmarshal(run.Event, &event)
 	card := map[string]any{}
@@ -1026,21 +1073,8 @@ func (e *Engine) scope(run dbpkg.FlowRun) (Scope, error) {
 		}
 		card = c
 	}
-	steps, err := dbpkg.ListFlowSteps(e.db, run.ID)
-	if err != nil {
-		return nil, err
-	}
-	nodes := map[string]any{}
-	for _, s := range steps { // oldest first: the newest output of a node wins
-		if s.Status != dbpkg.StepSucceeded {
-			continue
-		}
-		output := map[string]any{}
-		_ = json.Unmarshal(s.Output, &output)
-		nodes[s.NodeID] = output
-	}
 	return Scope{
-		"card": card, "event": event, "nodes": nodes,
+		"card": card, "event": event, "input": valueText(stepInput(s)),
 		"run": map[string]any{"id": run.ID, "flow_id": run.FlowID, "version": int64(run.Version), "depth": int64(run.Depth)},
 	}, nil
 }
@@ -1059,12 +1093,15 @@ func needCard(run dbpkg.FlowRun, title string) error {
 func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.FlowStep) (result, error) {
 	def, _ := NodeTypeOf(node.Type)
 	if def.Category == CategoryTrigger {
-		return result{port: PortNext, output: map[string]any{}}, nil
+		event := map[string]any{}
+		_ = json.Unmarshal(run.Event, &event)
+		return result{port: PortEvent, output: map[string]any{"value": event}}, nil
 	}
-	scope, err := e.scope(run)
+	scope, err := e.scope(run, s)
 	if err != nil {
 		return result{}, err
 	}
+	input := stepInput(s)
 	render := func(field string) (string, error) { return RenderTemplate(node.str(field), scope) }
 
 	if IsPluginNode(node.Type) {
@@ -1081,7 +1118,7 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		if ok {
 			port = PortTrue
 		}
-		return result{port: port, output: map[string]any{"result": ok}}, nil
+		return result{port: port, output: map[string]any{"result": ok, "value": input}}, nil
 
 	case TypeSwitch:
 		v, err := EvalString(node.str("value"), scope)
@@ -1090,31 +1127,35 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		}
 		for _, c := range []string{"case1", "case2", "case3"} {
 			if want := node.str(c); want != "" && want == v {
-				return result{port: c, output: map[string]any{"value": v}}, nil
+				return result{port: c, output: map[string]any{"matched": v, "value": input}}, nil
 			}
 		}
-		return result{port: PortDefault, output: map[string]any{"value": v}}, nil
+		return result{port: PortDefault, output: map[string]any{"matched": v, "value": input}}, nil
 
 	case TypeParallel:
-		return result{port: portAll, output: map[string]any{}}, nil
+		return result{port: portAll, output: map[string]any{"value": input}}, nil
 
 	case TypeJoin:
 		steps, err := dbpkg.ListFlowSteps(e.db, run.ID)
 		if err != nil {
 			return result{}, err
 		}
-		arrived := map[string]bool{}
+		arrived := map[string]any{} // the newest value from each path
+		has := map[string]bool{}
 		for _, st := range steps {
 			if st.NodeID == node.ID && st.Status != dbpkg.StepCancelled {
-				arrived[st.FromNode] = true
+				arrived[st.FromNode] = stepInput(st)
+				has[st.FromNode] = true
 			}
 		}
+		values := []any{}
 		for _, from := range g.incoming(node.ID) {
-			if !arrived[from] {
+			if !has[from] {
 				return result{port: "", output: map[string]any{"waiting_for": from}}, nil // the last path to arrive continues
 			}
+			values = append(values, arrived[from])
 		}
-		return result{port: PortNext, output: map[string]any{}}, nil
+		return result{port: PortValues, output: map[string]any{"value": values}}, nil
 
 	case TypeWaitEvent:
 		if err := needCard(run, def.Title); err != nil {
@@ -1133,9 +1174,9 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		// this activation is already counted, so max=3 goes back on activations 1, 2 and 3
 		times := dbpkg.CountFlowSteps(e.db, run.ID, node.ID)
 		if float64(times) <= node.num("max", 3) {
-			return result{port: PortAgain, output: map[string]any{"attempt": times}}, nil
+			return result{port: PortAgain, output: map[string]any{"attempt": times, "value": input}}, nil
 		}
-		return result{port: PortExhausted, output: map[string]any{"attempt": times}}, nil
+		return result{port: PortExhausted, output: map[string]any{"attempt": times, "value": input}}, nil
 
 	case TypeStop:
 		msg, err := render("message")
@@ -1152,7 +1193,7 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		if err != nil {
 			return result{}, err
 		}
-		return result{port: port, output: map[string]any{"matched": port == PortMatch}}, nil
+		return result{port: port, output: map[string]any{"matched": port == PortMatch, "value": input}}, nil
 
 	case TypeToolDecision:
 		reason, err := render("reason")
@@ -1214,7 +1255,7 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		if err := e.host.NotifySupervisor(run.CardID, text); err != nil {
 			return result{}, err
 		}
-		return result{port: PortNext, output: map[string]any{"text": text}}, nil
+		return result{port: PortText, output: map[string]any{"value": text}}, nil
 
 	case TypePushNotification:
 		title, err := render("title")
@@ -1283,9 +1324,9 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 			return result{}, err
 		}
 		if rejected != "" {
-			return result{port: PortRejected, output: map[string]any{"reason": rejected}}, nil
+			return result{port: PortRejected, output: map[string]any{"value": rejected}}, nil
 		}
-		return result{port: PortNext, output: map[string]any{}}, nil
+		return result{port: PortMoved, output: map[string]any{"value": input}}, nil
 
 	case TypeComment:
 		if err := needCard(run, def.Title); err != nil {
@@ -1298,7 +1339,7 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		if err := e.host.Comment(run.CardID, text); err != nil {
 			return result{}, err
 		}
-		return result{port: PortNext, output: map[string]any{"text": text}}, nil
+		return result{port: PortText, output: map[string]any{"value": text}}, nil
 
 	case TypeAddTag:
 		if err := needCard(run, def.Title); err != nil {
@@ -1314,7 +1355,7 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		if err := e.host.AddTag(run.CardID, tag); err != nil {
 			return result{}, err
 		}
-		return result{port: PortNext, output: map[string]any{"tag": tag}}, nil
+		return result{port: PortTag, output: map[string]any{"value": tag}}, nil
 
 	case TypeCreateTask:
 		title, err := render("title")
@@ -1329,7 +1370,14 @@ func (e *Engine) executeNode(run dbpkg.FlowRun, g Graph, node Node, s dbpkg.Flow
 		if err != nil {
 			return result{}, err
 		}
-		return result{port: PortNext, output: map[string]any{"card_id": id}}, nil
+		return result{port: PortCardID, output: map[string]any{"value": id}}, nil
+
+	case TypeGetJSONProp:
+		v, err := GetJSONProp(input, node.str("template"))
+		if err != nil {
+			return result{port: PortFailed, output: map[string]any{"error": err.Error(), "value": err.Error()}}, nil
+		}
+		return result{port: PortValue, output: map[string]any{"value": v}}, nil
 	}
 	return result{}, fmt.Errorf("unknown node type %q", node.Type)
 }

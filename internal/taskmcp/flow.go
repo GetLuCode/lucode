@@ -34,7 +34,7 @@ func IsFlowTool(name string) bool {
 
 var flowGraphSchema = map[string]any{
 	"type":        "object",
-	"description": `The whole graph: {"nodes":[{"id":"n1","type":"trigger.manual","x":40,"y":200,"config":{}}],"edges":[{"from":"n1","port":"next","to":"n2"}]}. Ids look like n1, n2. Lay nodes out left to right, about 300 apart on x. Types, ports and config fields come from flow_catalog.`,
+	"description": `The whole graph: {"nodes":[{"id":"n1","type":"trigger.manual","x":40,"y":200,"config":{}}],"edges":[{"from":"n1","port":"event","to":"n2"}]}. Ids look like n1, n2. Lay nodes out left to right, about 300 apart on x. An edge goes from an output (port) of a node to the next node, and carries that output's value to it. Types, outputs and config fields come from flow_catalog.`,
 	"properties": map[string]any{
 		"nodes": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 		"edges": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},

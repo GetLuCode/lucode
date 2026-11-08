@@ -41,7 +41,7 @@ const (
 // for tools of its own while the hook waits.
 var toolFlowNodes = map[string]bool{
 	TypeToolRequest: true, TypeToolDecision: true, TypeMatchTool: true, TypeIf: true, TypeSwitch: true, TypeStop: true,
-	TypeAIEvaluate: true, TypeComment: true, TypeAddTag: true, TypeNotifySupervisor: true,
+	TypeAIEvaluate: true, TypeComment: true, TypeAddTag: true, TypeNotifySupervisor: true, TypeGetJSONProp: true,
 }
 
 // toolRuleOf reads a Match tool node as a permission rule.
