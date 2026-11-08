@@ -117,12 +117,14 @@ func gitFlow(t *testing.T, h *Handler, pid string, config map[string]any) dbpkg.
 			{ID: "t", Type: flows.TypeCardMoved, Config: map[string]any{"to_kind": "review"}},
 			{ID: "g", Type: flows.TypeGitStatus},
 			{ID: "m", Type: flows.TypeMerge, Config: merge},
-			{ID: "c", Type: flows.TypeComment, Config: map[string]any{"text": "status {{nodes.g.state}} on {{nodes.g.branch}}, ahead {{nodes.g.ahead}}"}},
+			// Git status answers JSON: Get JSON prop reads it, never a variable
+			{ID: "j", Type: flows.TypeGetJSONProp, Config: map[string]any{"template": "status {json.state} on {json.branch}, ahead {json.ahead}"}},
+			{ID: "c", Type: flows.TypeComment, Config: map[string]any{"text": "{{input}}"}},
 		},
 		Edges: []flows.Edge{
-			{From: "t", Port: "next", To: "g"},
-			{From: "g", Port: "clean", To: "m"},
-			{From: "m", Port: "merged", To: "c"},
+			{From: "t", Port: flows.PortEvent, To: "g"},
+			{From: "g", Port: "clean", To: "j"}, {From: "j", Port: flows.PortValue, To: "c"},
+			{From: "c", Port: flows.PortText, To: "m"},
 		},
 	})
 }

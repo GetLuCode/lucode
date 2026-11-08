@@ -159,7 +159,7 @@ func TestAPluginGetsAnAddressAndItsWebhooks(t *testing.T) {
 			{ID: "e", Type: flows.TypePluginEvent, Config: map[string]any{"plugin": "acme.hook", "event": "message"}},
 			{ID: "m", Type: flows.TypeCreateTask, Config: map[string]any{"title": "from telegram: {{event.payload.text}}"}},
 		},
-		Edges: []flows.Edge{{From: "e", Port: "next", To: "m"}},
+		Edges: []flows.Edge{{From: "e", Port: flows.PortEvent, To: "m"}},
 	})
 	ev := telegramUpdate("hola")
 	ev.Endpoint = ep.ID

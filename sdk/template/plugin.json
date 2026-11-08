@@ -27,12 +27,12 @@
       {
         "id": "read_file",
         "label": "Read a file",
-        "description": "Reads a file of the card's workspace on its runner. Other nodes read it as nodes.<id>.text.",
+        "description": "Reads a file of the card's workspace on its runner. \"text\" gives what it holds, as text.",
         "target": "runner",
         "fields": [
           { "name": "path", "label": "Path", "kind": "text", "required": true, "default": "README.md" }
         ],
-        "ports": ["next"],
+        "ports": ["text"],
         "timeoutSeconds": 30
       }
     ]

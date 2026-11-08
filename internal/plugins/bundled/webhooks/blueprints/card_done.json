@@ -1,15 +1,30 @@
 {
   "nodes": [
-    { "id": "n1", "type": "trigger.card_moved", "x": 40, "y": 160, "config": { "to_kind": "done", "from_kind": "any" } },
+    {
+      "id": "n1",
+      "type": "trigger.card_moved",
+      "x": 40,
+      "y": 160,
+      "config": {
+        "to_kind": "done",
+        "from_kind": "any"
+      }
+    },
     {
       "id": "n2",
       "type": "plugin.lucode.webhooks.send",
       "x": 320,
       "y": 160,
-      "config": { "message": "Done: {{card.title}}" }
+      "config": {
+        "message": "Done: {{card.title}}"
+      }
     }
   ],
   "edges": [
-    { "from": "n1", "port": "next", "to": "n2" }
+    {
+      "from": "n1",
+      "port": "event",
+      "to": "n2"
+    }
   ]
 }

@@ -131,7 +131,7 @@ func TestPushLive(t *testing.T) {
 			{ID: "t", Type: flows.TypeManual},
 			{ID: "p", Type: flows.TypePushNotification, Config: map[string]any{"title": "Live título", "body": "Run {{run.depth}} ñandú 🚀"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: flows.PortNext, To: "p"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "p"}},
 	})
 	if f, err = dbpkg.GetFlow(h.db, f.ID); err != nil {
 		t.Fatal(err)

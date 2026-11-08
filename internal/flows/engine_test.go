@@ -193,7 +193,7 @@ func TestBranchesOnCardData(t *testing.T) {
 			{ID: "yes", Type: TypeComment, Config: cfg("text", "urgent: {{card.title}}")},
 			{ID: "no", Type: TypeComment, Config: cfg("text", "calm")},
 		},
-		Edges: []Edge{{"t", PortNext, "if"}, {"if", PortTrue, "yes"}, {"if", PortFalse, "no"}},
+		Edges: []Edge{{"t", PortEvent, "if"}, {"if", PortTrue, "yes"}, {"if", PortFalse, "no"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("todo")) // no trigger for this list
 	if n := len(h.runs(f)); n != 0 {
@@ -213,7 +213,7 @@ func TestTemplateDoesNotEvaluateData(t *testing.T) {
 	h.host.card["title"] = `{{card.id}}`
 	f := h.publish(Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "c", Type: TypeComment, Config: cfg("text", "{{card.title}}")}},
-		Edges: []Edge{{"t", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "c"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	h.onlyRun(f)
@@ -226,7 +226,7 @@ func TestSameEventNeverRunsAFlowTwice(t *testing.T) {
 	h := newHarness(t)
 	f := h.publish(Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "c", Type: TypeComment, Config: cfg("text", "hi")}},
-		Edges: []Edge{{"t", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "c"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	events := dbpkg.FlowEvent{ID: 1, ProjectID: "p1", Type: dbpkg.EventCardMoved, CardID: "c1", Payload: moved("review")}
@@ -244,10 +244,10 @@ func TestRunAgentWaitsForTheTurnAndSurvivesRestart(t *testing.T) {
 		Nodes: []Node{
 			reviewTrigger(),
 			{ID: "a", Type: TypeRunAgent, Config: cfg("prompt", "review {{card.title}}")},
-			{ID: "ok", Type: TypeComment, Config: cfg("text", "session {{nodes.a.session_id}}")},
+			{ID: "ok", Type: TypeComment, Config: cfg("text", "agent said {{input}}")},
 			{ID: "bad", Type: TypeComment, Config: cfg("text", "failed")},
 		},
-		Edges: []Edge{{"t", PortNext, "a"}, {"a", PortNext, "ok"}, {"a", PortFailed, "bad"}},
+		Edges: []Edge{{"t", PortEvent, "a"}, {"a", PortReply, "ok"}, {"a", PortFailed, "bad"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	if got := h.onlyRun(f); got.Status != dbpkg.RunRunning {
@@ -271,11 +271,11 @@ func TestRunAgentWaitsForTheTurnAndSurvivesRestart(t *testing.T) {
 	if h.onlyRun(f).Status != dbpkg.RunRunning {
 		t.Fatal("another session's turn woke the step")
 	}
-	h.event(dbpkg.EventTurnEnded, "c1", "sess1", nil)
+	h.event(dbpkg.EventTurnEnded, "c1", "sess1", map[string]any{"reply": "all done"})
 	if got := h.onlyRun(f); got.Status != dbpkg.RunSucceeded {
 		t.Fatalf("run: %s %s", got.Status, got.Error)
 	}
-	if len(h.host.comments) != 1 || h.host.comments[0] != "session sess1" {
+	if len(h.host.comments) != 1 || h.host.comments[0] != "agent said all done" {
 		t.Fatalf("comments: %q", h.host.comments)
 	}
 }
@@ -290,7 +290,7 @@ func TestTurnFailedBeatsTurnEnded(t *testing.T) {
 			{ID: "ok", Type: TypeComment, Config: cfg("text", "ok")},
 			{ID: "bad", Type: TypeComment, Config: cfg("text", "failed")},
 		},
-		Edges: []Edge{{"t", PortNext, "a"}, {"a", PortNext, "ok"}, {"a", PortFailed, "bad"}},
+		Edges: []Edge{{"t", PortEvent, "a"}, {"a", PortReply, "ok"}, {"a", PortFailed, "bad"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	h.event(dbpkg.EventTurnEnded, "c1", "sess1", nil)
@@ -310,27 +310,27 @@ func TestParallelAndJoin(t *testing.T) {
 			{ID: "a", Type: TypeComment, Config: cfg("text", "a")},
 			{ID: "b", Type: TypeRunAgent, Config: cfg("prompt", "b")},
 			{ID: "j", Type: TypeJoin},
-			{ID: "end", Type: TypeComment, Config: cfg("text", "end")},
+			{ID: "end", Type: TypeComment, Config: cfg("text", "end {{input}}")},
 		},
 		Edges: []Edge{
-			{"t", PortNext, "p"}, {"p", "a", "a"}, {"p", "b", "b"},
-			{"a", PortNext, "j"}, {"b", PortNext, "j"}, {"j", PortNext, "end"},
+			{"t", PortEvent, "p"}, {"p", "a", "a"}, {"p", "b", "b"},
+			{"a", PortText, "j"}, {"b", PortReply, "j"}, {"j", PortValues, "end"},
 		},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
-	if contains(h.host.comments, "end") {
+	if len(h.host.comments) > 1 {
 		t.Fatal("Join continued before the slow path arrived")
 	}
 	if h.onlyRun(f).Status != dbpkg.RunRunning {
 		t.Fatal("the run should wait for the agent")
 	}
-	h.event(dbpkg.EventTurnEnded, "c1", "sess1", nil)
+	h.event(dbpkg.EventTurnEnded, "c1", "sess1", map[string]any{"reply": "b done"})
 	if got := h.onlyRun(f); got.Status != dbpkg.RunSucceeded {
 		t.Fatalf("run: %s %s", got.Status, got.Error)
 	}
 	count := 0
 	for _, c := range h.host.comments {
-		if c == "end" {
+		if c == `end ["a","b done"]` { // Join gives what each path brought, in the order they are wired
 			count++
 		}
 	}
@@ -348,7 +348,7 @@ func TestRetryIsBounded(t *testing.T) {
 			{ID: "r", Type: TypeRetry, Config: cfg("max", float64(2))},
 			{ID: "end", Type: TypeComment, Config: cfg("text", "gave up")},
 		},
-		Edges: []Edge{{"t", PortNext, "c"}, {"c", PortNext, "r"}, {"r", PortAgain, "c"}, {"r", PortExhausted, "end"}},
+		Edges: []Edge{{"t", PortEvent, "c"}, {"c", PortText, "r"}, {"r", PortAgain, "c"}, {"r", PortExhausted, "end"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	if got := h.onlyRun(f); got.Status != dbpkg.RunSucceeded {
@@ -368,7 +368,7 @@ func TestAgentTurnLimitStopsALoop(t *testing.T) {
 			{ID: "a", Type: TypeRunAgent, Config: cfg("prompt", "go")},
 			{ID: "r", Type: TypeRetry, Config: cfg("max", float64(1000))},
 		},
-		Edges: []Edge{{"t", PortNext, "a"}, {"a", PortNext, "r"}, {"r", PortAgain, "a"}},
+		Edges: []Edge{{"t", PortEvent, "a"}, {"a", PortReply, "r"}, {"r", PortAgain, "a"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	for i := 0; i < 50 && h.onlyRun(f).Status == dbpkg.RunRunning; i++ {
@@ -393,7 +393,7 @@ func TestDepthLimitStopsChainsOfRuns(t *testing.T) {
 			{ID: "t", Type: TypeTurnEnded},
 			{ID: "a", Type: TypeRunAgent, Config: cfg("prompt", "again")},
 		},
-		Edges: []Edge{{"t", PortNext, "a"}},
+		Edges: []Edge{{"t", PortEvent, "a"}},
 	})
 	// the real host records the chain when it starts a turn; do the same here
 	h.e.host = &chainHost{fakeHost: h.host, db: h.e}
@@ -433,7 +433,7 @@ func TestFlowIgnoresItsOwnMoves(t *testing.T) {
 			{ID: "t", Type: TypeCardMoved},
 			{ID: "c", Type: TypeComment, Config: cfg("text", "x")},
 		},
-		Edges: []Edge{{"t", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "c"}},
 	})
 	cause := dbpkg.EventCause{Source: "flow", FlowID: f.ID, RunID: "r", Depth: 1}
 	if err := dbpkg.RecordFlowChain(h.e.db, "p1", "c1", cause); err != nil {
@@ -449,7 +449,7 @@ func TestOneRunPerCardTheRestQueue(t *testing.T) {
 	h := newHarness(t)
 	h.publish(Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "a", Type: TypeRunAgent, Config: cfg("prompt", "go")}},
-		Edges: []Edge{{"t", PortNext, "a"}},
+		Edges: []Edge{{"t", PortEvent, "a"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
@@ -467,7 +467,7 @@ func TestPauseHoldsEverything(t *testing.T) {
 	h := newHarness(t)
 	f := h.publish(Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "c", Type: TypeComment, Config: cfg("text", "x")}},
-		Edges: []Edge{{"t", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "c"}},
 	})
 	if err := dbpkg.SetFlowsPaused(h.e.db, "p1", true); err != nil {
 		t.Fatal(err)
@@ -482,7 +482,7 @@ func TestDisabledFlowDoesNotRun(t *testing.T) {
 	h := newHarness(t)
 	f := h.publish(Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "c", Type: TypeComment, Config: cfg("text", "x")}},
-		Edges: []Edge{{"t", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "c"}},
 	})
 	if err := dbpkg.SetFlowEnabled(h.e.db, f.ID, false); err != nil {
 		t.Fatal(err)
@@ -501,7 +501,7 @@ func TestRunUsesTheVersionItStartedWith(t *testing.T) {
 			{ID: "a", Type: TypeRunAgent, Config: cfg("prompt", "go")},
 			{ID: "c", Type: TypeComment, Config: cfg("text", "v1")},
 		},
-		Edges: []Edge{{"t", PortNext, "a"}, {"a", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "a"}, {"a", PortReply, "c"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	v2, _ := json.Marshal(Graph{
@@ -510,7 +510,7 @@ func TestRunUsesTheVersionItStartedWith(t *testing.T) {
 			{ID: "a", Type: TypeRunAgent, Config: cfg("prompt", "go")},
 			{ID: "c", Type: TypeComment, Config: cfg("text", "v2")},
 		},
-		Edges: []Edge{{"t", PortNext, "a"}, {"a", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "a"}, {"a", PortReply, "c"}},
 	})
 	if _, err := dbpkg.PublishFlow(h.e.db, f.ID, v2); err != nil {
 		t.Fatal(err)
@@ -526,7 +526,7 @@ func TestActionsFailClearly(t *testing.T) {
 	h.host.turnErr = errors.New("no runner")
 	f := h.publish(Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "a", Type: TypeRunAgent, Config: cfg("prompt", "go")}},
-		Edges: []Edge{{"t", PortNext, "a"}},
+		Edges: []Edge{{"t", PortEvent, "a"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	got := h.onlyRun(f)
@@ -542,9 +542,9 @@ func TestMoveRejectedTakesItsPort(t *testing.T) {
 		Nodes: []Node{
 			reviewTrigger(),
 			{ID: "m", Type: TypeMoveCard, Config: cfg("to_kind", "inprogress")},
-			{ID: "c", Type: TypeComment, Config: cfg("text", "refused: {{nodes.m.reason}}")},
+			{ID: "c", Type: TypeComment, Config: cfg("text", "refused: {{input}}")},
 		},
-		Edges: []Edge{{"t", PortNext, "m"}, {"m", PortRejected, "c"}},
+		Edges: []Edge{{"t", PortEvent, "m"}, {"m", PortRejected, "c"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	h.onlyRun(f)
@@ -565,7 +565,7 @@ func TestDelayAndWaitTimeout(t *testing.T) {
 			{ID: "got", Type: TypeComment, Config: cfg("text", "done")},
 			{ID: "late", Type: TypeComment, Config: cfg("text", "timeout")},
 		},
-		Edges: []Edge{{"t", PortNext, "d"}, {"d", PortNext, "w"}, {"w", PortEvent, "got"}, {"w", PortTimeout, "late"}},
+		Edges: []Edge{{"t", PortEvent, "d"}, {"d", PortOutput, "w"}, {"w", PortEvent, "got"}, {"w", PortTimeout, "late"}},
 	})
 	h.event(dbpkg.EventCardMoved, "c1", "", moved("review"))
 	if h.onlyRun(f).Status != dbpkg.RunRunning {
@@ -594,7 +594,7 @@ func TestSchedule(t *testing.T) {
 			{ID: "t", Type: TypeSchedule, Config: cfg("minutes", float64(10))},
 			{ID: "c", Type: TypeCreateTask, Config: cfg("title", "weekly")},
 		},
-		Edges: []Edge{{"t", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "c"}},
 	})
 	h.e.Drain()
 	if n := len(h.runs(f)); n != 0 {
@@ -614,7 +614,7 @@ func TestInterruptedSideEffectIsNotRepeated(t *testing.T) {
 	h := newHarness(t)
 	f := h.publish(Graph{
 		Nodes: []Node{reviewTrigger(), {ID: "c", Type: TypeComment, Config: cfg("text", "x")}},
-		Edges: []Edge{{"t", PortNext, "c"}},
+		Edges: []Edge{{"t", PortEvent, "c"}},
 	})
 	run, err := dbpkg.CreateFlowRun(h.e.db, dbpkg.FlowRun{FlowID: f.ID, Version: 1, ProjectID: "p1", CardID: "c1", Status: dbpkg.RunRunning}, []string{"c"})
 	if err != nil {
@@ -640,18 +640,18 @@ func TestValidate(t *testing.T) {
 		{"empty", Graph{}, "empty"},
 		{"no trigger", Graph{Nodes: []Node{{ID: "c", Type: TypeComment, Config: cfg("text", "x")}}}, "needs a trigger"},
 		{"unknown type", Graph{Nodes: []Node{trigger, {ID: "x", Type: "basic/script"}}}, "unknown node type"},
-		{"required", Graph{Nodes: []Node{trigger, {ID: "c", Type: TypeComment}}, Edges: []Edge{{"t", PortNext, "c"}}}, "Text is required"},
-		{"bad expr", Graph{Nodes: []Node{trigger, {ID: "i", Type: TypeIf, Config: cfg("condition", "card.(")}}, Edges: []Edge{{"t", PortNext, "i"}}}, "Condition"},
-		{"bad template", Graph{Nodes: []Node{trigger, {ID: "c", Type: TypeComment, Config: cfg("text", "{{nope}}")}}, Edges: []Edge{{"t", PortNext, "c"}}}, "nope"},
+		{"required", Graph{Nodes: []Node{trigger, {ID: "c", Type: TypeComment}}, Edges: []Edge{{"t", PortEvent, "c"}}}, "Text is required"},
+		{"bad expr", Graph{Nodes: []Node{trigger, {ID: "i", Type: TypeIf, Config: cfg("condition", "card.(")}}, Edges: []Edge{{"t", PortEvent, "i"}}}, "Condition"},
+		{"bad template", Graph{Nodes: []Node{trigger, {ID: "c", Type: TypeComment, Config: cfg("text", "{{nope}}")}}, Edges: []Edge{{"t", PortEvent, "c"}}}, "nope"},
 		{"unconnected", Graph{Nodes: []Node{trigger, {ID: "c", Type: TypeComment, Config: cfg("text", "x")}}}, "not connected"},
 		{"bad port", Graph{Nodes: []Node{trigger, {ID: "c", Type: TypeComment, Config: cfg("text", "x")}}, Edges: []Edge{{"t", "nope", "c"}}}, "no output"},
-		{"into trigger", Graph{Nodes: []Node{trigger, {ID: "t2", Type: TypeManual}}, Edges: []Edge{{"t", PortNext, "t2"}}}, "is a trigger"},
+		{"into trigger", Graph{Nodes: []Node{trigger, {ID: "t2", Type: TypeManual}}, Edges: []Edge{{"t", PortEvent, "t2"}}}, "is a trigger"},
 		{"loop", Graph{
 			Nodes: []Node{trigger, {ID: "a", Type: TypeComment, Config: cfg("text", "x")}, {ID: "b", Type: TypeComment, Config: cfg("text", "y")}},
-			Edges: []Edge{{"t", PortNext, "a"}, {"a", PortNext, "b"}, {"b", PortNext, "a"}},
+			Edges: []Edge{{"t", PortEvent, "a"}, {"a", PortText, "b"}, {"b", PortText, "a"}},
 		}, "loop"},
-		{"number", Graph{Nodes: []Node{trigger, {ID: "d", Type: TypeDelay, Config: cfg("seconds", "soon")}}, Edges: []Edge{{"t", PortNext, "d"}}}, "must be a number"},
-		{"option", Graph{Nodes: []Node{trigger, {ID: "m", Type: TypeMoveCard, Config: cfg("to_kind", "nowhere")}}, Edges: []Edge{{"t", PortNext, "m"}}}, "not an option"},
+		{"number", Graph{Nodes: []Node{trigger, {ID: "d", Type: TypeDelay, Config: cfg("seconds", "soon")}}, Edges: []Edge{{"t", PortEvent, "d"}}}, "must be a number"},
+		{"option", Graph{Nodes: []Node{trigger, {ID: "m", Type: TypeMoveCard, Config: cfg("to_kind", "nowhere")}}, Edges: []Edge{{"t", PortEvent, "m"}}}, "not an option"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -666,7 +666,7 @@ func TestValidate(t *testing.T) {
 	}
 	ok := Graph{
 		Nodes: []Node{trigger, {ID: "c", Type: TypeComment, Config: cfg("text", "x")}, {ID: "r", Type: TypeRetry, Config: cfg("max", float64(2))}},
-		Edges: []Edge{{"t", PortNext, "c"}, {"c", PortNext, "r"}, {"r", PortAgain, "c"}},
+		Edges: []Edge{{"t", PortEvent, "c"}, {"c", PortText, "r"}, {"r", PortAgain, "c"}},
 	}
 	if p := Validate(ok); len(p) != 0 {
 		t.Fatalf("a loop through Retry must be valid: %+v", p)
@@ -676,7 +676,7 @@ func TestValidate(t *testing.T) {
 func TestExpressionsCannotRunAway(t *testing.T) {
 	// a huge comprehension is stopped by the cost limit instead of hanging the engine
 	expr := `[1,2,3,4,5,6,7,8,9,10].all(a, [1,2,3,4,5,6,7,8,9,10].all(b, [1,2,3,4,5,6,7,8,9,10].all(c, [1,2,3,4,5,6,7,8,9,10].all(d, [1,2,3,4,5,6,7,8,9,10].all(e, a+b+c+d+e > 0)))))`
-	if _, err := EvalBool(expr, Scope{"card": map[string]any{}, "event": map[string]any{}, "run": map[string]any{}, "nodes": map[string]any{}}); err == nil {
+	if _, err := EvalBool(expr, Scope{"card": map[string]any{}, "event": map[string]any{}, "run": map[string]any{}, "input": ""}); err == nil {
 		t.Fatal("the cost limit did not stop it")
 	}
 }

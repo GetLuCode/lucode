@@ -59,7 +59,7 @@
       {
         "id": "ask",
         "label": "Ask Google AI Mode",
-        "description": "Asks in a new conversation of its own, which closes afterwards. It waits its turn behind any other conversation. Reads as nodes.<id>.answer.",
+        "description": "Asks in a new conversation of its own, which closes afterwards. It waits its turn behind any other conversation. \"answer\" gives what it said, as text.",
         "icon": "assets/gemini.svg",
         "fields": [
           {
@@ -70,7 +70,7 @@
             "help": "This text goes to Google."
           }
         ],
-        "ports": ["next"],
+        "ports": ["answer"],
         "timeoutSeconds": 720
       }
     ],

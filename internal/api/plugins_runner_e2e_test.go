@@ -201,7 +201,7 @@ func runNode(t *testing.T, r *pluginRig, card dbpkg.KanbanCard, nodeType string,
 			{ID: "m", Type: flows.TypeManual},
 			{ID: "p", Type: nodeType, Config: config},
 		},
-		Edges: []flows.Edge{{From: "m", Port: "next", To: "p"}},
+		Edges: []flows.Edge{{From: "m", Port: flows.PortEvent, To: "p"}},
 	})
 	f, _ = dbpkg.GetFlow(r.h.db, f.ID)
 	run, err := r.h.flows.StartManual(f, card.ID)

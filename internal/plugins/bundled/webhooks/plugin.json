@@ -28,7 +28,7 @@
       {
         "id": "send",
         "label": "Send to webhook",
-        "description": "Posts a message to the webhook in this plugin's settings. Takes \"failed\" if the address is not allowed or the service refuses. Reads as nodes.<id>.service, .status.",
+        "description": "Posts a message to the webhook in this plugin's settings. Takes \"failed\" if the address is not allowed or the service refuses. \"sent\" gives JSON: service, status.",
         "icon": "assets/icon.svg",
         "fields": [
           {
@@ -40,7 +40,7 @@
             "help": "Long messages are cut. Mentions in it do not notify anyone."
           }
         ],
-        "ports": ["next"],
+        "ports": ["sent"],
         "timeoutSeconds": 30
       }
     ],

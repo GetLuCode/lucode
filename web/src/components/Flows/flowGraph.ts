@@ -1,4 +1,4 @@
-import type { FlowEdge, FlowGraph, FlowNode, FlowNodeType } from '../../types'
+import type { FlowEdge, FlowGraph, FlowNode, FlowNodeType, FlowPin } from '../../types'
 
 // The translation between the canvas and lucode's stored graph. It has no litegraph import
 // so it can be tested without a browser. The stored graph belongs to lucode: if the
@@ -67,6 +67,37 @@ export function nodeSummary(t: FlowNodeType, config: Record<string, unknown>): s
     return String(v).replace(/\s+/g, ' ').slice(0, 40)
   }
   return ''
+}
+
+// Values travel on the wires: a node gives its answer through the output it takes, and that
+// answer reaches the input of the nodes connected to it and starts them. There is no "next".
+
+// The outputs of a node type with what each carries. A plugin's node may only list names.
+export function outputPins(t: Pick<FlowNodeType, 'ports' | 'outputs'>): FlowPin[] {
+  if (t.outputs?.length) return t.outputs
+  return (t.ports ?? []).map(name => ({ name, type: name === 'failed' ? 'text' : 'any' }))
+}
+
+// The input of a node type: every node but a trigger has one.
+export function inputPin(t: Pick<FlowNodeType, 'category' | 'input'>): FlowPin | null {
+  if (t.category === 'trigger') return null
+  return t.input ?? { name: 'input', type: 'any' }
+}
+
+// litegraph's slot type for a pin. An empty type takes anything, and litegraph refuses to
+// wire two different named types: text into a JSON input is refused while dragging.
+export function slotType(pin: FlowPin): string {
+  return pin.type === 'any' || !pin.type ? '' : pin.type
+}
+
+// The colors of the wires, by what they carry.
+export const PIN_COLORS: Record<string, string> = { text: '#c9a45c', json: '#5ca8c9', any: '#9a97a0' }
+
+// A value from a run, as the panel shows it: text as it is, anything else as JSON.
+export function valueText(v: unknown): string {
+  if (v === undefined || v === null) return ''
+  if (typeof v === 'string') return v
+  return JSON.stringify(v, null, 2)
 }
 
 // The name each output shows: a field can name one (an AI evaluate's answers, a Switch's cases).

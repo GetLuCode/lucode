@@ -146,7 +146,7 @@ Rules the hub checks:
 ```js
 module.exports = {
   models: { mine: { turn(req) { return "the answer, as markdown"; } } },
-  nodes:  { ask(input) { return { port: "next", output: { answer: "..." } }; } },
+  nodes:  { ask(input) { return { port: "answer", output: "the answer, as text" }; } },
   rpc:    { renderMain(args) { return { type: "text", text: "Hello" }; }, summarize(args) { return { toast: "Done" }; } },
   events: { installed(e) {}, upgraded(e) {}, uninstalling(e) {}, sessionDeleted(e) {}, sessionClosed(e) {}, cardMoved(e) {} },
 };
@@ -156,10 +156,14 @@ The runner entry exports only `nodes` and `rpc`.
 
 - **`models.<id>.turn(req)`**: `req` is `{sessionId, projectId, message, image: {base64, mediaType} | null, model}`. It
   must return text.
-- **`nodes.<id>(input)`**: `input` is `{config, card, event, nodes, run, projectId}`. Return `{port, output}`. Without a
-  port it takes the first one you declared. Only a declared port can be taken. `output` is at most 256 KB, and later
-  nodes read it as `nodes.<nodeId>.<field>`. **Throw on failure**: that takes `failed`, or fails the run if `failed` is
-  not connected. Returning `{port: "failed"}` with nothing connected there ends the path without an error.
+- **`nodes.<id>(input)`**: `input` is `{config, card, event, input, run, projectId}`, where `input.input` is the value
+  that reached the node through its input pin. Return `{port, output}`. Without a port it takes the first one you
+  declared. Only a declared port can be taken. `output` is at most 256 KB and is the node's answer: it travels on the
+  wires of that port to the nodes connected there, and its arrival starts them. Text reaches them as text (`{{input}}`);
+  an object is JSON, which they read with a Get JSON prop node (`{json.field}`). There is no `nodes.<id>` variable. Name
+  ports after what they give (`answer`, `digest`), not `next`. **Throw on failure**: that takes `failed`, or fails the
+  run if `failed` is not connected. Returning `{port: "failed"}` with nothing connected there ends the path without an
+  error.
 - **`rpc.<name>(args)`**: called from pages, actions and `lucode.runners.call`. `args` includes `projectId` and the ids
   given. The browser can only call an rpc named by a contribution, or offered as an action in a view tree this plugin
   already returned, so an rpc nothing names is not reachable from a browser.

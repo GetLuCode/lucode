@@ -233,7 +233,7 @@ func TestPushNodeReachesADeviceThatCanReadIt(t *testing.T) {
 			{ID: "t", Type: flows.TypeManual},
 			{ID: "p", Type: flows.TypePushNotification, Config: map[string]any{"title": "Título", "body": "Run {{run.depth}} ñandú"}},
 		},
-		Edges: []flows.Edge{{From: "t", Port: flows.PortNext, To: "p"}},
+		Edges: []flows.Edge{{From: "t", Port: flows.PortEvent, To: "p"}},
 	})
 	f, err := dbpkg.GetFlow(h.db, f.ID) // with its published version
 	if err != nil {

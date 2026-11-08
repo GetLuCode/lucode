@@ -442,6 +442,13 @@ func GetMessage(db *sql.DB, messageID string) (Message, error) {
 	return m, nil
 }
 
+// LastAssistantMessage is the text of the newest assistant message of a session, or "".
+func LastAssistantMessage(db *sql.DB, sessionID string) string {
+	var content string
+	_ = db.QueryRow(`SELECT content FROM messages WHERE session_id=? AND role='assistant' ORDER BY seq DESC LIMIT 1`, sessionID).Scan(&content)
+	return content
+}
+
 func ListMessages(db *sql.DB, sessionID string) ([]Message, error) {
 	rows, err := db.Query(
 		`SELECT id, session_id, role, content, seq, created_at, starred FROM messages WHERE session_id=? ORDER BY seq ASC`,

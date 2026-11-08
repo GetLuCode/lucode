@@ -1,22 +1,23 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { LGraph, LGraphCanvas, LiteGraph } from 'litegraph.js'
 import 'litegraph.js/css/litegraph.css'
-import type { FlowGraph, FlowNodeType } from '../../types'
-import { STEP_COLORS, canvasType, defaultConfig, nodeSummary, portLabels, serializeCanvas, type CanvasLink, type CanvasNode } from './flowGraph'
+import type { FlowGraph, FlowNodeType, FlowPin } from '../../types'
+import { PIN_COLORS, STEP_COLORS, canvasType, defaultConfig, inputPin, nodeSummary, outputPins, portLabels, serializeCanvas, slotType, type CanvasLink, type CanvasNode } from './flowGraph'
 
 // The litegraph canvas. It only draws and edits: the hub validates and runs flows, and
-// litegraph's own graph runtime is never started.
+// litegraph's own graph runtime is never started. Like a node graph of values: each output
+// carries the node's answer to the input it is wired to, and that arrival starts the node.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const LG = LiteGraph as any
 
-const SLOT = 'flow'
 const NODE_WIDTH = 210
 const SUMMARY_HEIGHT = 26
 const CATEGORY_COLOR: Record<string, [string, string]> = {
   trigger: ['#7a4f9e', '#231a2c'],
   control: ['#3f6f9e', '#18222c'],
   action: ['#2f7a68', '#15251f'],
+  data: ['#8a6a2f', '#261f14'],
 }
 
 export interface FlowCanvasHandle {
@@ -44,6 +45,12 @@ let cleared = false
 let offPlugins = new Set<string>()
 
 // The name on an output is only a label: the port keeps its id, which is what edges store.
+// A slot is drawn in the color of what it carries, so text, JSON and anything tell apart.
+function slotExtra(pin: FlowPin) {
+  const color = PIN_COLORS[pin.type] ?? PIN_COLORS.any
+  return { pinType: pin.type, color_on: color, color_off: color }
+}
+
 function labelPorts(node: any, t: FlowNodeType, config: Record<string, unknown>) {
   const labels = portLabels(t, config)
   for (const out of node.outputs ?? []) out.label = labels.get(out.name)
@@ -64,9 +71,10 @@ function registerTypes(types: FlowNodeType[]) {
     const seen = JSON.stringify(t)
     if (registered.get(t.type) === seen) continue
     registered.set(t.type, seen)
+    const input = inputPin(t)
     function Node(this: any) {
-      if (t.category !== 'trigger') this.addInput('', SLOT)
-      for (const port of t.ports ?? []) this.addOutput(port, SLOT)
+      if (input) this.addInput(input.name, slotType(input), slotExtra(input))
+      for (const pin of outputPins(t)) this.addOutput(pin.name, slotType(pin), slotExtra(pin))
       this.properties = { flowId: undefined, config: defaultConfig(t) }
       labelPorts(this, t, this.properties.config)
       this.resizable = false
@@ -83,13 +91,13 @@ function registerTypes(types: FlowNodeType[]) {
       const slots = Math.max(this.inputs?.length ?? 0, this.outputs?.length ?? 0, 1)
       return [NODE_WIDTH, slots * LG.NODE_SLOT_HEIGHT + SUMMARY_HEIGHT]
     }
-    // litegraph takes one link per input, so an input is added whenever all are in use:
-    // several paths can arrive at any node, which Join and merging branches need.
+    // litegraph takes one link per input, so another slot of the same input is added whenever
+    // all are in use: several paths can arrive at any node, which Join and merging branches need.
     proto.onConnectionsChange = function (this: any, kind: number) {
-      if (kind !== LG.INPUT || !this.inputs) return
+      if (kind !== LG.INPUT || !this.inputs || !input) return
       const free = this.inputs.filter((i: any) => i.link == null).length
       if (free === 0) {
-        this.addInput('', SLOT)
+        this.addInput(input.name, slotType(input), slotExtra(input))
       } else if (free > 1) {
         for (let i = this.inputs.length - 1; i > 0; i--) {
           if (this.inputs[i].link == null) { this.removeInput(i); break }
@@ -169,6 +177,11 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
     c.render_canvas_border = false
     c.show_info = false
     c.connections_width = 2
+    // a wire takes the color of what it carries
+    const linkColors = (LGraphCanvas as any).link_type_colors ?? ((LGraphCanvas as any).link_type_colors = {})
+    linkColors.text = PIN_COLORS.text
+    linkColors.json = PIN_COLORS.json
+    linkColors[''] = PIN_COLORS.any
 
     const changed = () => { if (!loading.current) events.current.onChange() }
     g.onNodeAdded = (n: any) => {
@@ -269,7 +282,9 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
           const from = made.get(e.from)
           const to = made.get(e.to)
           if (!from || !to) continue
-          const out = from.findOutputSlot(e.port)
+          let out = from.findOutputSlot(e.port)
+          // a graph saved with the old "next" output: the hub reads it as the node's first output
+          if (out < 0 && e.port === 'next' && from.outputs?.length) out = 0
           if (out < 0 || !to.inputs) continue
           const free = to.inputs.findIndex((i: any) => i.link == null)
           from.connect(out, to, free < 0 ? to.inputs.length - 1 : free)

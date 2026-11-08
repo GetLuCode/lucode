@@ -26,6 +26,7 @@ import (
 func (h *Handler) StartFlows(ctx context.Context) {
 	h.flows = flows.NewEngine(h.db, flowHost{h})
 	h.flows.EventTap = h.pluginEventTap
+	flows.MigrateStoredGraphs(h.db) // flows saved before values travelled on the edges
 	h.manager.ToolGate = func(req sessionpkg.ToolRequest) (string, string) { return h.flowToolGate(ctx, req) }
 	if projects, err := dbpkg.ListProjects(h.db); err == nil {
 		for _, p := range projects {
@@ -90,8 +91,9 @@ func (h *Handler) notifyFlows() {
 }
 
 // FlowTurnEnded logs the end of a turn on a card (Manager.OnTurnEnd).
+// Its reply is the agent's last message: a Run agent gives it through its "reply" output.
 func (h *Handler) FlowTurnEnded(sessID string) {
-	h.recordTurnEvent(sessID, dbpkg.EventTurnEnded, nil)
+	h.recordTurnEvent(sessID, dbpkg.EventTurnEnded, map[string]any{"reply": dbpkg.LastAssistantMessage(h.db, sessID)})
 }
 
 func (h *Handler) recordTurnEvent(sessID, typ string, payload map[string]any) {

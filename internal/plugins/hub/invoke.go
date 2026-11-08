@@ -274,7 +274,7 @@ func (h *Host) RunNode(ctx context.Context, call plugins.NodeCall) (string, map[
 	}
 	timeout := time.Duration(secs) * time.Second
 	arg := map[string]any{
-		"config": call.Config, "card": call.Card, "event": call.Event, "nodes": call.Nodes, "run": call.Run, "projectId": call.ProjectID,
+		"config": call.Config, "card": call.Card, "event": call.Event, "input": call.Input, "run": call.Run, "projectId": call.ProjectID,
 	}
 	c := plugins.Context{ProjectID: call.ProjectID, CardID: call.CardID, Kind: "flow", FlowID: call.FlowID, RunID: call.RunID, Depth: call.Depth}
 	var res any
