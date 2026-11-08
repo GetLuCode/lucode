@@ -168,6 +168,43 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, Props>(function FlowCanva
       { content: 'Delete', callback: () => { g.remove(n); select(null) } },
     ]
 
+    // Dropping a link on empty space lists the nodes it could go to, and makes the one picked
+    // already linked. Dragged from an output that is every node with an input; from an input,
+    // every node with an output.
+    c.showConnectionMenu = (opts: any) => {
+      if (c.read_only || !opts?.e) return false
+      const fromOutput = !!(opts.nodeFrom && opts.slotFrom)
+      const anchor = fromOutput ? opts.nodeFrom : opts.nodeTo
+      const slot = fromOutput ? opts.slotFrom : opts.slotTo
+      const slotIndex = (fromOutput ? anchor.outputs : anchor.inputs).indexOf(slot)
+      if (slotIndex < 0) return false
+      const fits = nodeTypes.filter(t => (fromOutput ? t.category !== 'trigger' : (t.ports ?? []).length > 0))
+      if (!fits.length) return false
+      const items: any[] = []
+      for (const category of ['control', 'action', 'trigger']) {
+        const group = fits.filter(t => t.category === category)
+        if (!group.length) continue
+        items.push({ content: category[0].toUpperCase() + category.slice(1), disabled: true })
+        for (const t of group) {
+          items.push({
+            content: t.title,
+            callback: () => {
+              const node = LG.createNode(canvasType(t))
+              node.pos = [opts.e.canvasX + (fromOutput ? 20 : -NODE_WIDTH - 20), opts.e.canvasY - 20]
+              g.add(node)
+              if (fromOutput) anchor.connect(slotIndex, node, 0)
+              else node.connect(0, anchor, slotIndex)
+              c.selectNode(node)
+              c.setDirty(true, true)
+            },
+          })
+        }
+      }
+      new LG.ContextMenu(items, { event: opts.e, title: fromOutput ? 'Connect to' : 'Connect from' })
+      return false
+    }
+    LG.release_link_on_empty_shows_menu = true
+
     // litegraph's keyboard shortcuts ignore read_only: a past run must not change on screen
     for (const name of ['deleteSelectedNodes', 'pasteFromClipboard']) {
       const original = c[name]
