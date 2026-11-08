@@ -220,6 +220,14 @@ func (s pluginServices) AddCardTag(cardID, tag string) error {
 }
 
 func (s pluginServices) Broadcast(sessionID string, ev map[string]any) {
+	// a log line goes only to the administrators who switched that plugin's log on
+	if ev["type"] == "plugin_log" {
+		id, _ := ev["pluginId"].(string)
+		if data, err := json.Marshal(ev); err == nil {
+			hub.broadcastPluginLog(id, data)
+		}
+		return
+	}
 	if s.h.bus != nil {
 		s.h.bus.Broadcast(sessionID, ev)
 	}

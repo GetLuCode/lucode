@@ -159,6 +159,9 @@ type PageDef struct {
 	Render string   `json:"render,omitempty"`
 	UI     string   `json:"ui,omitempty"`
 	RPC    []string `json:"rpc,omitempty"`
+	// Placement says where the page lives: "" is a tab of the project, "settings" a pane of the
+	// plugin's own page in Settings, labelled with the page's label.
+	Placement string `json:"placement,omitempty"`
 }
 
 // Style is the stylesheet beside a frontend page's script: dist/main.js → dist/main.css.
@@ -439,6 +442,9 @@ func checkIcon(where, p string) error {
 // checkPage: a page is drawn one way, view trees or a frontend, and a frontend names every rpc it
 // may call, because that list is all the browser lets it reach.
 func checkPage(d PageDef) error {
+	if d.Placement != "" && d.Placement != "settings" {
+		return fmt.Errorf(`plugin.json: page %q: placement %q must be "settings" or left out`, d.ID, d.Placement)
+	}
 	switch {
 	case d.Render != "" && d.UI != "":
 		return fmt.Errorf(`plugin.json: page %q: use "render" or "ui", not both`, d.ID)

@@ -85,6 +85,9 @@ type Options struct {
 	HTTP    HTTPOptions
 	// ScrubLog removes secrets from anything that ends up in the plugin's log.
 	ScrubLog func(string) string
+	// OnLog hears every line as it is logged, already scrubbed. It runs on the caller's
+	// goroutine, so it must not block.
+	OnLog func(LogEntry)
 	// HeapCap overrides the heap watchdog's cap (tests).
 	HeapCap uint64
 }
@@ -140,7 +143,10 @@ func (r *Runtime) Log(level, msg string) {
 	if r.opts.ScrubLog != nil {
 		msg = r.opts.ScrubLog(msg)
 	}
-	r.logs.add(level, msg)
+	e := r.logs.add(level, msg)
+	if r.opts.OnLog != nil {
+		r.opts.OnLog(e)
+	}
 }
 
 // Context is what lucode.context reports.

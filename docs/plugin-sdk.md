@@ -126,6 +126,8 @@ are refused. **Ask for the least that works**: every line is one more thing an a
 
 Rules the hub checks:
 
+- A page with `"placement": "settings"` is not a tab of the project: it is a pane of the plugin's page in Settings,
+  named with its `label` (a place for tests and diagnostics). It takes no project, so `args.projectId` can be empty.
 - Models and pages need a server target. Settings too: they never reach a runner by themselves.
 - A page has `render` (an rpc that returns a view tree) or `ui` (a frontend script in the zip), not both. A page with
   `ui` lists in `rpc` every rpc its frontend calls, 64 at most; nothing else is reachable from it.

@@ -226,6 +226,10 @@
         "rpc": {
           "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/definitions/rpcName" },
           "description": "Every rpc the frontend may call. Nothing else is reachable from it."
+        },
+        "placement": {
+          "enum": ["settings"],
+          "description": "Left out, the page is a tab of the project. \"settings\": a pane of the plugin's page in Settings, named with the label."
         }
       }
     },

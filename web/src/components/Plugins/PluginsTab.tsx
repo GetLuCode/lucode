@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { IconAlertTriangle, IconCheck, IconCopy, IconExternalLink, IconLoader2, IconLock, IconPlug, IconPuzzle, IconRefresh, IconServer2, IconSettings, IconTerminal2, IconTrash, IconUpload } from '@tabler/icons-react'
 import * as api from '../../api'
-import { httpStatusOf, pluginErrorMessage, pluginTargets, runnerPairing, runnerPolicyProblem, safeHttpUrl, targetsLabel } from '../../lib/plugins'
+import { httpStatusOf, pluginErrorMessage, pluginSettingsPath, pluginTargets, runnerPairing, runnerPolicyProblem, safeHttpUrl, targetsLabel } from '../../lib/plugins'
 import { copyText } from '../../lib/copyText'
+import { addWSMessageHandler, getWSConnection, sendWSMessage } from '../../hooks/useWSConnection'
 import { useAuthStore } from '../../store/auth'
 import { usePlugins } from '../../store/plugins'
 import type { InstalledPlugin, PluginCatalogEntry, PluginInspection, PluginRunnerInfo, PluginSettingDef } from '../../types'
 import { PluginDialog } from './PluginDialog'
 import { PluginIcon } from './PluginIcon'
 import { PluginInstallDialog } from './PluginInstallDialog'
+import { PluginSettingsPagePane } from './PluginPage'
 import './Plugins.css'
 
 // Settings → Plugins. Everything that changes something needs an admin; everyone else sees the same
@@ -167,7 +169,7 @@ function CatalogRow({ entry, readOnly, onReview, onFail }: { entry: PluginCatalo
   )
 }
 
-type Pane = 'settings' | 'runners' | 'logs' | 'about'
+type Pane = 'settings' | 'runners' | 'logs' | 'about' | `page:${string}`
 
 function PluginRow({ plugin, readOnly, onRefused }: { plugin: InstalledPlugin; readOnly: boolean; onRefused: () => void }) {
   const { manifest, enabled, status, error } = plugin
@@ -223,8 +225,6 @@ function PluginRow({ plugin, readOnly, onRefused }: { plugin: InstalledPlugin; r
   )
 }
 
-export const pluginSettingsPath = (id: string) => `/settings/plugin/${encodeURIComponent(id)}`
-
 // /settings/plugin/:pluginId — the plugin's own settings page: its fields, runners, logs and about.
 export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
   const installed = usePlugins(s => s.installed)
@@ -265,11 +265,14 @@ function PluginDetail({ plugin, readOnly, onRefused }: { plugin: InstalledPlugin
         if (httpStatusOf(e) === 404 || httpStatusOf(e) === 0) setRunnersAbsent(true) // an older hub: no section, no complaint
         else setRunnersError(pluginErrorMessage(e))
       })
-  }, [hasRunnerTarget, manifest.id])
+  }, [hasRunnerTarget, manifest.id, setRunners, setRunnersError, setRunnersAbsent])
   useEffect(() => { loadRunners() }, [loadRunners])
 
+  // pages the plugin put in its own settings (placement "settings"), e.g. its tests
+  const pages = usePlugins(s => s.ui.pages).filter(p => p.pluginId === manifest.id && p.placement === 'settings')
   const panes: { id: Pane; label: string }[] = [
     ...(settings.length > 0 ? [{ id: 'settings' as const, label: 'Settings' }] : []),
+    ...pages.map(p => ({ id: `page:${p.id}` as const, label: p.label })),
     ...(hasRunnerTarget && !runnersAbsent ? [{ id: 'runners' as const, label: 'Runners' }] : []),
     { id: 'logs', label: 'Logs' },
     { id: 'about', label: 'About' },
@@ -289,6 +292,7 @@ function PluginDetail({ plugin, readOnly, onRefused }: { plugin: InstalledPlugin
       </div>
       {shown === 'settings' && <PluginSettingsForm pluginId={manifest.id} defs={settings} readOnly={readOnly} onRefused={onRefused} />}
       {shown === 'runners' && <PluginRunners plugin={plugin} runners={runners} error={runnersError} readOnly={readOnly} onRefused={onRefused} onRefresh={loadRunners} />}
+      {pages.map(p => shown === `page:${p.id}` && <PluginSettingsPagePane key={p.id} pluginId={manifest.id} page={p} />)}
       {shown === 'logs' && <PluginLogs pluginId={manifest.id} />}
       {shown === 'about' && <PluginAbout plugin={plugin} readOnly={readOnly} onUninstall={() => setUninstalling(true)} />}
       {uninstalling && <UninstallDialog plugin={plugin} onClose={() => setUninstalling(false)} onRefused={onRefused} onDone={() => navigate('/settings/plugins', { replace: true })} />}
@@ -569,6 +573,7 @@ function PluginRunners({ plugin, runners, error, readOnly, onRefused, onRefresh 
   )
 }
 
+const LIVE_LINES = 500 // as many as the hub keeps
 interface LogLine { time: string; level: string; text: string }
 function logLines(raw: unknown): LogLine[] {
   const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { logs?: unknown }).logs) ? (raw as { logs: unknown[] }).logs : []
@@ -594,11 +599,41 @@ function PluginLogs({ pluginId }: { pluginId: string }) {
   }, [pluginId])
   useEffect(() => { load() }, [load])
 
+  // Off by default: lines only travel while this switch is on, and only to this browser.
+  const [live, setLive] = useState(false)
+  useEffect(() => {
+    if (!live) return
+    const follow = (on: boolean) => sendWSMessage({ type: 'plugin_logs', plugin_id: pluginId, on })
+    follow(true)
+    const stop = addWSMessageHandler(e => {
+      let ev: { type?: string; pluginId?: string } & Partial<LogLine>
+      try { ev = JSON.parse(e.data as string) } catch { return }
+      if (ev.type !== 'plugin_log' || ev.pluginId !== pluginId) return
+      const line = { time: String(ev.time ?? ''), level: String(ev.level ?? ''), text: String(ev.text ?? '') }
+      setLines(prev => [...(prev ?? []), line].slice(-LIVE_LINES))
+    })
+    // a new connection forgets who was following: ask again
+    const again = () => follow(true)
+    let ws: Awaited<ReturnType<typeof getWSConnection>> | null = null
+    let closed = false
+    void Promise.resolve(getWSConnection()).then(w => { if (closed) return; ws = w; w.addEventListener('open', again) })
+    return () => {
+      closed = true
+      ws?.removeEventListener('open', again)
+      stop()
+      follow(false)
+    }
+  }, [live, pluginId])
+
   if (refused) return <p className="plugin-readonly"><IconLock size={14} aria-hidden /> Only an administrator can read a plugin's logs.</p>
   return (
     <div className="plugin-logs">
       <div className="plugin-logs__bar">
-        <span className="plugin-logs__note">Since the hub last started.</span>
+        <span className="plugin-logs__note">{live ? 'Following live.' : 'Since the hub last started.'}</span>
+        <span className="plugin-logs__live">
+          <span>Live</span>
+          <PluginSwitch checked={live} busy={false} disabled={false} label="Follow the log live" onChange={on => { setLive(on); if (on) load() }} />
+        </span>
         <button className="plugin-icon-btn" onClick={load} aria-label="Refresh" title="Refresh"><IconRefresh size={14} /></button>
       </div>
       {error && <p className="pv-error" role="alert"><IconAlertTriangle size={14} aria-hidden /><span>{error}</span></p>}

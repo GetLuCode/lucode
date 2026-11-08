@@ -189,17 +189,20 @@ func (l *logRing) since(seq int) ([]LogEntry, int) {
 	return append([]LogEntry{}, l.lines[len(l.lines)-n:]...), l.total
 }
 
-func (l *logRing) add(level, text string) {
+// add keeps a line and returns it as kept (cut to the line limit).
+func (l *logRing) add(level, text string) LogEntry {
 	if len(text) > maxLogLine {
 		text = text[:maxLogLine] + "..."
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.total++
-	l.lines = append(l.lines, LogEntry{Time: time.Now().UTC().Format(time.RFC3339), Level: level, Text: text})
+	e := LogEntry{Time: time.Now().UTC().Format(time.RFC3339), Level: level, Text: text}
+	l.lines = append(l.lines, e)
 	if len(l.lines) > maxLogLines {
 		l.lines = append([]LogEntry(nil), l.lines[len(l.lines)-maxLogLines:]...)
 	}
+	return e
 }
 
 func (l *logRing) snapshot() []LogEntry {

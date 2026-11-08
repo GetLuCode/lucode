@@ -197,6 +197,8 @@ export type WSEvent =
   | { type: 'plugins_changed' }
   // a webhook reached a plugin: no body, the plugin's page asks the plugin to show it
   | { type: 'plugin_webhook'; pluginId: string; provider: string; endpoint: string; projectId: string; receivedAt: number }
+  // a line a plugin logged, sent only to an administrator who switched that plugin's live log on
+  | { type: 'plugin_log'; pluginId: string; time: string; level: string; text: string }
 
 // Structured assistant message content
 export interface AssistantMessage {
@@ -480,7 +482,7 @@ export interface PluginRunnerInfo { runnerId: string; hostname: string; online: 
 export interface PluginModelContribution { pluginId: string; id: string; value: string; label: string; mode: string; hint: string; icon: string; accent?: string; images: boolean; loader: string; waitingText: string; pluginName: string }
 export interface PluginConversationContribution { pluginId: string; id: string; model: string; title: string; emptyText: string; showUrl: boolean }
 // `ui`: the page has a frontend of its own (it runs in a Worker), and `render` is empty.
-export interface PluginPageContribution { pluginId: string; id: string; label: string; icon: string; render: string; ui: boolean }
+export interface PluginPageContribution { pluginId: string; id: string; label: string; icon: string; render: string; ui: boolean; placement: string }
 export interface PluginActionContribution { pluginId: string; id: string; label: string; icon: string; rpc: string }
 export interface PluginUI { models: PluginModelContribution[]; conversations: PluginConversationContribution[]; pages: PluginPageContribution[]; chatActions: PluginActionContribution[]; cardActions: PluginActionContribution[] }
 export interface PluginConversationRow {

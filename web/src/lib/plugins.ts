@@ -71,6 +71,9 @@ export const isSafeAssetType = (type: string): boolean => ASSET_TYPES.has(type.s
 
 // ---- Contributions ---------------------------------------------------------------------------
 
+// where a plugin's own settings page lives
+export const pluginSettingsPath = (id: string) => `/settings/plugin/${encodeURIComponent(id)}`
+
 export const emptyPluginUI = (): PluginUI => ({ models: [], conversations: [], pages: [], chatActions: [], cardActions: [] })
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
@@ -123,6 +126,7 @@ export function mergeContributions(raw: unknown): PluginUI {
       icon: str(o.icon),
       render: str(o.render),
       ui: str(o.ui) !== '',
+      placement: str(o.placement),
     })),
     chatActions: list('chatActions', (o, pluginId, id) => ({ pluginId, id, label: str(o.label) || id, icon: str(o.icon), rpc: str(o.rpc) })).filter(a => a.rpc),
     cardActions: list('cardActions', (o, pluginId, id) => ({ pluginId, id, label: str(o.label) || id, icon: str(o.icon), rpc: str(o.rpc) })).filter(a => a.rpc),

@@ -527,3 +527,19 @@ func containsAny(s, want string) bool {
 	}
 	return false
 }
+
+// OnLog hears each line lucode.log writes, scrubbed and cut like the kept one.
+func TestOnLogHearsEachLine(t *testing.T) {
+	pkg := testPackage(t, simpleManifest, map[string]string{"main.js": `module.exports={rpc:{go(){lucode.log.info("hi", {a:1}); lucode.log.error("bad")}}}`})
+	var heard []LogEntry
+	r := NewRuntime(Options{Package: pkg, Target: TargetServer, OnLog: func(e LogEntry) { heard = append(heard, e) }})
+	if _, err := call(t, r, 2*time.Second, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(heard) != 2 || heard[0].Level != "info" || heard[0].Text != `hi {"a":1}` || heard[1].Level != "error" || heard[1].Text != "bad" {
+		t.Fatalf("heard %+v", heard)
+	}
+	if kept := r.Logs(); len(kept) != 2 || kept[0] != heard[0] {
+		t.Fatalf("kept %+v", kept)
+	}
+}

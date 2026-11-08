@@ -23,7 +23,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const renameProject = useStore(s => s.renameProject)
   const importSession = useStore(s => s.importSession)
   const importRef = useRef<HTMLInputElement>(null)
-  const pluginPages = usePlugins(s => s.ui.pages)
+  const pluginPages = usePlugins(s => s.ui.pages).filter(p => p.placement !== 'settings') // those live in the plugin's settings
   const runningCount = useStore(s => s.sessions.filter(x => x.card_id && (s.sessionStatus[x.id] ?? x.status) === 'running').length)
 
   const isMobile = useIsMobile()

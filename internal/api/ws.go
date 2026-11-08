@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+
+	natspkg "claude-orchestrator/internal/natsbus"
 )
 
 var upgrader = websocket.Upgrader{
@@ -18,6 +20,8 @@ var upgrader = websocket.Upgrader{
 type wsConn struct {
 	mu sync.Mutex
 	c  *websocket.Conn
+	// plugins whose log this browser asked to follow (an administrator's switch)
+	logs map[string]bool
 }
 
 func (w *wsConn) write(data []byte) {
@@ -53,6 +57,35 @@ func (h *wsHub) broadcast(data []byte) {
 	defer h.mu.RUnlock()
 	for _, wc := range h.clients {
 		wc.write(data)
+	}
+}
+
+// setPluginLog starts or stops sending a plugin's log lines to one browser.
+func (h *wsHub) setPluginLog(c *websocket.Conn, pluginID string, on bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	wc, ok := h.clients[c]
+	if !ok {
+		return
+	}
+	if !on {
+		delete(wc.logs, pluginID)
+		return
+	}
+	if wc.logs == nil {
+		wc.logs = map[string]bool{}
+	}
+	wc.logs[pluginID] = true
+}
+
+// broadcastPluginLog sends a log line only to the browsers following that plugin.
+func (h *wsHub) broadcastPluginLog(pluginID string, data []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, wc := range h.clients {
+		if wc.logs[pluginID] {
+			wc.write(data)
+		}
 	}
 }
 
@@ -101,6 +134,10 @@ func (h *Handler) globalWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A plugin's log is for an administrator, as over HTTP; a connection of anyone else cannot follow it.
+	info, _ := r.Context().Value(authInfoKey{}).(authInfo)
+	canFollowLogs := info.Bearer && info.IsAdmin && !natspkg.IsRPC(r.Context())
+
 	// Read messages from browser
 	for {
 		_, data, err := conn.ReadMessage()
@@ -115,6 +152,8 @@ func (h *Handler) globalWS(w http.ResponseWriter, r *http.Request) {
 			Decision  string `json:"decision"`
 			Reason    string `json:"reason"`
 			Rule      string `json:"rule,omitempty"`
+			PluginID  string `json:"plugin_id,omitempty"`
+			On        bool   `json:"on,omitempty"`
 		}
 		if err := json.Unmarshal(data, &cmd); err != nil {
 			continue
@@ -124,6 +163,10 @@ func (h *Handler) globalWS(w http.ResponseWriter, r *http.Request) {
 			if h.bus.OnHookRespond != nil {
 				log.Printf("[ws] hook_respond sess=%s tool=%s decision=%s", cmd.SessionID, cmd.ToolUseID, cmd.Decision)
 				h.bus.OnHookRespond(cmd.SessionID, cmd.ToolUseID, cmd.Decision, cmd.Reason, cmd.Rule)
+			}
+		case "plugin_logs":
+			if canFollowLogs && cmd.PluginID != "" {
+				hub.setPluginLog(conn, cmd.PluginID, cmd.On)
 			}
 		default:
 			log.Printf("[ws] unknown cmd type=%s", cmd.Type)

@@ -170,6 +170,7 @@ func (h *Host) load(row dbpkg.PluginRow) (*loadedPlugin, error) {
 	l.pkg = &plugins.Package{Dir: row.Dir, Manifest: l.manifest, SHA256: row.SHA256}
 	l.rt = plugins.NewRuntime(plugins.Options{
 		Package: l.pkg, Target: plugins.TargetServer, HTTP: h.deps.HTTP, ScrubLog: l.scrubText,
+		OnLog: func(e plugins.LogEntry) { h.logLine(row.ID, e) },
 	})
 	h.refreshSecrets(l)
 	return l, nil
@@ -506,6 +507,17 @@ func (h *Host) commit(s *stagedPackage, granted []string, source string) (plugin
 	}
 	h.fireEvent(l, name, "", map[string]any{"version": m.Version}, 0)
 	return view(l), nil
+}
+
+// logLine passes a line the plugin just logged to the browsers that asked for its log. The
+// services decide who gets it: it is not for every open browser.
+func (h *Host) logLine(id string, e plugins.LogEntry) {
+	if h.deps.Services == nil {
+		return
+	}
+	h.deps.Services.Broadcast("", map[string]any{
+		"type": "plugin_log", "pluginId": id, "time": e.Time, "level": e.Level, "text": e.Text,
+	})
 }
 
 func (h *Host) changed() {
