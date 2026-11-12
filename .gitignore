@@ -6,6 +6,7 @@ cmd/desktop/frontend/
 /hook
 /lucode
 /lucodehook
+/credfeeder
 cmd/lucode/embedded/lucodehook
 cmd/lucode-runner/embedded/lucodehook*
 dist/
