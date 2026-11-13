@@ -89,6 +89,9 @@ func (m *Manager) writeTaskMCPConfig(sessID string, lucodeTools []string) string
 	if m.natsCreds != "" {
 		env["LUCODE_NATS_CREDS"] = m.natsCreds
 	}
+	if ca := os.Getenv("LUCODE_NATS_CA"); ca != "" {
+		env["LUCODE_NATS_CA"] = ca // set by a runner that trusts the hub's certificate through a CA file
+	}
 	if lucodeTools != nil {
 		env["LUCODE_TOOLS"] = strings.Join(lucodeTools, ",")
 	}

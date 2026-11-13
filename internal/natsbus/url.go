@@ -11,7 +11,7 @@ const DefaultPort = "4222"
 // NormalizeURL completes what is missing from a NATS server address, so that
 // `--nats-url 192.168.1.5`, `--nats-url hub` and `--nats-url hub:4223` all work:
 // the scheme defaults to nats:// and the port to 4222. A comma-separated list is
-// normalized item by item. Complete URLs come back unchanged.
+// normalized item by item. Complete URLs come back unchanged; a ws:// or wss:// URL without a port keeps it that way.
 func NormalizeURL(s string) string {
 	parts := strings.Split(s, ",")
 	for i, p := range parts {
@@ -36,6 +36,9 @@ func normalizeOne(u string) string {
 	if i := strings.LastIndex(hostport, "@"); i >= 0 {
 		userinfo, hostport = hostport[:i+1], hostport[i+1:]
 	}
+	if (scheme == "ws://" || scheme == "wss://") && !strings.Contains(hostport, ":") {
+		return scheme + userinfo + hostport + tail // a WebSocket URL keeps http's own ports (80, 443)
+	}
 	if _, _, err := net.SplitHostPort(hostport); err != nil { // no port
 		switch {
 		case strings.HasPrefix(hostport, "["): // [::1]
@@ -45,4 +48,20 @@ func normalizeOne(u string) string {
 		hostport += ":" + DefaultPort
 	}
 	return scheme + userinfo + hostport + tail
+}
+
+// RedactURL hides the credentials in a NATS URL (ws://TOKEN@host) so it can go into a log line.
+func RedactURL(s string) string {
+	parts := strings.Split(s, ",")
+	for i, p := range parts {
+		scheme := ""
+		if j := strings.Index(p, "://"); j >= 0 {
+			scheme, p = p[:j+3], p[j+3:]
+		}
+		if j := strings.LastIndex(p, "@"); j >= 0 && !strings.ContainsAny(p[:j], "/?") {
+			p = "***@" + p[j+1:]
+		}
+		parts[i] = scheme + p
+	}
+	return strings.Join(parts, ",")
 }

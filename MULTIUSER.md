@@ -6,7 +6,7 @@ This implementation adds multiuser support to lucode with API key-based credenti
 - Sign up and log in with username/password
 - Create API keys for machine-to-machine access
 - Store OAuth tokens (access_token, refresh_token, expires_at) directly in the database instead of relying on `.credentials.json` files
-- Use the `credfeeder` tool to automatically push credentials from Claude CLI config directories to lucode
+- (Historical) The `credfeeder` tool pushed credentials from Claude CLI config directories to lucode; see "Credentials keeper" below
 
 ## Database Schema Changes
 
@@ -110,52 +110,20 @@ X-API-Key: <api_key>
 → 200: { "id": "...", "name": "...", "access_token": "...", ... }
 ```
 
-This endpoint requires **API key authentication** (not session token), allowing automated credential updates from `credfeeder`.
+This endpoint requires **API key authentication** (not session token), which the removed credfeeder used.
 
-## Credentials Feeder (`cmd/credfeeder`)
+## Credentials keeper (replaces `cmd/credfeeder`)
 
-A standalone CLI tool that reads OAuth credentials from Claude CLI config directories and pushes them to lucode via API.
+Claude accounts and `PUT /api/accounts/{id}/credentials` no longer exist (the routes answer 410), so the
+standalone credfeeder had nothing to push to and was removed. What it did that is still useful, keeping a
+Claude login from expiring while nobody uses it, now runs inside `lucode-runner` (`internal/claudecreds`):
 
-### Usage
-
-```bash
-credfeeder \
-  --config-dir ~/.claude:~/.claude10 \
-  --api-key sk_... \
-  --account-id <account-uuid> \
-  --server http://localhost:8090
-```
-
-### Flags
-
-- `--config-dir` (default: `$HOME/.claude`)
-  - Colon-separated list of Claude config directories to monitor
-  - Reads `.credentials.json` from each directory
-
-- `--api-key` (required)
-  - API key for authentication. Can also set `LUCODE_API_KEY` env var
-
-- `--account-id` (required)
-  - UUID of the claude_accounts entry to update
-
-- `--server` (default: `http://localhost:8090`)
-  - lucode server URL
-
-- `--dry-run`
-  - Print actions without making changes
-
-- `--once`
-  - Run once and exit (default: loop every 5 minutes)
-
-### Behavior
-
-1. Reads `.credentials.json` from each specified directory
-2. Extracts `claudeAiOauth.{accessToken, refreshToken, expiresAt}`
-3. POSTs to `PUT /api/accounts/{account-id}/credentials` with API key auth
-4. Logs success/failure
-5. If not `--once`, sleeps 5 minutes and repeats
-
-This allows automated credential synchronization without storing credentials in lucode's config files.
+- Every pass it reads `.credentials.json` of the default Claude config dir (`$CLAUDE_CONFIG_DIR` or `~/.claude`)
+  and of every preconfigured AI of the runner.
+- A token with 5 minutes or less left is traded for a new pair at Claude's OAuth endpoint and written back
+  (the refresh token rotates, so the new one is saved; the other fields of the file are kept).
+- It sleeps until 5 minutes before the next expiry (at least 1 minute, at most 1 hour).
+- Nothing leaves the machine. `--no-claude-refresh` (also on `lucode-runner start`) turns it off.
 
 ## Authentication Utilities (`internal/auth`)
 
@@ -250,16 +218,7 @@ curl -X POST http://localhost:8090/api/accounts \
 # Returns: { "id": "account-uuid", ... }
 ```
 
-5. Run credfeeder:
-```bash
-./credfeeder \
-  --api-key sk_abc_xyz... \
-  --account-id account-uuid \
-  --config-dir ~/.claude \
-  --once
-```
-
-Credentials from `~/.claude/.credentials.json` are now stored in the DB and will be used for API calls to Anthropic.
+5. The runner keeps the logins in `~/.claude` renewed by itself (see "Credentials keeper").
 
 ## Security Notes
 

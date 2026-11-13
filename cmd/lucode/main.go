@@ -19,9 +19,12 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	aiapipkg "claude-orchestrator/internal/aiapi"
 	apipkg "claude-orchestrator/internal/api"
+	"claude-orchestrator/internal/authserver"
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
+	natshub "claude-orchestrator/internal/natshub"
 	pluginhub "claude-orchestrator/internal/plugins/hub"
 	"claude-orchestrator/internal/relayclient"
 	sessionpkg "claude-orchestrator/internal/session"
@@ -50,12 +53,17 @@ func main() {
 	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "External NATS server: host, host:port or a full URL")
 	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
 	natsCreds := flag.String("nats-creds", "", "Path to NATS credentials file (.creds)")
-	aiAPIURL := flag.String("aiapi-url", "http://localhost:8091", "URL of the aiapi service (Claude CLI + Ollama + Anthropic executor)")
-	authURL := flag.String("auth-url", "http://localhost:8092", "URL of the centralized auth service")
+	aiAPIURL := flag.String("aiapi-url", "", "URL of an external aiapi service (default: the hub runs it itself)")
+	authURL := flag.String("auth-url", "", "URL of an external auth service (default: the hub serves auth itself)")
 	dataDir := flag.String("data", defaultDataDir(), "Directory for SQLite database")
 	workingDir := flag.String("working-dir", "", "Base directory for workspace picker")
 	hookBinary := flag.String("hook-binary", defaultHookBinary(), "Path to lucodehook binary")
 	minimaxSubKey := flag.String("minimax-subscription-key", os.Getenv("MINIMAX_SUBSCRIPTION_KEY"), "MiniMax subscription API key for token plan monitoring")
+	mmKey := flag.String("minimax-api-key", "", "MiniMax API key for the embedded aiapi (default: ~/.aicontrol/config.json)")
+	mmKeyFile := flag.String("minimax-api-key-file", "", "file holding the MiniMax API key")
+	mmBase := flag.String("minimax-base-url", "", "MiniMax API base URL")
+	mmModel := flag.String("minimax-default-model", "", "default MiniMax model")
+	embeddedNATS := flag.Bool("embedded-nats", false, "run the NATS server inside the hub (no NATS port: runners connect with ws://TOKEN@host:port or wss://TOKEN@host, the token is in <data>/nats-token); --nats is ignored")
 	hubOnly := flag.Bool("hub-only", false, "orchestrate only: run no claude on this machine (every project needs a runner)")
 	flag.Parse()
 	*natsURL = natspkg.NormalizeURL(*natsURL) // "hub" or "192.168.1.5" are enough
@@ -89,20 +97,31 @@ func main() {
 		log.Printf("[startup] cleared orphaned approvals of %d session(s)", n)
 	}
 
-	// Connect to external NATS server.
+	// NATS: the server inside this process, or an external one.
 	natsOpts := []nats.Option{
 		nats.Timeout(10 * time.Second),
 		nats.RetryOnFailedConnect(false),
 	}
-	if *natsCreds != "" {
+	var natsHub *natshub.Hub
+	if *embeddedNATS {
+		nh, err := natshub.Start(*dataDir)
+		if err != nil {
+			log.Fatalf("embedded nats: %v", err)
+		}
+		defer nh.Shutdown()
+		natsHub = nh
+		natsOpts = append(natsOpts, nh.ConnectOptions()...)
+		*natsURL = nh.URL(*port) // what hooks and agents started by this hub use to reach it
+		log.Printf("[nats] embedded server on the HTTP port; token in %s", filepath.Join(*dataDir, "nats-token"))
+	} else if *natsCreds != "" {
 		natsOpts = append(natsOpts, nats.UserCredentials(*natsCreds))
 	}
 	nc, err := nats.Connect(*natsURL, natsOpts...)
 	if err != nil {
-		log.Fatalf("nats connect %s: %v", *natsURL, err)
+		log.Fatalf("nats connect %s: %v", natspkg.RedactURL(*natsURL), err)
 	}
 	defer nc.Drain()
-	log.Printf("[nats] connected — %s", *natsURL)
+	log.Printf("[nats] connected — %s", natspkg.RedactURL(*natsURL))
 
 	bus := natspkg.NewBus(nc)
 	bus.OnBroadcast = apipkg.BroadcastToWS
@@ -117,6 +136,17 @@ func main() {
 
 	manager := sessionpkg.NewManager(db, bus, *natsURL, hookSettings)
 	manager.BaseDir = *workingDir
+	// The AI executor runs inside this process (no port) unless an external one is given.
+	var aiapiHandler http.Handler
+	if *aiAPIURL == "" {
+		h, err := aiapipkg.Start(aiapipkg.Options{DataDir: *dataDir, MiniMaxKey: *mmKey, MiniMaxFile: *mmKeyFile, MiniMaxBase: *mmBase, MiniMaxModel: *mmModel}, nc)
+		if err != nil {
+			log.Printf("[aiapi] not started: %v", err)
+		} else {
+			aiapiHandler = h
+			*aiAPIURL = aiapipkg.URL
+		}
+	}
 	manager.SetAIAPIURL(*aiAPIURL)
 	if *natsCreds != "" {
 		manager.SetNATSCreds(*natsCreds)
@@ -157,8 +187,15 @@ func main() {
 	}
 	go relayClient.Run(context.Background()) // after the host has said who gets the events
 	handler.StartFlows(context.Background())
-	handler.SetAuthURL(*authURL)
+	if *authURL != "" {
+		handler.SetAuthURL(*authURL)
+	} else {
+		handler.SetAuthHandler(authserver.New(db))
+	}
 	handler.SetAIAPIURL(*aiAPIURL)
+	if aiapiHandler != nil {
+		handler.SetAIAPIHandler(aiapiHandler)
+	}
 	if *minimaxSubKey != "" {
 		handler.SetMinimaxSubscriptionKey(*minimaxSubKey)
 	}
@@ -207,6 +244,18 @@ func main() {
 	}
 
 	httpHandler := apipkg.WrapWithSPA(handler, distFS)
+
+	if natsHub != nil {
+		handler.SetRunnerEnroll(func() string { return natsHub.Token })
+		spa := httpHandler
+		httpHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if natshub.IsUpgrade(r) {
+				natsHub.ServeWS(w, r)
+				return
+			}
+			spa.ServeHTTP(w, r)
+		})
+	}
 
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("lucode listening on http://localhost%s", addr)

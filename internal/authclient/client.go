@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"time"
 )
@@ -19,6 +20,7 @@ type entry struct {
 
 type Client struct {
 	baseURL string
+	http    *http.Client
 	mu      sync.Mutex
 	tokens  map[string]entry
 	apiKeys map[string]entry
@@ -27,12 +29,33 @@ type Client struct {
 func New(baseURL string) *Client {
 	return &Client{
 		baseURL: baseURL,
+		http:    http.DefaultClient,
 		tokens:  make(map[string]entry),
 		apiKeys: make(map[string]entry),
 	}
 }
 
+// NewLocal talks to an auth handler in this process: no port, no network.
+func NewLocal(h http.Handler) *Client {
+	c := New("http://auth.local")
+	c.http = &http.Client{Transport: localTransport{h}}
+	return c
+}
+
+type localTransport struct{ h http.Handler }
+
+func (t localTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	t.h.ServeHTTP(rec, r)
+	resp := rec.Result()
+	resp.Request = r
+	return resp, nil
+}
+
 func (c *Client) BaseURL() string { return c.baseURL }
+
+// HTTPClient is the client to use for requests to BaseURL.
+func (c *Client) HTTPClient() *http.Client { return c.http }
 
 type ValidateResult struct {
 	UserID  string
@@ -72,7 +95,7 @@ func (c *Client) InvalidateToken(token string) {
 }
 
 func (c *Client) post(path string, body []byte) (ValidateResult, error) {
-	resp, err := http.Post(c.baseURL+path, "application/json", bytes.NewReader(body))
+	resp, err := c.http.Post(c.baseURL+path, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return ValidateResult{}, fmt.Errorf("authapi unreachable: %w", err)
 	}

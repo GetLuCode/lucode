@@ -121,6 +121,9 @@ func main() {
 	if creds := firstEnv("LUCODE_NATS_CREDS"); creds != "" {
 		opts = append(opts, nats.UserCredentials(creds))
 	}
+	if ca := firstEnv("LUCODE_NATS_CA"); ca != "" {
+		opts = append(opts, nats.RootCAs(ca))
+	}
 	nc, err := nats.Connect(natsURL, opts...)
 	if err != nil {
 		deny("lucode backend not reachable — tool blocked")

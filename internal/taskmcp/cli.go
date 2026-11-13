@@ -32,6 +32,9 @@ func RunFromEnv() {
 			if creds := os.Getenv("LUCODE_NATS_CREDS"); creds != "" {
 				opts = append(opts, nats.UserCredentials(creds))
 			}
+			if ca := os.Getenv("LUCODE_NATS_CA"); ca != "" {
+				opts = append(opts, nats.RootCAs(ca))
+			}
 			c, err := nats.Connect(natsURL, opts...)
 			if err != nil {
 				return "", fmt.Errorf("cannot reach lucode: %w", err)

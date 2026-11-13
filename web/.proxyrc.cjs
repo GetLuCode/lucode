@@ -29,15 +29,10 @@ function onError(err, req, res) {
   }
 }
 
-const rewriteApi = { '^/api/': '/' }
-
 // Order matters: the most specific /api prefixes first, the catch-all /api last.
 const routes = [
-  ['/api/auth', { target: 'http://localhost:8092', pathRewrite: rewriteApi }],
-  ['/api/apikeys', { target: 'http://localhost:8092', pathRewrite: rewriteApi }],
-  ['/api/versioning', { target: 'http://localhost:8091' }],
-  ['/api/turns', { target: 'http://localhost:8091', pathRewrite: rewriteApi }],
-  ['/api/models', { target: 'http://localhost:8091', pathRewrite: rewriteApi }],
+  // Auth and the AI service (/api/auth, /api/apikeys, /api/versioning, /api/turns, /api/models) run
+  // inside the hub, so the catch-all below serves them.
   ['/api', { target: 'http://localhost:8090' }],
 ]
 

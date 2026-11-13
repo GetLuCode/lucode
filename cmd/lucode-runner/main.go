@@ -4,13 +4,18 @@
 // through JetStream, keeps the persistent claude processes between turns, and answers the
 // few requests a hub makes of a machine (browse folders, manage preconfigured AIs).
 //
-//	lucode-runner --nats hub-host --working-dir ~/dev
+//	lucode-runner auth login        sign in to a hub (asks for the hub, user and password)
+//	lucode-runner configure         profile name and working directory
+//	lucode-runner start             connect and run
+//
+// Or, without the settings file, with the flags: lucode-runner --nats hub-host --working-dir ~/dev
 //
 // A runner keeps its conversations alive when the hub restarts: see internal/natsbus
 // (runner_exec.go) and internal/session (remote.go).
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -23,6 +28,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	apipkg "claude-orchestrator/internal/api"
+	"claude-orchestrator/internal/claudecreds"
 	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
 	"claude-orchestrator/internal/plugins"
@@ -46,6 +52,19 @@ func main() {
 		runPair(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "auth":
+			runAuth(os.Args[2:])
+			return
+		case "configure":
+			runConfigure(os.Args[2:])
+			return
+		case "start":
+			runStart(os.Args[2:])
+			return
+		}
+	}
 
 	natsURL := flag.String("nats", "nats://127.0.0.1:4222", "NATS server of the hub: host, host:port or a full URL (needs JetStream: nats-server -js)")
 	flag.StringVar(natsURL, "nats-url", "nats://127.0.0.1:4222", "alias of --nats")
@@ -53,8 +72,29 @@ func main() {
 	dataDir := flag.String("data", defaultDataDir(), "directory of the runner's database and identity")
 	workingDir := flag.String("working-dir", "", "root folder hubs may browse when choosing a project dir (default: home)")
 	pluginPolicy := flag.String("plugin-policy", plugins.PolicyStandard, "what plugins may do here: off (none), standard (fs, git, http if granted), full (exec too)")
+	noRefresh := flag.Bool("no-claude-refresh", false, "do not renew the Claude logins of this machine in the background")
+	caFile := flag.String("nats-ca", "", "CA file that signed the hub's certificate (for a wss:// address the system does not trust)")
 	flag.Parse()
-	*natsURL = natspkg.NormalizeURL(*natsURL) // "hub" or "192.168.1.5" are enough
+	runRunner(runnerOptions{
+		NATSURL:   natspkg.NormalizeURL(*natsURL), // "hub" or "192.168.1.5" are enough
+		NATSCreds: *natsCreds, CAFile: *caFile, DataDir: *dataDir, WorkingDir: *workingDir, PluginPolicy: *pluginPolicy, NoClaudeRefresh: *noRefresh,
+	})
+}
+
+// runnerOptions is everything a running runner needs, from the flags or from a profile.
+type runnerOptions struct {
+	NATSURL      string
+	NATSCreds    string
+	CAFile       string
+	DataDir      string
+	WorkingDir   string
+	PluginPolicy string
+	// NoClaudeRefresh turns off the keeper that renews the Claude logins (internal/claudecreds).
+	NoClaudeRefresh bool
+}
+
+func runRunner(o runnerOptions) {
+	natsURL, natsCreds, dataDir, workingDir, pluginPolicy := &o.NATSURL, &o.NATSCreds, &o.DataDir, &o.WorkingDir, &o.PluginPolicy
 	if !plugins.ValidPolicy(*pluginPolicy) {
 		log.Fatalf("--plugin-policy must be off, standard or full, not %q", *pluginPolicy)
 	}
@@ -81,12 +121,17 @@ func main() {
 	if *natsCreds != "" {
 		opts = append(opts, nats.UserCredentials(*natsCreds))
 	}
+	if o.CAFile != "" {
+		opts = append(opts, nats.RootCAs(o.CAFile))
+		// the hooks and MCP servers claude starts connect to the hub too, and need the same CA
+		os.Setenv("LUCODE_NATS_CA", o.CAFile)
+	}
 	nc, err := nats.Connect(*natsURL, opts...)
 	if err != nil {
-		log.Fatalf("nats connect %s: %v", *natsURL, err)
+		log.Fatalf("nats connect %s: %v", natspkg.RedactURL(*natsURL), err)
 	}
 	defer nc.Drain()
-	log.Printf("[nats] connected — %s", *natsURL)
+	log.Printf("[nats] connected — %s", natspkg.RedactURL(*natsURL))
 
 	// The hub's own subscriptions (bus.Start: tool approvals, task tools, permissions) are
 	// not started: those sessions belong to the hub, not to this machine.
@@ -124,6 +169,23 @@ func main() {
 		log.Fatalf("plugins: %v", err)
 	}
 	log.Printf("[runner] ready — id %s, plugin policy %s", instanceID, *pluginPolicy)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if !o.NoClaudeRefresh {
+		// Keeps the Claude logins of this machine (the default dir and the preconfigured AIs) from
+		// expiring while nobody uses them. It replaces the standalone credfeeder.
+		keeper := &claudecreds.Keeper{Logf: log.Printf, Dirs: func() []string {
+			dirs := []string{claudecreds.DefaultDir()}
+			if ps, err := dbpkg.ListAIProfiles(db); err == nil {
+				for _, p := range ps {
+					dirs = append(dirs, p.ClaudeConfigDir)
+				}
+			}
+			return dirs
+		}}
+		go keeper.Run(ctx)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

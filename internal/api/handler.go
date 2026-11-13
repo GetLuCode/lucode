@@ -51,6 +51,8 @@ type Handler struct {
 	ollamaHost string
 	auth       *authclient.Client
 	aiAPIURL   string
+	aiapiH     http.Handler
+	runnerToken func() string // the hub's embedded NATS token, nil when it has none
 	minimaxSubKey string
 
 	cacheMu      sync.Mutex
@@ -89,6 +91,11 @@ func (h *Handler) SetAuthURL(url string) {
 	h.auth = authclient.New(url)
 }
 
+// SetAuthHandler uses an auth service running in this process instead of one on a port.
+func (h *Handler) SetAuthHandler(a http.Handler) {
+	h.auth = authclient.NewLocal(a)
+}
+
 // SetHubOnly makes this instance refuse to run claude itself: it is not offered as a
 // runner and a turn without a runner fails with a clear message.
 func (h *Handler) SetHubOnly(v bool) { h.hubOnly = v }
@@ -99,6 +106,38 @@ func (h *Handler) SetRelay(r plugins.RelayClient) { h.relay = r }
 
 func (h *Handler) SetAIAPIURL(url string) {
 	h.aiAPIURL = url
+}
+
+// SetAIAPIHandler gives the hub the AI executor service that runs in this process (cmd/lucode makes
+// it, so lucode-runner does not link it). Its browser routes are served under the hub's own /api.
+func (h *Handler) SetAIAPIHandler(a http.Handler) { h.aiapiH = a }
+
+// aiapiRoute serves a request from the in-process AI service, with prefix cut off the path.
+func (h *Handler) aiapiRoute(prefix string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.aiapiH == nil {
+			http.Error(w, "ai service not running in this hub", http.StatusNotFound)
+			return
+		}
+		if prefix != "" {
+			http.StripPrefix(prefix, h.aiapiH).ServeHTTP(w, r)
+			return
+		}
+		h.aiapiH.ServeHTTP(w, r)
+	})
+}
+
+// SetRunnerEnroll lets a signed-in user fetch the token a runner needs to connect to the NATS this hub
+// runs (`lucode-runner auth login`). Without it the route answers 404.
+func (h *Handler) SetRunnerEnroll(token func() string) { h.runnerToken = token }
+
+func (h *Handler) runnerEnroll(w http.ResponseWriter, r *http.Request) {
+	if h.runnerToken == nil {
+		http.Error(w, "this hub does not run its own NATS", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"token": h.runnerToken()})
 }
 
 func (h *Handler) SetMinimaxSubscriptionKey(key string) {
@@ -141,6 +180,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/messages/{id}/star", h.toggleStarMessage)
 	mux.HandleFunc("GET /api/sessions/{id}/starred", h.listStarredMessages)
 	mux.HandleFunc("GET /api/sessions/{id}/raw-events", h.listRawEventsHandler)
+
+	mux.HandleFunc("GET /api/runner/enroll", h.runnerEnroll)
+	mux.Handle("/api/versioning/", h.aiapiRoute(""))
+	mux.Handle("/api/turns", h.aiapiRoute("/api"))
+	mux.Handle("/api/turns/", h.aiapiRoute("/api"))
+	mux.Handle("GET /api/models", h.aiapiRoute("/api"))
 
 	mux.HandleFunc("GET /api/search", h.search)
 
@@ -312,7 +357,7 @@ func (h *Handler) newAuthProxy() http.Handler {
 			return
 		}
 		req.Header = r.Header.Clone()
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := h.auth.HTTPClient().Do(req)
 		if err != nil {
 			log.Printf("[authProxy] upstream error: %v", err)
 			http.Error(w, "auth service unavailable", http.StatusBadGateway)
