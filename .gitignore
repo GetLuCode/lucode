@@ -46,3 +46,6 @@ build/
 /lucode.exe
 /.claude/
 /.impeccable/
+
+# Local secrets and machine data (template: .env.example)
+.env
