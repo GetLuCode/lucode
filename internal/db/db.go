@@ -44,6 +44,16 @@ Rules:
 - Report briefly what you did and what is running; do not wait for agents inside a turn.
 - If a tool is denied, do not retry it: adapt or say what you need.`
 
+// SupervisorName is the name of the agent that configures the Supervisor panel.
+const SupervisorName = "Supervisor"
+
+// IsSupervisor says whether an agent is the Supervisor: the global agent with that name.
+// It is not a worker: it is never assigned a task, it only configures the main chat and can
+// be chosen as the "reports to" of other agents.
+func IsSupervisor(a Agent) bool {
+	return a.ProjectID == "" && strings.EqualFold(a.Name, SupervisorName)
+}
+
 // SeedDefaults creates the data a fresh hub starts with. Only the hub calls it (not
 // the runner, and not Init, so tests start from an empty database).
 func SeedDefaults(db *sql.DB) error { return seedSupervisor(db) }

@@ -8,6 +8,7 @@ import type { Agent, KanbanCard } from '../../types'
 import { AgentAvatar } from '../Agents/AgentAvatar'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useIsMobile } from '../../hooks/useIsMobile'
+import { assignableAgents } from '../../lib/supervisor'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 export interface KanbanFilterState {
@@ -331,7 +332,7 @@ export function KanbanFilters({ filters, onChange, types, typeColor, agents, sho
                   <span className="kf-option__text"><b>Unassigned</b><small>Cards without an agent</small></span>
                 </span>
               </SelectItem>
-              {agents.map(a => (
+              {assignableAgents(agents).map(a => (
                 <SelectItem key={a.id} value={a.id} className="kf-option">
                   <span className="kf-option__row">
                     <AgentAvatar agent={a} />

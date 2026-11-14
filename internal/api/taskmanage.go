@@ -50,12 +50,31 @@ func (h *Handler) agentByName(projectID, name string) (string, error) {
 	}
 	var names []string
 	for _, a := range agents {
+		if dbpkg.IsSupervisor(a) {
+			if strings.EqualFold(a.Name, name) || a.ID == name {
+				return "", errSupervisorNotAssignable
+			}
+			continue // not listed: it takes no tasks
+		}
 		if strings.EqualFold(a.Name, name) || a.ID == name {
 			return a.ID, nil
 		}
 		names = append(names, a.Name)
 	}
 	return "", fmt.Errorf("no agent named %q; agents of this project: %s", name, orNone(strings.Join(names, ", ")))
+}
+
+var errSupervisorNotAssignable = errors.New("the Supervisor is not a worker: it cannot be assigned tasks (it only configures the Supervisor panel and can be chosen in \"reports to\")")
+
+// checkAssignable refuses the Supervisor as the agent of a task.
+func (h *Handler) checkAssignable(agentID string) error {
+	if agentID == "" {
+		return nil
+	}
+	if a, err := dbpkg.GetAgent(h.db, agentID); err == nil && dbpkg.IsSupervisor(a) {
+		return errSupervisorNotAssignable
+	}
+	return nil
 }
 
 // projectTask returns a task of the caller's project.

@@ -16,6 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { AgentAvatar } from '../Agents/AgentAvatar'
 import { ReviewModal } from './ReviewModal'
 import { PluginCardActions } from '../Plugins/PluginActions'
+import { assignableAgents } from '../../lib/supervisor'
 
 // ---- pasted images -----------------------------------------------------------
 
@@ -373,7 +374,7 @@ function CardModal({ card, lists, agents, allCards, onClose, onSave, onDelete, o
                   onChange={e => patch('agent_id', e.target.value)}
                 >
                   <option value="">Unassigned</option>
-                  {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  {assignableAgents(agents).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </div>
 

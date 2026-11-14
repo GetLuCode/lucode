@@ -5,6 +5,7 @@ import { IconPlus, IconTrash, IconEdit, IconRobot, IconX, IconMessages } from '@
 import { useStore } from '../../store'
 import type { Agent, AIProfile, Runner, Session } from '../../types'
 import * as api from '../../api'
+import { isSupervisorAgent } from '../../lib/supervisor'
 
 const MODELS = [
   { label: 'Haiku 5.5',  value: 'haiku' },
@@ -201,6 +202,8 @@ function AgentForm({
 }) {
   const [form, setForm] = useState<AgentFormData>(initial ?? EMPTY_FORM)
   const supervisors = teammates.filter(a => a.id !== selfId && (form.scope !== 'global' || a.scope === 'global'))
+  // The Supervisor agent configures the Supervisor panel: its form only has what the panel uses.
+  const isSup = !!initial && isSupervisorAgent(initial)
   const [activeTab, setActiveTab] = useState<'general' | 'tools'>('general')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -285,11 +288,20 @@ function AgentForm({
               value={form.name}
               onChange={e => setField('name', e.target.value)}
               placeholder="e.g. Code Reviewer"
-              autoFocus
+              autoFocus={!isSup}
+              disabled={isSup}
             />
           </div>
 
-          <div className="agent-form__field">
+          {isSup && (
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
+              This agent sets up the Supervisor panel in every project: its model, runner and AI are the defaults
+              (the selectors under the panel&apos;s input override them), and its personality, tools and auto mode
+              apply to the chat. It is not assigned tasks; other agents can report to it.
+            </p>
+          )}
+
+          {!isSup && <div className="agent-form__field">
             <label className="agent-form__label">Available in</label>
             <select
               className="agent-form__select"
@@ -309,7 +321,7 @@ function AgentForm({
                 Shared by every project: editing or deleting it affects all of them.
               </p>
             )}
-          </div>
+          </div>}
 
           <div className="agent-form__row">
             <div className="agent-form__field">
@@ -324,7 +336,7 @@ function AgentForm({
                 ))}
               </select>
             </div>
-            <div className="agent-form__field">
+            {!isSup && <div className="agent-form__field">
               <label className="agent-form__label">Runs with</label>
               <select
                 className="agent-form__select"
@@ -345,11 +357,11 @@ function AgentForm({
                   <option key={x.value} value={x.value}>{x.label}</option>
                 ))}
               </select>
-            </div>
+            </div>}
           </div>
 
           <div className="agent-form__row">
-            <div className="agent-form__field">
+            {!isSup && <div className="agent-form__field">
               <label className="agent-form__label">Reports to</label>
               <select
                 className="agent-form__select"
@@ -361,10 +373,10 @@ function AgentForm({
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
-            </div>
+            </div>}
             <div className="agent-form__field">
-              <label className="agent-form__label">Process</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
+              <label className="agent-form__label">{isSup ? 'Permissions' : 'Process'}</label>
+              {!isSup && <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
                 <input
                   type="checkbox"
                   checked={form.persistent && form.executor === 'claude'}
@@ -372,7 +384,7 @@ function AgentForm({
                   onChange={e => setField('persistent', e.target.checked)}
                 />
                 Keep it alive between messages
-              </label>
+              </label>}
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 6, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
                 <input
                   type="checkbox"
@@ -382,7 +394,7 @@ function AgentForm({
                 />
                 Auto mode (Claude decides what rules and flows leave open; no approval requests)
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 6, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
+              {!isSup && <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 6, opacity: form.executor === 'claude' ? 1 : 0.5 }}>
                 <input
                   type="checkbox"
                   checked={form.worktree && form.executor === 'claude'}
@@ -390,8 +402,8 @@ function AgentForm({
                   onChange={e => setField('worktree', e.target.checked)}
                 />
                 Work in a git worktree
-              </label>
-              {form.worktree && form.executor === 'claude' && (
+              </label>}
+              {!isSup && form.worktree && form.executor === 'claude' && (
                 <select
                   className="agent-form__input"
                   style={{ marginTop: 6 }}
@@ -404,7 +416,7 @@ function AgentForm({
               )}
             </div>
           </div>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
+          {!isSup && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 8px' }}>
             Reports to: this agent&apos;s supervisor is told when it finishes, gets blocked or fails, and can be
             reached with agent_message. Keep alive (claude -p only): replies faster, but each active task holds a
             claude process in memory; it exits by itself after 30 idle minutes and the conversation resumes later.
@@ -412,7 +424,7 @@ function AgentForm({
             approve them. Worktree (claude only): the agent works in its own git worktree, so parallel agents do not
             step on each other; the base is passed as worktree.baseRef (head = where the project is now, fresh =
             the remote default branch).
-          </p>
+          </p>}
 
           <div className="agent-form__row">
             <div className="agent-form__field">

@@ -5,6 +5,7 @@ import { IconChevronDown, IconCheck, IconLayoutSidebarRightCollapse,IconSend, Ic
 import { useStore } from '../../store'
 import { usePlugins } from '../../store/plugins'
 import { conversationsOfModel, isPluginModel, pluginOriginLabel, normalizeModelId, parsePluginModel } from '../../lib/plugins'
+import { isSupervisorAgent } from '../../lib/supervisor'
 import * as api from '../../api'
 import { useSessionWS } from '../../hooks/useSessionWS'
 import { MessageBubble } from '../Chat/MessageBubble'
@@ -230,19 +231,39 @@ export function OrchestratorPanel({ full = false, embed }: { full?: boolean; emb
   const project = useStore(s => s.projects.find(p => p.id === projectId))
   const projectRunner = project?.runner_id || ''
   const projectEnvRunners = Object.keys(project?.env_dirs ?? {}).join(',')
+  // The Supervisor agent (Agents tab) gives the defaults of runner, AI and model; what is picked
+  // under the input is saved per project and wins.
+  const [supAgent, setSupAgent] = useState<{ runner: string; ai: string; model: string } | null>(null)
+  useEffect(() => {
+    if (!projectId || embed) { setSupAgent(null); return }
+    let cancelled = false
+    api.listAgents(projectId)
+      .then(list => {
+        const a = list.find(isSupervisorAgent)
+        if (!cancelled) setSupAgent(a ? { runner: a.runner_id, ai: a.ai_profile_id, model: a.model } : null)
+      })
+      .catch(() => { if (!cancelled) setSupAgent(null) })
+    return () => { cancelled = true }
+  }, [projectId, !!embed]) // eslint-disable-line react-hooks/exhaustive-deps
+  const supRunner = supAgent?.runner ?? ''
   useEffect(() => {
     if (!projectId) return
     const usable = (id: string) => id === 'local' || !project || !projectRunner || (project.env_dirs?.[id]?.length ?? 0) > 0
     const saved = lsGet(LS.runner(projectId), '')
     const last = lsGet(LS.lastRunner, 'local')
-    const pick = saved && usable(saved) ? saved : projectRunner || (usable(last) ? last : 'local')
+    const pick = saved && usable(saved) ? saved
+      : supRunner && usable(supRunner) ? supRunner
+      : projectRunner || (usable(last) ? last : 'local')
     setRunnerId(pick)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, projectRunner, projectEnvRunners])
+  }, [projectId, projectRunner, projectEnvRunners, supRunner])
   useEffect(() => {
     if (!projectId) return
-    setAiId(lsGet(LS.ai(projectId, runnerId), ''))
-  }, [projectId, runnerId])
+    const unset = '__unset__'
+    const saved = lsGet(LS.ai(projectId, runnerId), unset)
+    // no AI picked for this runner yet: the agent's, if it is the agent's runner
+    setAiId(saved !== unset ? saved : supAgent && supAgent.runner === runnerId ? supAgent.ai : '')
+  }, [projectId, runnerId, supAgent])
   const pickRunner = (v: string) => {
     setRunnerId(v)
     lsSet(LS.lastRunner, v)
@@ -254,9 +275,10 @@ export function OrchestratorPanel({ full = false, embed }: { full?: boolean; emb
   useEffect(() => {
     if (embed) { setModel(embed.model); return }
     if (!projectId) return
-    const saved = normalizeModelId(lsGet(LS.model(projectId), 'sonnet'))
-    setModel(isPluginModel(saved) || CLAUDE_MODELS.some(m => m.value === saved) ? saved : 'sonnet')
-  }, [projectId, embed?.model]) // eslint-disable-line react-hooks/exhaustive-deps
+    const agentModel = supAgent && CLAUDE_MODELS.some(m => m.value === supAgent.model) ? supAgent.model : 'sonnet'
+    const saved = normalizeModelId(lsGet(LS.model(projectId), agentModel))
+    setModel(isPluginModel(saved) || CLAUDE_MODELS.some(m => m.value === saved) ? saved : agentModel)
+  }, [projectId, embed?.model, supAgent?.model]) // eslint-disable-line react-hooks/exhaustive-deps
   const setOrchModel = useStore(s => s.setOrchModel)
   useEffect(() => { if (!embed) setOrchModel(model) }, [model, setOrchModel, embed]) // the buttons that reopen the panel show its mark
   const answeredByPlugin = isPluginModel(model) // no cache, context or process to show

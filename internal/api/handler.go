@@ -2607,6 +2607,10 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(body.Name), dbpkg.SupervisorName) {
+		http.Error(w, `the name "Supervisor" is reserved for the Supervisor agent`, http.StatusBadRequest)
+		return
+	}
 	if body.Model == "" {
 		body.Model = "sonnet"
 	}
@@ -2679,6 +2683,16 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	// The Supervisor is isolated: it is always global, claude, persistent, without worktree,
+	// reports to nobody and keeps its name. Those fields of the body are ignored.
+	isSupervisor := dbpkg.IsSupervisor(a)
+	if isSupervisor {
+		body.Name, body.Scope, body.ReportsTo = nil, nil, nil
+		body.Executor, body.Persistent, body.Worktree, body.WorktreeBaseRef = nil, nil, nil, nil
+	} else if body.Name != nil && strings.EqualFold(strings.TrimSpace(*body.Name), dbpkg.SupervisorName) {
+		http.Error(w, `the name "Supervisor" is reserved for the Supervisor agent`, http.StatusBadRequest)
+		return
+	}
 	if body.RunnerID != nil {
 		a.RunnerID = *body.RunnerID
 	}
@@ -2749,6 +2763,13 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Tools != nil {
 		a.Tools = body.Tools
+	}
+	if isSupervisor {
+		a.Executor, a.Persistent, a.Worktree, a.ReportsTo = "claude", true, false, ""
+		if strings.HasPrefix(a.Model, "MiniMax") {
+			http.Error(w, "the Supervisor runs on claude: pick a Claude model", http.StatusBadRequest)
+			return
+		}
 	}
 	a.Persistent = a.Persistent && a.Executor == "claude" // only the claude CLI can stay alive
 	a.AutoMode = a.AutoMode && a.Executor == "claude"     // --permission-mode is a claude CLI flag
@@ -2908,6 +2929,10 @@ func (h *Handler) createKanbanCard(w http.ResponseWriter, r *http.Request) {
 	if body.CardType == "" {
 		body.CardType = "task"
 	}
+	if err := h.checkAssignable(body.AgentID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	c := dbpkg.KanbanCard{
 		ID:          uuid.New().String(),
 		ListID:      body.ListID,
@@ -2967,6 +2992,12 @@ func (h *Handler) updateKanbanCard(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
+	}
+	if body.AgentID != nil && *body.AgentID != c.AgentID {
+		if err := h.checkAssignable(*body.AgentID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	oldListID := c.ListID
 	if body.ListID != nil      { c.ListID = *body.ListID }

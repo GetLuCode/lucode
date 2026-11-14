@@ -15,6 +15,7 @@ import type { FlowCanvasHandle } from './FlowCanvas'
 import { PushDevice } from './PushDevice'
 import { editorMachine } from './editorMachine'
 import { PIN_COLORS, STEP_COLORS, inputPin, nodeStatuses, outputPins, parseFlowGraph, portLabels, unknownNodeTypes, valueText } from './flowGraph'
+import { assignableAgents } from '../../lib/supervisor'
 import './Flows.css'
 
 // litegraph is half a megabyte: it only loads for whoever opens this tab.
@@ -777,7 +778,7 @@ function FieldInput({ field, value, disabled, agents, lists, suggestions, onChan
       return (
         <select className="input" value={text} disabled={disabled} onChange={e => onChange(e.target.value)}>
           <option value="">—</option>
-          {agents.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+          {assignableAgents(agents).map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
         </select>
       )
     case 'list':

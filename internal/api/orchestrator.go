@@ -38,6 +38,59 @@ func orchestratorTools() []string {
 	return append(append(append(out, taskmcp.BrowserNames()...), taskmcp.FlowNames()...), taskmcp.CommandNames()...)
 }
 
+// supervisorAgent is the global agent named "Supervisor", whose tool settings the
+// main chat follows. ok is false when the user deleted it.
+func (h *Handler) supervisorAgent(projectID string) (dbpkg.Agent, bool) {
+	agents, err := dbpkg.ListAgents(h.db, projectID)
+	if err != nil {
+		return dbpkg.Agent{}, false
+	}
+	for _, a := range agents {
+		if dbpkg.IsSupervisor(a) {
+			return a, true
+		}
+	}
+	return dbpkg.Agent{}, false
+}
+
+// supervisorConfig is what the main chat takes from the "Supervisor" agent. Without that
+// agent (the user deleted it) everything is allowed and nothing is preset.
+type supervisorConfig struct {
+	Builtin     []string // built-in tools (--tools); empty = all
+	Lucode      []string // lucode tools: those the agent has, among the ones the chat can use
+	Auto        bool
+	Personality string
+	Model       string // defaults, overridden by what the panel sends
+	RunnerID    string
+	AIProfileID string
+}
+
+func (h *Handler) supervisorConfig(projectID string) supervisorConfig {
+	cfg := supervisorConfig{Lucode: orchestratorTools()}
+	sup, ok := h.supervisorAgent(projectID)
+	if !ok {
+		return cfg
+	}
+	has := map[string]bool{}
+	for _, n := range callerLucodeTools(sup) {
+		has[n] = true
+	}
+	cfg.Lucode = nil
+	for _, n := range orchestratorTools() {
+		if has[n] {
+			cfg.Lucode = append(cfg.Lucode, n)
+		}
+	}
+	cfg.Builtin = agentTools(sup)
+	cfg.Auto = sup.AutoMode
+	cfg.Personality = strings.TrimSpace(sup.Personality)
+	if !isMiniMax(sup.Model) {
+		cfg.Model = sup.Model
+	}
+	cfg.RunnerID, cfg.AIProfileID = sup.RunnerID, sup.AIProfileID
+	return cfg
+}
+
 // orchestratorCaller is the identity the agent-management tools see: an agent of
 // the project that is not stored (its empty id never matches a real agent), with
 // every lucode tool and no limit on the built-in ones it may hand out.
@@ -69,12 +122,22 @@ Rules:
 - Tell the user briefly what you did and what is running; do not wait for agents to finish inside a turn.
 - Some tools ask the user for approval. If one is denied, do not retry it; adapt or explain what you need.`
 
+// supervisorPersonalityPrompt is the personality of the "Supervisor" agent, added after the
+// fixed prompt (which describes the tools of this panel).
+func supervisorPersonalityPrompt(personality string) string {
+	if personality == "" {
+		return ""
+	}
+	return "\n\n# Your personality and role (set by the user)\n" + personality
+}
+
 // orchEnvs remembers, per orchestrator session, the runner and AI its live process
 // was started with, so a change in the selects restarts the process.
 var (
 	orchEnvMu  sync.Mutex
 	orchEnvs   = map[string]string{}
 	orchModels = map[string]string{}
+	orchToolSigs = map[string]string{}
 )
 
 // getOrchestrator returns the project's orchestrator session, creating it on first use.
@@ -122,6 +185,7 @@ func (h *Handler) newOrchestrator(w http.ResponseWriter, r *http.Request) {
 		orchEnvMu.Lock()
 		delete(orchEnvs, old.ID)
 		delete(orchModels, old.ID)
+		delete(orchToolSigs, old.ID)
 		orchEnvMu.Unlock()
 		if h.plugins != nil {
 			h.plugins.SessionClosed(pid, old.ID)
@@ -139,14 +203,19 @@ func (h *Handler) newOrchestrator(w http.ResponseWriter, r *http.Request) {
 // claude CLI with a persistent process, on the chosen runner and AI ("" or "local"
 // runner = this instance).
 func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, message, model, runnerID, aiProfileID, effort, thinking string) (sessionpkg.TurnOptions, error) {
+	cfg := h.supervisorConfig(sess.ProjectID)
+	// The Supervisor agent gives the defaults; what the panel sends (its selectors) wins.
 	if model == "" {
-		model = sess.Model
+		model = orDefault(cfg.Model, sess.Model)
 	}
 	if pluginOpts, handled, err := h.pluginTurnOpts(sess, message, model); handled {
 		return pluginOpts, err
 	}
 	if runnerID == "" {
-		runnerID = "local" // explicit: do not inherit the project's runner
+		runnerID = orDefault(cfg.RunnerID, "local") // not the project's runner
+		if aiProfileID == "" {
+			aiProfileID = cfg.AIProfileID // the AI belongs to the agent's runner
+		}
 	}
 	if h.hubOnly && runnerID == "local" {
 		runnerID = "" // a hub has no claude of its own: the chat runs where the project does
@@ -169,7 +238,15 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 	prevModel, modelSeen := orchModels[sess.ID]
 	orchModels[sess.ID] = model
 	orchEnvMu.Unlock()
-	if modelSeen && prevModel != model && !(seen && prev != key) {
+	// Tools, permission mode and personality are also fixed when the process starts: a
+	// change in the Supervisor agent restarts it (resuming the conversation).
+	toolsSig := fmt.Sprintf("%s|%s|%t|%s", strings.Join(cfg.Builtin, ","), strings.Join(cfg.Lucode, ","), cfg.Auto, cfg.Personality)
+	orchEnvMu.Lock()
+	prevTools, toolsSeen := orchToolSigs[sess.ID]
+	orchToolSigs[sess.ID] = toolsSig
+	orchEnvMu.Unlock()
+	toolsChanged := toolsSeen && prevTools != toolsSig
+	if ((modelSeen && prevModel != model) || toolsChanged) && !(seen && prev != key) {
 		h.manager.CloseLive(sess.ID)
 	}
 	if seen && prev != key {
@@ -191,10 +268,12 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 		Effort:          effort,
 		Thinking:        thinking,
 		Executor:        "claude",
-		SystemPrompt:    orchestratorPrompt + browserPrompt,
+		SystemPrompt:    orchestratorPrompt + browserPrompt + supervisorPersonalityPrompt(cfg.Personality),
 		AgentName:       "orchestrator",
 		Persistent:      true,
-		LucodeTools:     orchestratorTools(),
+		AutoMode:        cfg.Auto,
+		Tools:           cfg.Builtin,
+		LucodeTools:     cfg.Lucode,
 	}, nil
 }
 
