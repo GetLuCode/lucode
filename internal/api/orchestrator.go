@@ -38,6 +38,21 @@ func orchestratorTools() []string {
 	return append(append(append(out, taskmcp.BrowserNames()...), taskmcp.FlowNames()...), taskmcp.CommandNames()...)
 }
 
+// supervisorSystemPrompt is the fixed prompt plus the personality. It does not describe the
+// lucode tools: the MCP server already announces them (only the enabled ones), so repeating
+// them would cost context and name tools the Supervisor agent may have turned off. Only the
+// browser guidance, which is not in the tool definitions, goes in when it has those tools.
+func supervisorSystemPrompt(cfg supervisorConfig) string {
+	p := orchestratorPrompt
+	for _, n := range cfg.Lucode {
+		if n == taskmcp.ToolBrowserList {
+			p += browserPrompt
+			break
+		}
+	}
+	return p + supervisorPersonalityPrompt(cfg.Personality)
+}
+
 // supervisorAgent is the global agent named "Supervisor", whose tool settings the
 // main chat follows. ok is false when the user deleted it.
 func (h *Handler) supervisorAgent(projectID string) (dbpkg.Agent, bool) {
@@ -101,21 +116,7 @@ func orchestratorCaller(projectID string) dbpkg.Agent {
 const orchestratorPrompt = `# You are the lucode Supervisor
 You are the Supervisor: the main chat of this project in lucode. The user talks to you to plan and run the work; you do not do the project's work yourself unless it is small: you organise it on the board and hand it to the project's agents.
 
-Your tools (in Claude Code they appear as mcp__lucode__<name>):
-- project_info(): where you are: this project's name, work folders, runner, AI, board counts and agents. Call it first when you need to know the project's context.
-- task_list(status?, limit?): see the board. Check it before creating a task so you do not duplicate one.
-- task_info(task_id, fields?): look up one task; ask for the fewest fields that answer your question.
-- task_create(title, description?, status?, type?, tags?, agent?, depends_on?, parent_id?): create a task. It goes to Todo by default, or straight to In Progress (the agent starts) when you assign an agent that is free and nothing blocks it; status=backlog just parks it. Write a description that lets whoever takes it work without asking you.
-- task_update(task_id, ...fields): change a task; only the fields you pass change. Moving it to in_progress starts its agent.
-- get_task_image(name, task_id): see a picture attached to a task.
-- agent_list(): the agents of the project and whether each is working.
-- agent_create / agent_update / agent_delete: manage the project's agents. Use agent_list first. Give each a clear role in its personality.
-- flow_list, flow_get, flow_catalog, flow_create, flow_update: prepare the project's automations with the user, who sees your changes live in the Automate tab. You only write drafts: the user publishes them. Read a flow again before changing it.
-- command_list, command_create, command_run, command_stop, command_output, command_errors: the project's Commands tab. Define a command (a dev server, the tests, a build), run it in a terminal on the project's runner and read what it printed. command_errors lists the errors most recent first (the terminal mixes stderr into stdout, so they are recognised in the text, and a program that fails silently shows only through its exit code). command_run with wait_seconds waits for a test or build to end and returns its errors. Running and stopping a command asks the user for approval.
-- send_to_agent(to, message, task_id, requires_answer?): talk to an agent that has a task in progress; task_id (the task the message is about) is required. The answer comes back later as a message.
-- git_diff(mode, path?, sha?, base?, head?, runner_id?, repo?, worktree?): read a diff of a repository of the project. It only reads, and it works even if the repository is on another runner than you.
-
-The user can send you references from the Git tab: a block starting with "Git reference:" names a file, its lines and where they come from (a commit, two branches, the working tree...), with the selected lines when there are any. Those lines are the point of the reference: answer about them. When you need more around them, call git_diff with the arguments the reference gives.
+The user can send you references from the Git tab: a block starting with "Git reference:" names a file, its lines and where they come from (a commit, two branches, the working tree...), with the selected lines when there are any. Those lines are the point of the reference: answer about them. When you need more around them, read the diff with the arguments the reference gives, if you have a tool for it.
 
 Rules:
 - Ask the user before doing something large or hard to undo (deleting agents, starting many tasks at once).
@@ -268,7 +269,7 @@ func (h *Handler) orchestratorTurnOpts(sess dbpkg.Session, proj dbpkg.Project, m
 		Effort:          effort,
 		Thinking:        thinking,
 		Executor:        "claude",
-		SystemPrompt:    orchestratorPrompt + browserPrompt + supervisorPersonalityPrompt(cfg.Personality),
+		SystemPrompt:    supervisorSystemPrompt(cfg),
 		AgentName:       "orchestrator",
 		Persistent:      true,
 		AutoMode:        cfg.Auto,
