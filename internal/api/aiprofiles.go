@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -349,6 +350,16 @@ type turnEnv struct {
 	ConfigDir   string   // claude_config_dir, resolved here only for this instance
 }
 
+// runnerLabel names a runner for an error message: its host name when it is on the network.
+func (h *Handler) runnerLabel(id string) string {
+	for _, p := range h.bus.Peers() {
+		if p.ID == id && p.Hostname != "" {
+			return fmt.Sprintf("%s (%.8s)", p.Hostname, id)
+		}
+	}
+	return fmt.Sprintf("runner %.8s (offline)", id)
+}
+
 func (h *Handler) resolveTurnEnv(agent dbpkg.Agent, p dbpkg.Project) (turnEnv, error) {
 	norm := func(id string) string {
 		if h.isRemoteRunner(id) {
@@ -374,7 +385,18 @@ func (h *Handler) resolveTurnEnv(agent dbpkg.Agent, p dbpkg.Project) (turnEnv, e
 	if runner != "" {
 		env.WorkDirs = p.EnvDirs[runner]
 		if len(env.WorkDirs) == 0 {
-			return env, fmt.Errorf("project %q has no work dir on that runner: add one in the project settings", p.Name)
+			var has []string
+			for id, dirs := range p.EnvDirs {
+				if len(dirs) > 0 {
+					has = append(has, h.runnerLabel(id))
+				}
+			}
+			sort.Strings(has)
+			where := "it has no work dir on any runner"
+			if len(has) > 0 {
+				where = "it only has a work dir on " + strings.Join(has, ", ")
+			}
+			return env, fmt.Errorf("the chat is set to run on %s, but project %q has no work dir there (%s). Pick that runner in the chat, or add a work dir for %s in the project's Environment (⋯ menu)", h.runnerLabel(runner), p.Name, where, h.runnerLabel(runner))
 		}
 		return env, nil // the runner resolves the AI's config dir itself
 	}

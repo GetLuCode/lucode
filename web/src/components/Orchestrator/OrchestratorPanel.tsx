@@ -224,10 +224,21 @@ export function OrchestratorPanel({ full = false, embed }: { full?: boolean; emb
 
   // The saved choice of this project. Nothing below ever overwrites it by itself: a
   // runner that has not been discovered yet (or is off) must not lose the user's pick.
+  // The start: the runner picked for this project, else the project's own runner, else the last
+  // one picked anywhere. A runner the project has no work dir on can only fail ("project has no
+  // work dir on that runner"), so such a saved or last pick yields to the project's runner.
+  const project = useStore(s => s.projects.find(p => p.id === projectId))
+  const projectRunner = project?.runner_id || ''
+  const projectEnvRunners = Object.keys(project?.env_dirs ?? {}).join(',')
   useEffect(() => {
     if (!projectId) return
-    setRunnerId(lsGet(LS.runner(projectId), lsGet(LS.lastRunner, 'local')))
-  }, [projectId])
+    const usable = (id: string) => id === 'local' || !project || !projectRunner || (project.env_dirs?.[id]?.length ?? 0) > 0
+    const saved = lsGet(LS.runner(projectId), '')
+    const last = lsGet(LS.lastRunner, 'local')
+    const pick = saved && usable(saved) ? saved : projectRunner || (usable(last) ? last : 'local')
+    setRunnerId(pick)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, projectRunner, projectEnvRunners])
   useEffect(() => {
     if (!projectId) return
     setAiId(lsGet(LS.ai(projectId, runnerId), ''))
@@ -355,6 +366,7 @@ export function OrchestratorPanel({ full = false, embed }: { full?: boolean; emb
     if ((!typed && !img && pending.length === 0) || !sid || running || switchingMode || (runnerOffline && !answeredByPlugin)) return
     const text = [...pending.map(r => r.text), typed].filter(Boolean).join('\n\n')
     setInput('')
+    setError('')
     setImage(null)
     if (projectId && !embed) clearRefs(projectId)
     dictBase.current = ''
@@ -365,6 +377,10 @@ export function OrchestratorPanel({ full = false, embed }: { full?: boolean; emb
         delete next[sid]
         return { pendingSend: next, sessionError: { ...s.sessionError, [sid]: String(e?.message ?? e) } }
       })
+      // The hub refused the turn (no turn ran, so the session is not in "error"): say why here
+      // and give the text back, instead of leaving it only in the network tab.
+      setError(String(e?.message ?? e))
+      setInput(cur => cur || typed)
     })
   }
   const send = () => sendText(input.trim())
