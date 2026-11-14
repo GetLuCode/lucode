@@ -4,11 +4,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	dbpkg "claude-orchestrator/internal/db"
 	natspkg "claude-orchestrator/internal/natsbus"
 	"claude-orchestrator/internal/termrun"
 )
@@ -102,13 +104,44 @@ func (h *Handler) termCwd(base, rel string) (string, error) {
 	return dir, nil
 }
 
+// termShells is every shell this runner offers: the ones it found, then the ones registered.
+func (h *Handler) termShells() ([]termrun.Shell, error) {
+	list := termrun.Detect()
+	custom, err := dbpkg.ListTermShells(h.db)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range custom {
+		list = append(list, termrun.Shell{ID: c.ID, Name: c.Name, Path: c.Path, Args: c.Args})
+	}
+	return list, nil
+}
+
+// resolveShell finds a shell by id among this runner's; "" is the system default.
+func (h *Handler) resolveShell(id string) (termrun.Shell, error) {
+	if id == "" {
+		return termrun.Shell{}, nil
+	}
+	if s, ok := termrun.Find(id); ok {
+		return s, nil
+	}
+	if c, err := dbpkg.GetTermShell(h.db, id); err == nil {
+		return termrun.Shell{ID: c.ID, Name: c.Name, Path: c.Path, Args: c.Args}, nil
+	}
+	return termrun.Shell{}, fmt.Errorf("this runner has no shell %q: pick another one, or register it on this runner", id)
+}
+
 type termStartReq struct {
 	ID      string `json:"id"`
 	Base    string `json:"base"`
 	Cwd     string `json:"cwd"`
 	Command string `json:"command"`
-	Cols    int    `json:"cols"`
-	Rows    int    `json:"rows"`
+	// Env is added to the runner's own environment. A runner older than this field ignores it.
+	Env []dbpkg.EnvVar `json:"env,omitempty"`
+	// Shell is the id of one of this runner's shells (GET /api/term/shells); "" = the system default.
+	Shell string `json:"shell,omitempty"`
+	Cols  int    `json:"cols"`
+	Rows  int    `json:"rows"`
 }
 
 func (h *Handler) registerTermRPC(mux *http.ServeMux) {
@@ -123,7 +156,22 @@ func (h *Handler) registerTermRPC(mux *http.ServeMux) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		st, err := h.terminals().Start(termrun.Spec{ID: req.ID, Command: req.Command, Cwd: dir, Cols: req.Cols, Rows: req.Rows})
+		// the runner checks again what the hub already checked: it is the one that runs it
+		env, err := cleanEnv(req.Env)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		pairs := make([]string, len(env))
+		for i, v := range env {
+			pairs[i] = v.Name + "=" + v.Value
+		}
+		sh, err := h.resolveShell(req.Shell)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		st, err := h.terminals().Start(termrun.Spec{ID: req.ID, Command: req.Command, Cwd: dir, Env: pairs, Shell: sh, Cols: req.Cols, Rows: req.Rows})
 		if err != nil {
 			if err.Error() == "already running" {
 				http.Error(w, err.Error(), http.StatusConflict)
@@ -134,8 +182,61 @@ func (h *Handler) registerTermRPC(mux *http.ServeMux) {
 		}
 		jsonResp(w, http.StatusOK, st)
 	})
+	mux.HandleFunc("GET /api/term/shells", func(w http.ResponseWriter, r *http.Request) {
+		list, err := h.termShells()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResp(w, http.StatusOK, map[string]any{"shells": list})
+	})
+	// registering a shell is a thing the runner does and keeps: the hub only forwards the order
+	mux.HandleFunc("POST /api/term/shells", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Name string   `json:"name"`
+			Path string   `json:"path"`
+			Args []string `json:"args"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		name, path, args, err := termrun.CheckCustom(in.Name, in.Path, in.Args)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if list, err := h.termShells(); err == nil {
+			for _, s := range list {
+				if strings.EqualFold(s.Name, name) {
+					http.Error(w, "this runner already has a shell called "+name, http.StatusConflict)
+					return
+				}
+			}
+		}
+		saved, err := dbpkg.InsertTermShell(h.db, dbpkg.TermShell{Name: name, Path: path, Args: args})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResp(w, http.StatusOK, termrun.Shell{ID: saved.ID, Name: saved.Name, Path: saved.Path, Args: saved.Args})
+	})
+	mux.HandleFunc("DELETE /api/term/shells/{id}", func(w http.ResponseWriter, r *http.Request) {
+		ok, err := dbpkg.DeleteTermShell(h.db, r.PathValue("id")) // only registered ones are in the table
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "that shell is not one registered on this runner", http.StatusNotFound)
+			return
+		}
+		jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("POST /api/term/stop", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ ID string `json:"id"` }
+		var req struct {
+			ID string `json:"id"`
+		}
 		if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -147,7 +248,9 @@ func (h *Handler) registerTermRPC(mux *http.ServeMux) {
 		jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("POST /api/term/forget", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ ID string `json:"id"` }
+		var req struct {
+			ID string `json:"id"`
+		}
 		if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -158,7 +261,9 @@ func (h *Handler) registerTermRPC(mux *http.ServeMux) {
 	// replay: the output kept for a process. The hub subscribes to the live subject first and cuts
 	// the overlap with the offsets, so nothing is lost or repeated between the two.
 	mux.HandleFunc("POST /api/term/replay", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ ID string `json:"id"` }
+		var req struct {
+			ID string `json:"id"`
+		}
 		if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return

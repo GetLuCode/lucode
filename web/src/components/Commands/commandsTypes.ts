@@ -10,6 +10,25 @@ export interface TermStatus {
   ended_at?: string
 }
 
+export interface EnvVar { name: string; value: string }
+
+// A shell the runner offers: the ones it found (builtin) and the ones registered on it.
+export interface RunnerShell { id: string; name: string; path: string; args: string[]; builtin: boolean }
+
+// What the hub also checks when saving: names are letters, digits and _, not starting with a digit, and unique.
+export function envProblem(env: EnvVar[]): string {
+  const seen = new Set<string>()
+  for (const v of env) {
+    const name = v.name.trim()
+    if (!name && !v.value) continue
+    if (!name) return 'A variable has a value but no name'
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return `"${name}" is not a valid name: letters, digits and _, not starting with a digit`
+    if (seen.has(name.toUpperCase())) return `${name} is set twice`
+    seen.add(name.toUpperCase())
+  }
+  return ''
+}
+
 export interface ProjectCommand {
   id: string
   project_id: string
@@ -17,6 +36,8 @@ export interface ProjectCommand {
   command: string // empty = an interactive shell
   cwd: string // relative to the project's work dir on the runner
   runner_id: string // "" = the project's runner
+  shell: string // id of one of the runner's shells; "" = its default
+  env: EnvVar[] // added to the runner's environment when it starts
   runner: string // the runner it actually runs on
   status?: TermStatus
 }

@@ -48,6 +48,7 @@ type Spec struct {
 	Cols    int
 	Rows    int
 	Env     []string // added to the environment of the runner
+	Shell   Shell    // zero = the system's default shell
 }
 
 // Sink receives what happens to the processes. Calls for one process come in order.
@@ -135,7 +136,7 @@ func (m *Manager) Start(spec Spec) (Status, error) {
 		_ = pt.Close()
 		return fail(fmt.Errorf("cannot size the terminal: %w", err))
 	}
-	cmd := shellCommand(pt, spec.Command)
+	cmd := shellCommand(pt, spec.Shell, spec.Command)
 	cmd.Dir = spec.Cwd
 	cmd.Env = append(os.Environ(), append(terminalEnv(), spec.Env...)...)
 	if err := cmd.Start(); err != nil {

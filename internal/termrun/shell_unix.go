@@ -14,7 +14,10 @@ func terminalEnv() []string { return []string{"TERM=xterm-256color", "COLORTERM=
 
 // shellCommand runs the command line with the user's shell (sh without one); an empty command
 // opens that shell interactively.
-func shellCommand(pt pty.Pty, command string) *pty.Cmd {
+func shellCommand(pt pty.Pty, chosen Shell, command string) *pty.Cmd {
+	if chosen.Path != "" {
+		return chosen.command(pt, command)
+	}
 	sh := os.Getenv("SHELL")
 	if sh == "" {
 		sh = "/bin/sh"
@@ -24,6 +27,11 @@ func shellCommand(pt pty.Pty, command string) *pty.Cmd {
 	}
 	return pt.Command(sh, "-c", command)
 }
+
+func comspec() string { return "" } // Windows only; shells.go names it in code that does not run here
+
+// cmdExeCommand is only for Windows; a registered cmd.exe on another system gets the plain form.
+func cmdExeCommand(pt pty.Pty, path, command string) *pty.Cmd { return pt.Command(path, "/c", command) }
 
 // killTree ends the process group (the pty makes the shell its leader): a polite signal first,
 // then SIGKILL if something is still there after three seconds.

@@ -458,6 +458,13 @@ export const projectGit = <T,>(projectId: string, op: string, body: Record<strin
 export const listProjectCommands = <T,>(projectId: string) => req<T>('GET', `/api/projects/${projectId}/commands`)
 export const saveProjectCommand = <T,>(projectId: string, id: string | null, body: Record<string, unknown>) =>
   id ? req<T>('PUT', `/api/projects/${projectId}/commands/${id}`, body) : req<T>('POST', `/api/projects/${projectId}/commands`, body)
+// The shells of a runner (the project's unless one is given): the runner lists, registers and forgets them.
+const shellsPath = (projectId: string, runnerId?: string) => `/api/projects/${projectId}/command-shells${runnerId ? `?runner=${encodeURIComponent(runnerId)}` : ''}`
+export const listCommandShells = <T,>(projectId: string, runnerId?: string) => req<T>('GET', shellsPath(projectId, runnerId))
+export const addCommandShell = <T,>(projectId: string, runnerId: string | undefined, body: { name: string; path: string; args: string[] }) =>
+  req<T>('POST', shellsPath(projectId, runnerId), body)
+export const deleteCommandShell = (projectId: string, runnerId: string | undefined, shellId: string) =>
+  req<void>('DELETE', `/api/projects/${projectId}/command-shells/${encodeURIComponent(shellId)}${runnerId ? `?runner=${encodeURIComponent(runnerId)}` : ''}`)
 export const deleteProjectCommand = (projectId: string, id: string) => req<void>('DELETE', `/api/projects/${projectId}/commands/${id}`)
 export const startProjectCommand = <T,>(projectId: string, id: string) => req<T>('POST', `/api/projects/${projectId}/commands/${id}/start`, {})
 export const stopProjectCommand = (projectId: string, id: string) => req<void>('POST', `/api/projects/${projectId}/commands/${id}/stop`, {})

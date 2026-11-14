@@ -4,8 +4,8 @@ import { useStore } from '../../store'
 import * as api from '../../api'
 import { addWSMessageHandler } from '../../hooks/useWSConnection'
 import { TerminalPane } from './TerminalPane'
-import { relDirProblem, stateLabel } from './commandsTypes'
-import type { CommandList, CommandTarget, ProjectCommand, TermStatus } from './commandsTypes'
+import { envProblem, relDirProblem, stateLabel } from './commandsTypes'
+import type { CommandList, CommandTarget, EnvVar, ProjectCommand, RunnerShell, TermStatus } from './commandsTypes'
 import './Commands.css'
 
 // The server answers errors as "METHOD path → 409: text"; show just the text.
@@ -101,7 +101,7 @@ export function CommandsView() {
                   <span className={dotClass(c.status)} />
                   <span className="cmds-item__text">
                     <span className="cmds-item__name">{c.name}</span>
-                    <span className="cmds-item__cmd">{c.command || 'interactive shell'}{c.cwd ? `  ·  ${c.cwd}` : ''}</span>
+                    <span className="cmds-item__cmd">{c.command || 'interactive shell'}{c.cwd ? `  ·  ${c.cwd}` : ''}{c.shell ? `  ·  ${c.shell.startsWith('custom-') ? 'custom shell' : c.shell}` : ''}{c.env?.length ? `  ·  ${c.env.length} env` : ''}</span>
                   </span>
                 </button>
                 <span className="cmds-item__actions">
@@ -172,6 +172,14 @@ function CommandForm({ projectId, initial, targets, onClose, onSaved }: {
   const [command, setCommand] = useState(initial?.command ?? '')
   const [cwd, setCwd] = useState(initial?.cwd ?? '')
   const [runner, setRunner] = useState(initial?.runner_id ?? '')
+  const [shell, setShell] = useState(initial?.shell ?? '')
+  const [env, setEnv] = useState<EnvVar[]>(initial?.env ?? [])
+  const [shells, setShells] = useState<RunnerShell[] | null>(null) // null = loading
+  const [shellsError, setShellsError] = useState('')
+  const [registering, setRegistering] = useState(false)
+  const [reg, setReg] = useState({ name: '', path: '', args: '' })
+  const [regBusy, setRegBusy] = useState(false)
+  const [regError, setRegError] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -183,13 +191,46 @@ function CommandForm({ projectId, initial, targets, onClose, onSaved }: {
   const effective = runner || targets[0]?.runner_id || ''
   const base = targets.find(t => t.runner_id === effective)?.repo ?? ''
   const dirProblem = relDirProblem(cwd)
+  const envIssue = envProblem(env)
+
+  // The shells belong to the runner the command will run on: ask it again when that changes.
+  const loadShells = useCallback(async () => {
+    setShells(null); setShellsError('')
+    try {
+      const r = await api.listCommandShells<{ shells: RunnerShell[] }>(projectId, effective || undefined)
+      setShells(r.shells)
+    } catch (e) { setShells([]); setShellsError(errorText(e)) }
+  }, [projectId, effective])
+  useEffect(() => { void loadShells() }, [loadShells])
+
+  const shellKnown = !shell || !shells || shells.some(s => s.id === shell)
+  const chosen = shells?.find(s => s.id === shell)
+
+  async function registerShell() {
+    if (regBusy) return
+    setRegBusy(true); setRegError('')
+    try {
+      const args = reg.args.trim() ? reg.args.trim().split(/\s+/) : []
+      const saved = await api.addCommandShell<RunnerShell>(projectId, effective || undefined, { name: reg.name, path: reg.path, args })
+      await loadShells()
+      setShell(saved.id)
+      setRegistering(false); setReg({ name: '', path: '', args: '' })
+    } catch (e) { setRegError(errorText(e)) } finally { setRegBusy(false) }
+  }
+
+  async function forgetShell(id: string) {
+    if (!window.confirm('Forget this shell on the runner? Commands that use it will not start until they pick another.')) return
+    try { await api.deleteCommandShell(projectId, effective || undefined, id); setShell(''); await loadShells() } catch (e) { setShellsError(errorText(e)) }
+  }
+
+  const setVar = (i: number, patch: Partial<EnvVar>) => setEnv(list => list.map((v, j) => (j === i ? { ...v, ...patch } : v)))
 
   async function save(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim() || dirProblem) return
+    if (!name.trim() || dirProblem || envIssue) return
     setSaving(true); setError('')
     try {
-      const saved = await api.saveProjectCommand<ProjectCommand>(projectId, initial?.id ?? null, { name, command, cwd: cwd.trim(), runner_id: runner })
+      const saved = await api.saveProjectCommand<ProjectCommand>(projectId, initial?.id ?? null, { name, command, cwd: cwd.trim(), runner_id: runner, shell, env: env.filter(v => v.name.trim() || v.value) })
       onSaved(saved.id)
     } catch (err) { setError(errorText(err)); setSaving(false) }
   }
@@ -224,10 +265,53 @@ function CommandForm({ projectId, initial, targets, onClose, onSaved }: {
             </select>
           </label>
         )}
+        <label>
+          Shell
+          <select value={shell} onChange={e => setShell(e.target.value)} disabled={shells === null}>
+            <option value="">The runner's default</option>
+            {!shellKnown && <option value={shell}>{shell} (not on this runner)</option>}
+            {shells?.map(s => <option key={s.id} value={s.id}>{s.name}{s.builtin ? '' : ' (registered)'}</option>)}
+          </select>
+          <span className={shellsError || !shellKnown ? 'cmds-bad' : 'cmds-dim'}>
+            {shellsError || (!shellKnown ? 'This runner does not have that shell: pick another or register it.' : chosen ? <code>{chosen.path}</code> : 'The shells come from the runner the command runs on.')}
+          </span>
+          <span className="cmds-shellbar">
+            <button type="button" className="cmds-btn" onClick={() => setRegistering(v => !v)}>{registering ? 'Cancel' : 'Register a shell…'}</button>
+            {chosen && !chosen.builtin && <button type="button" className="cmds-btn" onClick={() => forgetShell(chosen.id)}>Forget this shell</button>}
+          </span>
+        </label>
+        {registering && (
+          <fieldset className="cmds-reg" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void registerShell() } }}>
+            <legend>Register a shell on the runner</legend>
+            <label>Name<input value={reg.name} onChange={e => setReg({ ...reg, name: e.target.value })} placeholder="Zsh (Homebrew)" /></label>
+            <label>Path on the runner<input value={reg.path} onChange={e => setReg({ ...reg, path: e.target.value })} className="cmds-mono" spellCheck={false} placeholder="/usr/local/bin/zsh" /></label>
+            <label>Arguments before the command <span className="cmds-dim">(optional)</span>
+              <input value={reg.args} onChange={e => setReg({ ...reg, args: e.target.value })} className="cmds-mono" spellCheck={false} placeholder="-c  (empty = the usual ones for that shell)" />
+            </label>
+            {regError && <span className="cmds-bad">{regError}</span>}
+            <button type="button" className="cmds-btn cmds-btn--primary" disabled={regBusy || !reg.name.trim() || !reg.path.trim()} onClick={() => void registerShell()}>
+              {regBusy ? <IconLoader2 size={14} className="cmds-spin" /> : null} Register on the runner
+            </button>
+          </fieldset>
+        )}
+        <fieldset className="cmds-env">
+          <legend>Environment variables</legend>
+          {env.length === 0 && <span className="cmds-dim">None. They are added to the runner's own environment when the command starts.</span>}
+          {env.map((v, i) => (
+            <div className="cmds-env__row" key={i}>
+              <input value={v.name} onChange={e => setVar(i, { name: e.target.value })} className="cmds-mono" spellCheck={false} placeholder="NAME" aria-label="Variable name" />
+              <input value={v.value} onChange={e => setVar(i, { value: e.target.value })} className="cmds-mono" spellCheck={false} placeholder="value" aria-label="Variable value" />
+              <button type="button" className="cmds-icon cmds-icon--danger" title="Remove" onClick={() => setEnv(list => list.filter((_, j) => j !== i))}><IconTrash size={14} /></button>
+            </div>
+          ))}
+          {envIssue && <span className="cmds-bad">{envIssue}</span>}
+          <button type="button" className="cmds-btn" onClick={() => setEnv(list => [...list, { name: '', value: '' }])}><IconPlus size={14} /> Add variable</button>
+          <span className="cmds-dim">Values are saved on the hub and sent to the runner: do not put secrets here that you would not keep there.</span>
+        </fieldset>
         {error && <div className="cmds-error"><IconAlertTriangle size={14} /> <span>{error}</span></div>}
         <footer>
           <button type="button" className="cmds-btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="cmds-btn cmds-btn--primary" disabled={saving || !name.trim() || !!dirProblem}>
+          <button type="submit" className="cmds-btn cmds-btn--primary" disabled={saving || !name.trim() || !!dirProblem || !!envIssue}>
             {saving ? <IconLoader2 size={14} className="cmds-spin" /> : null} Save
           </button>
         </footer>

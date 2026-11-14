@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,47 @@ func (h *Handler) commandRunner(p dbpkg.Project, c dbpkg.ProjectCommand) (runner
 	return runner, dirs[0], nil
 }
 
+const (
+	maxEnvVars     = 64
+	maxEnvNameLen  = 128
+	maxEnvValueLen = 8192
+)
+
+// cleanEnv checks the environment variables of a command and drops the empty rows. A name is letters,
+// digits and "_" and does not start with a digit, which every shell and OS accepts; names are unique
+// (without regard to case, because Windows ignores it).
+func cleanEnv(in []dbpkg.EnvVar) ([]dbpkg.EnvVar, error) {
+	out := make([]dbpkg.EnvVar, 0, len(in))
+	seen := map[string]bool{}
+	for _, v := range in {
+		name := strings.TrimSpace(v.Name)
+		if name == "" && v.Value == "" {
+			continue
+		}
+		if name == "" {
+			return nil, errors.New("an environment variable has a value but no name")
+		}
+		if len(name) > maxEnvNameLen || !envNameRe.MatchString(name) {
+			return nil, fmt.Errorf("%q is not a valid variable name: use letters, digits and _, and do not start with a digit", name)
+		}
+		if strings.ContainsRune(v.Value, 0) || len(v.Value) > maxEnvValueLen {
+			return nil, fmt.Errorf("the value of %s is too long (max %d characters) or has a NUL character", name, maxEnvValueLen)
+		}
+		key := strings.ToUpper(name)
+		if seen[key] {
+			return nil, fmt.Errorf("the variable %s is set twice", name)
+		}
+		seen[key] = true
+		out = append(out, dbpkg.EnvVar{Name: name, Value: v.Value})
+	}
+	if len(out) > maxEnvVars {
+		return nil, fmt.Errorf("too many environment variables (max %d)", maxEnvVars)
+	}
+	return out, nil
+}
+
+var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // checkRelDir keeps the folder of a command relative and inside the work dir.
 func checkRelDir(rel string) error {
 	if rel == "" {
@@ -75,6 +117,9 @@ func checkRelDir(rel string) error {
 func (h *Handler) registerCommands(mux *http.ServeMux) {
 	h.watchTerminals()
 	mux.HandleFunc("GET /api/projects/{pid}/commands", h.listCommandsAPI)
+	mux.HandleFunc("GET /api/projects/{pid}/command-shells", h.listCommandShells)
+	mux.HandleFunc("POST /api/projects/{pid}/command-shells", h.addCommandShell)
+	mux.HandleFunc("DELETE /api/projects/{pid}/command-shells/{sid}", h.deleteCommandShell)
 	mux.HandleFunc("POST /api/projects/{pid}/commands", h.saveCommand)
 	mux.HandleFunc("PUT /api/projects/{pid}/commands/{cid}", h.saveCommand)
 	mux.HandleFunc("DELETE /api/projects/{pid}/commands/{cid}", h.deleteCommand)
@@ -211,6 +256,16 @@ func (h *Handler) saveCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "that is not a runner", http.StatusBadRequest)
 		return
 	}
+	in.Shell = strings.TrimSpace(in.Shell)
+	if len(in.Shell) > 64 || strings.ContainsAny(in.Shell, " \t\r\n/\\") {
+		http.Error(w, "that is not a shell id (take it from the runner's list)", http.StatusBadRequest)
+		return
+	}
+	envGiven := in.Env != nil // an older page that does not send "env" must not wipe it
+	if in.Env, err = cleanEnv(in.Env); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	in.ProjectID = p.ID
 	if cid := r.PathValue("cid"); cid != "" {
 		old, err := dbpkg.GetProjectCommand(h.db, cid)
@@ -219,6 +274,9 @@ func (h *Handler) saveCommand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.ID = cid
+		if !envGiven {
+			in.Env = old.Env
+		}
 		if err := dbpkg.UpdateProjectCommand(h.db, in); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -232,6 +290,69 @@ func (h *Handler) saveCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	h.notifyCommandsChanged(p.ID)
 	jsonResp(w, http.StatusOK, in)
+}
+
+// shellRunner is the runner whose shells are asked about: ?runner=, else the project's.
+func (h *Handler) shellRunner(w http.ResponseWriter, r *http.Request) (string, bool) {
+	p, err := dbpkg.GetProject(h.db, r.PathValue("pid"))
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return "", false
+	}
+	runner, _, err := h.commandRunner(p, dbpkg.ProjectCommand{RunnerID: r.URL.Query().Get("runner")})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return "", false
+	}
+	return runner, true
+}
+
+// forwardShells passes a shell order to the runner and answers what it said. The shells, and the
+// list of them, belong to the runner: the hub stores no path and runs nothing.
+func (h *Handler) forwardShells(w http.ResponseWriter, r *http.Request, method, path string, in any) {
+	runner, ok := h.shellRunner(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	var out json.RawMessage
+	code, err := h.runnerCall(ctx, runner, method, path, in, &out)
+	if err != nil {
+		if code == http.StatusNotFound && method == http.MethodGet {
+			code, err = http.StatusConflict, fmt.Errorf("runner %s is older than the shell option: rebuild and restart it", runner)
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out)
+}
+
+func (h *Handler) listCommandShells(w http.ResponseWriter, r *http.Request) {
+	h.forwardShells(w, r, http.MethodGet, "/api/term/shells", nil)
+}
+
+func (h *Handler) addCommandShell(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string   `json:"name"`
+		Path string   `json:"path"`
+		Args []string `json:"args"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	h.forwardShells(w, r, http.MethodPost, "/api/term/shells", in)
+}
+
+func (h *Handler) deleteCommandShell(w http.ResponseWriter, r *http.Request) {
+	sid := r.PathValue("sid")
+	if sid == "" || len(sid) > 64 || strings.ContainsAny(sid, "/ ?#") {
+		http.Error(w, "bad shell id", http.StatusBadRequest)
+		return
+	}
+	h.forwardShells(w, r, http.MethodDelete, "/api/term/shells/"+sid, nil)
 }
 
 func (h *Handler) deleteCommand(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +385,7 @@ func (h *Handler) startCommandOn(ctx context.Context, p dbpkg.Project, c dbpkg.P
 	defer cancel()
 	var st termrun.Status
 	code, err := h.runnerCall(ctx, runner, http.MethodPost, "/api/term/start", termStartReq{
-		ID: c.ID, Base: base, Cwd: c.Cwd, Command: c.Command, Cols: cols, Rows: rows,
+		ID: c.ID, Base: base, Cwd: c.Cwd, Command: c.Command, Env: c.Env, Shell: c.Shell, Cols: cols, Rows: rows,
 	}, &st)
 	if err != nil {
 		if code == http.StatusNotFound {

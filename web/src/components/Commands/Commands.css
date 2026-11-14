@@ -171,6 +171,11 @@
 .cmds-form code { font-family: var(--font-mono); font-size: 11px; }
 .cmds-form footer { display: flex; justify-content: flex-end; gap: 8px; }
 .cmds-form .cmds-error { margin: 0; }
+.cmds-shellbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.cmds-form fieldset { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px 12px; border: 1px solid var(--border-bright); border-radius: 6px; min-width: 0; }
+.cmds-form legend { padding: 0 6px; font-size: 12px; color: var(--text-dim); }
+.cmds-env__row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; gap: 6px; align-items: center; }
+.cmds-env .cmds-btn { align-self: flex-start; }
 
 .cmds-spin { animation: cmds-rot 0.9s linear infinite; }
 @keyframes cmds-rot { to { transform: rotate(360deg); } }
