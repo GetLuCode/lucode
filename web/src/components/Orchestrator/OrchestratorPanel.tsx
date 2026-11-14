@@ -12,7 +12,7 @@ import { MessageBubble } from '../Chat/MessageBubble'
 import { ThinkingIndicator } from '../Chat/ThinkingIndicator'
 import { ContextBar } from '../Chat/ContextBar'
 import { CacheBadge, useCacheCountdown } from '../Chat/CacheBadge'
-import { ClaudeProcess } from '../Chat/ClaudeProcess'
+import { OrchestratorInfo } from './OrchestratorInfo'
 import { HistoryPopover, HistorySidebar, latestConversation, type HistorySource } from './ConversationHistory'
 import { OrchestratorEdit } from './OrchestratorEdit'
 import { ModelIcon } from './ModelIcon'
@@ -571,8 +571,8 @@ export function OrchestratorPanel({ full = false, embed }: { full?: boolean; emb
           </Popover>}
         </span>
         {embed && <PluginOrigin pluginId={embed.pluginId} className="orch__origin" />}
-        {!answeredByPlugin && <CacheBadge cache={cache} />}
-        {sid && !answeredByPlugin && <ClaudeProcess sessionId={sid} />}
+        {!answeredByPlugin && <CacheBadge cache={cache} quiet />}
+        {sid && !answeredByPlugin && <OrchestratorInfo sessionId={sid} cache={cache} />}
         {sid && !embed && <OrchestratorEdit projectId={projectId} sessionId={sid} onSaved={() => setHistoryVersion(v => v + 1)} onMoved={s => { tts.stop(); navigate(`/projects/${s.project_id}/kanban`) }} />}
         {hasSidebar ? (
           <button

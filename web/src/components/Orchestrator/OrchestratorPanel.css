@@ -306,3 +306,15 @@
 .orch:not(.orch--full):not(.orch--embed) .orch__header { gap: 4px; }
 .orch:not(.orch--full):not(.orch--embed) .orch__title { text-overflow: clip; }
 .orch:not(.orch--full):not(.orch--embed) .orch__header .orch__icon-btn { padding: 3px; }
+
+/* info dropdown of the header: prompt cache and claude process */
+.orch__icon-btn--warn { color: var(--error); }
+.orch-info { width: 260px; }
+.orch-info__row { padding: 2px 8px 4px; font-size: 12px; color: var(--text); white-space: normal; overflow-wrap: anywhere; }
+.orch-info__row--expired { color: var(--error); }
+.orch-info__row--none { color: var(--text-muted); }
+.orch-info__row--path { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.orch-info__close { color: var(--error); }
+.orch-info__close:disabled { opacity: 0.45; cursor: default; }
+.orch-info__hint { padding: 2px 8px 4px; white-space: normal; }
+.orch-info__error { padding: 4px 8px; font-size: 11px; color: var(--error); }

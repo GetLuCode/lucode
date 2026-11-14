@@ -58,13 +58,16 @@ export function useCacheCountdown(status: string, lastActive: string | undefined
 
 // `compact` is the narrow vertical form (the collapsed orchestrator tab): it only shows a
 // running clock, never the "cache expired" text, which does not fit there.
-export function CacheBadge({ cache, compact }: { cache: CacheCountdown; compact?: boolean }) {
+// `quiet` (the header of the narrow panel) never writes "cache expired": the red bar says it,
+// and the details are in the panel's info dropdown.
+export function CacheBadge({ cache, compact, quiet }: { cache: CacheCountdown; compact?: boolean; quiet?: boolean }) {
   if (compact && (cache.state === 'expired' || cache.state === 'none')) return null
+  const hideTime = quiet && (cache.state === 'expired' || cache.state === 'none')
   const title = 'Prompt cache: time left before the 5-minute cache expires. A new message within it is cheaper and faster.'
   return (
     <span className={`cache-badge cache-badge--${cache.state}${compact ? ' cache-badge--compact' : ''}`} title={title}>
       <span className="cache-badge__bar"><span style={{ transform: `scaleX(${cache.fraction.toFixed(3)})` }} /></span>
-      <span className="cache-badge__time">{cache.label}</span>
+      {!hideTime && <span className="cache-badge__time">{cache.label}</span>}
     </span>
   )
 }
