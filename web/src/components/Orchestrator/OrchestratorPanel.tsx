@@ -173,6 +173,14 @@ export function OrchestratorPanel({ full = false, embed }: { full?: boolean; emb
   // The Supervisor tab shows the history beside the chat (it can be hidden); elsewhere it is a popover.
   const isMobile = useIsMobile()
   const hasSidebar = (full || !!embed) && !isMobile
+  // On a phone the Supervisor tab and the floating panel are two looks of one view: leaving the
+  // tab (or loading another page) must not pop the panel open over it. The user opens it with
+  // the button; the stored choice is not touched, so the desktop keeps its own.
+  useEffect(() => {
+    if (embed || !isMobile || full) return
+    useStore.setState({ orchOpen: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full, isMobile, !!embed])
   const [historyOpen, setHistoryOpen] = useState(() => lsGet(LS.historyOpen, '1') === '1')
   const [historyVersion, setHistoryVersion] = useState(0)
 
