@@ -150,6 +150,9 @@ importers:
       parcel:
         specifier: ^2.16.4
         version: 2.16.4(@swc/helpers@0.5.24)
+      postcss:
+        specifier: ^8.5.32
+        version: 8.5.32
       process:
         specifier: ^0.11.10
         version: 0.11.10
