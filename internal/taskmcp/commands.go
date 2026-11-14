@@ -14,11 +14,14 @@ const (
 	ToolCommandStop   = "command_stop"
 	ToolCommandOutput = "command_output"
 	ToolCommandErrors = "command_errors"
+	// the shells a runner offers to commands; registering one is a change on that machine, so it asks
+	ToolCommandShells   = "command_shells"
+	ToolCommandShellAdd = "command_shell_add"
 )
 
 // CommandNames lists the command tools, in display order.
 func CommandNames() []string {
-	return []string{ToolCommandList, ToolCommandCreate, ToolCommandRun, ToolCommandStop, ToolCommandOutput, ToolCommandErrors}
+	return []string{ToolCommandList, ToolCommandCreate, ToolCommandRun, ToolCommandStop, ToolCommandOutput, ToolCommandErrors, ToolCommandShells, ToolCommandShellAdd}
 }
 
 // IsCommandTool reports whether name is a command tool, with or without the mcp__lucode__ prefix.
@@ -35,7 +38,7 @@ func IsCommandTool(name string) bool {
 // IsCommandReadTool is a command tool that changes nothing and runs nothing.
 func IsCommandReadTool(name string) bool {
 	switch strings.TrimPrefix(name, "mcp__lucode__") {
-	case ToolCommandList, ToolCommandOutput, ToolCommandErrors:
+	case ToolCommandList, ToolCommandOutput, ToolCommandErrors, ToolCommandShells:
 		return true
 	}
 	return false
@@ -59,7 +62,32 @@ var commandTools = []tool{
 			"cwd":       str("Folder to run in, relative to the project's work directory (e.g. \"web\"). Empty = the work directory itself. It cannot leave it."),
 			"runner_id": str("Runner to run on. Only needed when the project has folders on several runners; defaults to the project's runner."),
 			"run":       flag("Start it right away."),
+			"shell":     str("Id of one of the runner's shells (see command_shells). Empty = the runner's default shell."),
+			"env": map[string]any{
+				"type":        "array",
+				"description": "Environment variables added to the runner's own for this command. Names are letters, digits and _, unique ignoring case. command_list shows only the names.",
+				"items": props(map[string]any{
+					"name":  str("Variable name."),
+					"value": str("Variable value."),
+				}, "name"),
+			},
 		}, "name", "command"),
+	},
+	{
+		Name:        ToolCommandShells,
+		Description: "List the shells a runner offers for commands (id, name, path, and whether the runner found it or someone registered it). Use an id as the shell of command_create.",
+		InputSchema: props(map[string]any{"runner_id": str("Runner to ask. Defaults to the project's runner.")}),
+	},
+	{
+		Name: ToolCommandShellAdd,
+		Description: "Register a shell on a runner so commands can use it (a bash in a non-standard path, a Git Bash launcher...). The runner keeps it. The user approves it, because it names an executable on that machine. " +
+			"Returns the shells of the runner, with the id of the new one.",
+		InputSchema: props(map[string]any{
+			"name":      str("Name to show, e.g. \"Git Bash\"."),
+			"path":      str("Absolute path of the shell executable on the runner."),
+			"args":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Arguments put before the command line. Omit them to use the usual ones for that kind of shell."},
+			"runner_id": str("Runner to register it on. Defaults to the project's runner."),
+		}, "name", "path"),
 	},
 	{
 		Name: ToolCommandRun,

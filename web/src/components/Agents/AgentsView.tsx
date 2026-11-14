@@ -84,7 +84,9 @@ const FLOW_TOOLS = [
 // The Commands tab: define, run and read commands on the project's runner. Never on by default.
 const COMMAND_TOOLS = [
   { name: 'command_list',   desc: 'List the commands of the project and their state' },
-  { name: 'command_create', desc: 'Define a command (can start it)' },
+  { name: 'command_create', desc: 'Define a command, with its shell and env vars (can start it)' },
+  { name: 'command_shells',  desc: "List the shells a runner offers for commands" },
+  { name: 'command_shell_add', desc: 'Register a shell on a runner (asks the user)' },
   { name: 'command_run',    desc: 'Run a command, optionally waiting for it to end' },
   { name: 'command_stop',   desc: 'Stop a running command' },
   { name: 'command_output', desc: 'Read the last lines a command printed' },

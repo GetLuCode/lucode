@@ -95,7 +95,15 @@ func cleanEnv(in []dbpkg.EnvVar) ([]dbpkg.EnvVar, error) {
 	return out, nil
 }
 
-var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// checkShellID only checks the shape of a shell id; the runner knows whether it has that shell.
+func checkShellID(id string) error {
+	if len(id) > 64 || strings.ContainsAny(id, " \t\r\n/\\") {
+		return errors.New("that is not a shell id (take it from the runner's list)")
+	}
+	return nil
+}
+
+var envNameRe =regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // checkRelDir keeps the folder of a command relative and inside the work dir.
 func checkRelDir(rel string) error {
@@ -257,8 +265,8 @@ func (h *Handler) saveCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Shell = strings.TrimSpace(in.Shell)
-	if len(in.Shell) > 64 || strings.ContainsAny(in.Shell, " \t\r\n/\\") {
-		http.Error(w, "that is not a shell id (take it from the runner's list)", http.StatusBadRequest)
+	if err := checkShellID(in.Shell); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	envGiven := in.Env != nil // an older page that does not send "env" must not wipe it

@@ -36,14 +36,18 @@ func (h *Handler) handleCommandTool(projectID, tool string, args json.RawMessage
 		return "", fmt.Errorf("project not found: %w", err)
 	}
 	var a struct {
-		Name        string  `json:"name"`
-		Command     string  `json:"command"`
-		Cwd         string  `json:"cwd"`
-		RunnerID    string  `json:"runner_id"`
-		Run         bool    `json:"run"`
-		WaitSeconds float64 `json:"wait_seconds"`
-		Lines       int     `json:"lines"`
-		Limit       int     `json:"limit"`
+		Name        string         `json:"name"`
+		Command     string         `json:"command"`
+		Cwd         string         `json:"cwd"`
+		RunnerID    string         `json:"runner_id"`
+		Run         bool           `json:"run"`
+		WaitSeconds float64        `json:"wait_seconds"`
+		Lines       int            `json:"lines"`
+		Limit       int            `json:"limit"`
+		Shell       string         `json:"shell"`
+		Env         []dbpkg.EnvVar `json:"env"`
+		Path        string         `json:"path"`
+		Args        []string       `json:"args"`
 	}
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &a); err != nil {
@@ -54,7 +58,11 @@ func (h *Handler) handleCommandTool(projectID, tool string, args json.RawMessage
 	case taskmcp.ToolCommandList:
 		return h.commandListTool(p)
 	case taskmcp.ToolCommandCreate:
-		return h.commandCreateTool(p, dbpkg.ProjectCommand{Name: a.Name, Command: a.Command, Cwd: a.Cwd, RunnerID: a.RunnerID}, a.Run)
+		return h.commandCreateTool(p, dbpkg.ProjectCommand{Name: a.Name, Command: a.Command, Cwd: a.Cwd, RunnerID: a.RunnerID, Shell: a.Shell, Env: a.Env}, a.Run)
+	case taskmcp.ToolCommandShells:
+		return h.commandShellsTool(p, a.RunnerID)
+	case taskmcp.ToolCommandShellAdd:
+		return h.commandShellAddTool(p, a.RunnerID, a.Name, a.Path, a.Args)
 	case taskmcp.ToolCommandRun:
 		return h.commandRunTool(p, a.Command, a.WaitSeconds)
 	case taskmcp.ToolCommandStop:
@@ -159,6 +167,16 @@ func (h *Handler) commandListTool(p dbpkg.Project) (string, error) {
 			line = "(interactive shell)"
 		}
 		fmt.Fprintf(&b, "- %s  id=%s\n    command: %s\n    folder: %s\n    state: %s\n", c.Name, c.ID, line, orDot(c.Cwd), state)
+		if c.Shell != "" {
+			fmt.Fprintf(&b, "    shell: %s\n", c.Shell)
+		}
+		if len(c.Env) > 0 { // names only: a value may be a secret
+			names := make([]string, len(c.Env))
+			for i, v := range c.Env {
+				names[i] = v.Name
+			}
+			fmt.Fprintf(&b, "    env: %s\n", strings.Join(names, ", "))
+		}
 	}
 	return b.String(), nil
 }
@@ -185,6 +203,15 @@ func (h *Handler) commandCreateTool(p dbpkg.Project, in dbpkg.ProjectCommand, ru
 	if in.RunnerID != "" && !h.isRemoteRunner(in.RunnerID) {
 		return "", errors.New("runner_id is not a runner")
 	}
+	in.Shell = strings.TrimSpace(in.Shell)
+	if err := checkShellID(in.Shell); err != nil {
+		return "", err
+	}
+	env, err := cleanEnv(in.Env)
+	if err != nil {
+		return "", err
+	}
+	in.Env = env
 	if _, _, err := h.commandRunner(p, in); err != nil {
 		return "", err // a command that could never run is not worth saving
 	}
@@ -210,6 +237,61 @@ func (h *Handler) commandCreateTool(p dbpkg.Project, in dbpkg.ProjectCommand, ru
 		msg += fmt.Sprintf(" Started on the runner (pid %d).", st.PID)
 	}
 	return msg, nil
+}
+
+// shellList is what the runner answers to GET /api/term/shells.
+type shellList struct {
+	Shells []termrun.Shell `json:"shells"`
+}
+
+func describeShells(list []termrun.Shell) string {
+	if len(list) == 0 {
+		return "This runner offers no shells: commands use its default one."
+	}
+	var b strings.Builder
+	for _, s := range list {
+		origin := "registered"
+		if s.Builtin {
+			origin = "found by the runner"
+		}
+		fmt.Fprintf(&b, "- %s  id=%s  path=%s  (%s)\n", s.Name, s.ID, s.Path, origin)
+	}
+	return b.String()
+}
+
+// commandShellsTool asks the runner for its shells over RPC: the hub knows no shell paths.
+func (h *Handler) commandShellsTool(p dbpkg.Project, runnerID string) (string, error) {
+	runner, _, err := h.commandRunner(p, dbpkg.ProjectCommand{RunnerID: runnerID})
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var out shellList
+	if code, err := h.runnerCall(ctx, runner, http.MethodGet, "/api/term/shells", nil, &out); err != nil {
+		if code == http.StatusNotFound {
+			return "", fmt.Errorf("runner %s is older than the shell option: rebuild and restart it", runner)
+		}
+		return "", err
+	}
+	return describeShells(out.Shells), nil
+}
+
+// commandShellAddTool registers a shell on a runner. The runner validates and keeps it; the user
+// approves the call through the usual tool hook, because it names an executable on that machine.
+func (h *Handler) commandShellAddTool(p dbpkg.Project, runnerID, name, path string, args []string) (string, error) {
+	runner, _, err := h.commandRunner(p, dbpkg.ProjectCommand{RunnerID: runnerID})
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var saved termrun.Shell
+	body := map[string]any{"name": name, "path": path, "args": args}
+	if _, err := h.runnerCall(ctx, runner, http.MethodPost, "/api/term/shells", body, &saved); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Shell %q registered on runner %s (id %s). Use that id as the shell of command_create.", saved.Name, runner, saved.ID), nil
 }
 
 func (h *Handler) commandRunTool(p dbpkg.Project, ref string, wait float64) (string, error) {
