@@ -7,6 +7,7 @@ require (
 	fyne.io/systray v1.12.0
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/anthropics/anthropic-sdk-go/v2 v2.7.0
+	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/evanw/esbuild v0.27.0
 	github.com/google/uuid v1.6.0
@@ -23,9 +24,11 @@ require (
 
 require (
 	github.com/antithesishq/antithesis-sdk-go v0.6.0-default-no-op // indirect
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/minio/highwayhash v1.0.4-0.20251030100505-070ab1a87a76 // indirect
 	github.com/nats-io/jwt/v2 v2.8.1 // indirect
+	github.com/u-root/u-root v0.16.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
 
@@ -84,7 +87,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
+	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect

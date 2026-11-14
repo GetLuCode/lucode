@@ -7046,6 +7046,9 @@ input[type="date"].kmodal__input { color-scheme: dark; }
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
+  /* the header's menus open over the page below: its own layer, above the views' content */
+  position: relative;
+  z-index: 150;
 }
 
 .project-header__project {

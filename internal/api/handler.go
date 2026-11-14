@@ -41,6 +41,7 @@ type cachedEntry struct {
 }
 
 type Handler struct {
+	term termState // the Commands tab (termrunner.go)
 	// hubOnly: this instance orchestrates and runs no claude of its own (--hub-only);
 	// every turn goes to a runner.
 	hubOnly    bool
@@ -149,6 +150,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/version", h.version("hub"))
 	h.registerFlows(mux)
 	h.registerGit(mux)
+	h.registerCommands(mux)
 	h.registerPlugins(mux)
 
 	mux.HandleFunc("POST /api/projects", h.createProject)
@@ -3161,7 +3163,7 @@ func sanitizeLucodeTools(in []string) []string {
 		return nil
 	}
 	known := map[string]bool{}
-	for _, n := range append(append(taskmcp.Names(), taskmcp.BrowserNames()...), taskmcp.FlowNames()...) {
+	for _, n := range append(append(append(taskmcp.Names(), taskmcp.BrowserNames()...), taskmcp.FlowNames()...), taskmcp.CommandNames()...) {
 		known[n] = true
 	}
 	out := []string{}

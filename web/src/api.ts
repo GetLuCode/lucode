@@ -454,6 +454,16 @@ export const getCardReview = (id: string) => req<ReviewStatus>('GET', `/api/kanb
 export const getGitTargets = <T,>(projectId: string) => req<T>('GET', `/api/projects/${projectId}/git/targets`)
 export const projectGit = <T,>(projectId: string, op: string, body: Record<string, unknown>) =>
   req<T>('POST', `/api/projects/${projectId}/git/${op}`, body)
+// Commands tab: definitions live on the hub, the processes on a runner.
+export const listProjectCommands = <T,>(projectId: string) => req<T>('GET', `/api/projects/${projectId}/commands`)
+export const saveProjectCommand = <T,>(projectId: string, id: string | null, body: Record<string, unknown>) =>
+  id ? req<T>('PUT', `/api/projects/${projectId}/commands/${id}`, body) : req<T>('POST', `/api/projects/${projectId}/commands`, body)
+export const deleteProjectCommand = (projectId: string, id: string) => req<void>('DELETE', `/api/projects/${projectId}/commands/${id}`)
+export const startProjectCommand = <T,>(projectId: string, id: string) => req<T>('POST', `/api/projects/${projectId}/commands/${id}/start`, {})
+export const stopProjectCommand = (projectId: string, id: string) => req<void>('POST', `/api/projects/${projectId}/commands/${id}/stop`, {})
+// A one-use ticket for the terminal socket: a browser cannot send the token with a WebSocket.
+export const commandTerminalTicket = (projectId: string, id: string) =>
+  req<{ ticket: string }>('POST', `/api/projects/${projectId}/commands/${id}/ticket`, {})
 export const mergeCardReview = (id: string) =>
   req<{ card: KanbanCard; warnings: string[] }>('POST', `/api/kanban/cards/${id}/review/merge`)
 export const resolveCardReview = (id: string) =>

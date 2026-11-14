@@ -26,6 +26,11 @@ export async function getSttWSUrl(): Promise<string> {
   return (await getWSUrl()).replace(/\/ws$/, '/ws/stt')
 }
 
+// WebSocket of a command's terminal (same host as the main socket).
+export async function getTermWSUrl(ticket: string): Promise<string> {
+  return `${(await getWSUrl()).replace(/\/ws$/, '/ws/term')}?ticket=${encodeURIComponent(ticket)}`
+}
+
 function setupWSHandlers(ws: ReconnectingWebSocket): void {
   ws.onopen = () => console.log('[ws] connected')
   ws.onclose = () => console.log('[ws] disconnected, reconnecting...')

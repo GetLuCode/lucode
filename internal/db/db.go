@@ -553,6 +553,9 @@ CREATE TABLE IF NOT EXISTS card_reviews (
 	if err := migrateFlows(db); err != nil {
 		return err
 	}
+	if err := migrateProjectCommands(db); err != nil {
+		return err
+	}
 
 	// Column additions for tables created above (idempotent).
 	// card_reviews.runner_id — the runner whose disk holds the repository and worktree;

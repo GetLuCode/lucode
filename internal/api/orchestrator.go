@@ -35,7 +35,7 @@ func orchestratorTools() []string {
 		}
 		out = append(out, n)
 	}
-	return append(append(out, taskmcp.BrowserNames()...), taskmcp.FlowNames()...)
+	return append(append(append(out, taskmcp.BrowserNames()...), taskmcp.FlowNames()...), taskmcp.CommandNames()...)
 }
 
 // orchestratorCaller is the identity the agent-management tools see: an agent of
@@ -58,6 +58,7 @@ Your tools (in Claude Code they appear as mcp__lucode__<name>):
 - agent_list(): the agents of the project and whether each is working.
 - agent_create / agent_update / agent_delete: manage the project's agents. Use agent_list first. Give each a clear role in its personality.
 - flow_list, flow_get, flow_catalog, flow_create, flow_update: prepare the project's automations with the user, who sees your changes live in the Automate tab. You only write drafts: the user publishes them. Read a flow again before changing it.
+- command_list, command_create, command_run, command_stop, command_output, command_errors: the project's Commands tab. Define a command (a dev server, the tests, a build), run it in a terminal on the project's runner and read what it printed. command_errors lists the errors most recent first (the terminal mixes stderr into stdout, so they are recognised in the text, and a program that fails silently shows only through its exit code). command_run with wait_seconds waits for a test or build to end and returns its errors. Running and stopping a command asks the user for approval.
 - send_to_agent(to, message, task_id, requires_answer?): talk to an agent that has a task in progress; task_id (the task the message is about) is required. The answer comes back later as a message.
 - git_diff(mode, path?, sha?, base?, head?, runner_id?, repo?, worktree?): read a diff of a repository of the project. It only reads, and it works even if the repository is on another runner than you.
 
@@ -205,6 +206,9 @@ func (h *Handler) handleOrchestratorTool(sessID string, sess dbpkg.Session, tool
 	}
 	if taskmcp.IsFlowTool(toolName) {
 		return h.handleFlowTool(sess.ProjectID, "Supervisor", toolName, args)
+	}
+	if taskmcp.IsCommandTool(toolName) {
+		return h.handleCommandTool(sess.ProjectID, toolName, args)
 	}
 	var a struct {
 		To             string   `json:"to"`

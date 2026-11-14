@@ -48,6 +48,7 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const onKanban = !onPlugin && pathname.includes('/kanban')
   const onFlows = !onPlugin && pathname.includes('/flows')
   const onGit = !onPlugin && /\/git\/?$/.test(pathname)
+  const onCommands = !onPlugin && /\/commands\/?$/.test(pathname)
   // The running list and the chats opened from it share the Running tab.
   const onRunning = !onPlugin && (pathname.includes('/running') || pathname.includes('/sessions/'))
 
@@ -165,6 +166,10 @@ export function ProjectHeader({ onOpenSearch }: { onOpenSearch?: () => void }) {
           className={`project-tab${onGit ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/git`)}
         >Git</button>
+        <button
+          className={`project-tab${onCommands ? ' project-tab--active' : ''}`}
+          onClick={() => navigate(`${base}/commands`)}
+        >Commands</button>
         <button
           className={`project-tab${onFlows ? ' project-tab--active' : ''}`}
           onClick={() => navigate(`${base}/flows`)}

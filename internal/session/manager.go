@@ -806,6 +806,11 @@ func (m *Manager) decideTool(req natspkg.PermissionRequest) (string, string, str
 	if taskmcp.IsFlowTool(toolName) {
 		return "allow", "only writes unpublished drafts", decidedByLucode
 	}
+	// Looking at a command's output or list changes nothing. Creating, running or stopping one is
+	// code running on a machine, so those go through the usual approval.
+	if taskmcp.IsCommandReadTool(toolName) {
+		return "allow", "only reads commands and their output", decidedByLucode
+	}
 	// ToolSearch only loads the schemas of deferred tools (how claude finds the task tools).
 	if toolName == "ToolSearch" {
 		return "allow", "loads tool schemas only", decidedByLucode

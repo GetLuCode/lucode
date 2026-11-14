@@ -14,6 +14,13 @@ import (
 // preconfigured AIs. Nothing else of lucode (projects, kanban, sessions, the web UI)
 // exists there, so nothing else can be called.
 func NewRunnerHandler(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) http.Handler {
+	handler, _ := NewRunnerHandlerWithStop(db, bus, manager, workingDir)
+	return handler
+}
+
+// NewRunnerHandlerWithStop is NewRunnerHandler plus the function that ends what the handler
+// launched (the Commands tab's processes); the runner calls it as it stops.
+func NewRunnerHandlerWithStop(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager, workingDir string) (http.Handler, func()) {
 	h := New(db, bus, manager, workingDir)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", h.health)
@@ -27,10 +34,11 @@ func NewRunnerHandler(db *sql.DB, bus *natspkg.Bus, manager *sessionpkg.Manager,
 	mux.HandleFunc("POST /api/review/repo", h.reviewRepoRPC)
 	mux.HandleFunc("POST /api/review/diffstat", h.diffStatRPC)
 	h.registerGitRPC(mux)
+	h.registerTermRPC(mux)
 	mux.HandleFunc("GET /api/ai-profiles", h.listAIProfiles)
 	mux.HandleFunc("POST /api/ai-profiles", h.createAIProfile)
 	mux.HandleFunc("POST /api/ai-profiles/{id}/refresh", h.refreshAIProfile)
 	mux.HandleFunc("DELETE /api/ai-profiles/{id}", h.deleteAIProfile)
 	mux.HandleFunc("GET /api/ai-profiles/{id}/usage", h.aiProfileUsage)
-	return recoverMiddleware(mux)
+	return recoverMiddleware(mux), h.StopTerminals
 }

@@ -521,6 +521,13 @@ func (h *Handler) HandleTaskTool(sessID, tool string, args json.RawMessage) (str
 		}
 		return h.handleFlowTool(card.ProjectID, agent.Name, toolName, args)
 	}
+	if taskmcp.IsCommandTool(toolName) {
+		// opt-in too: running a command is running code on a runner
+		if agentErr != nil || !contains(agent.LucodeTools, toolName) {
+			return "", fmt.Errorf("the %s tool is disabled for this agent", toolName)
+		}
+		return h.handleCommandTool(card.ProjectID, toolName, args)
+	}
 
 	switch toolName {
 	case taskmcp.ToolComment:

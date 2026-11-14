@@ -80,6 +80,16 @@ const FLOW_TOOLS = [
   { name: 'flow_update',  desc: 'Change the draft of a flow' },
 ]
 
+// The Commands tab: define, run and read commands on the project's runner. Never on by default.
+const COMMAND_TOOLS = [
+  { name: 'command_list',   desc: 'List the commands of the project and their state' },
+  { name: 'command_create', desc: 'Define a command (can start it)' },
+  { name: 'command_run',    desc: 'Run a command, optionally waiting for it to end' },
+  { name: 'command_stop',   desc: 'Stop a running command' },
+  { name: 'command_output', desc: 'Read the last lines a command printed' },
+  { name: 'command_errors', desc: 'List the errors a command printed, most recent first' },
+]
+
 // Control of Microsoft Edge (CDP). Stored in lucode_tools like the rest, but never on by default.
 const BROWSER_TOOLS = [
   { name: 'browser_launch',        desc: 'Start Edge in a window or headless' },
@@ -472,6 +482,13 @@ function AgentForm({
             title="Flow tools (Automate)"
             hint="Off by default. Lets the agent read flows and change their drafts, live in the editor and without asking for approval. Only a person can publish, enable or delete a flow."
             tools={FLOW_TOOLS}
+            enabled={form.lucode_tools}
+            onToggle={toggleLucodeTool}
+          />
+          <ToolGroup
+            title="Command tools (Commands tab)"
+            hint="Off by default. Lets the agent define commands, run them in a terminal on the project's runner and read their output and errors. Reading is automatic; creating, running and stopping a command ask for approval."
+            tools={COMMAND_TOOLS}
             enabled={form.lucode_tools}
             onToggle={toggleLucodeTool}
           />

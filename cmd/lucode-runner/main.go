@@ -158,7 +158,8 @@ func runRunner(o runnerOptions) {
 	if err := bus.ServeRunnerProcesses(manager.RunnerProcesses); err != nil {
 		log.Fatalf("runner processes: %v", err)
 	}
-	if err := bus.StartRPCServer(apipkg.NewRunnerHandler(db, bus, manager, *workingDir)); err != nil {
+	rpcHandler, stopTerminals := apipkg.NewRunnerHandlerWithStop(db, bus, manager, *workingDir)
+	if err := bus.StartRPCServer(rpcHandler); err != nil {
 		log.Fatalf("rpc server: %v", err)
 	}
 	agent, err := pluginrunner.New(pluginrunner.Options{NATS: nc, RunnerID: instanceID, DataDir: *dataDir, Policy: *pluginPolicy})
@@ -191,6 +192,7 @@ func runRunner(o runnerOptions) {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 	log.Printf("[runner] stopping")
+	stopTerminals() // the Commands tab's processes die with the runner
 }
 
 // runPair is lucode-runner pair <code>: it writes the pairing and exits. A subcommand and never a
