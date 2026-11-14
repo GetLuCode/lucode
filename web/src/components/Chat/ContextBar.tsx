@@ -51,21 +51,29 @@ interface TokenPlan {
 
 const TOKEN_PLAN_POLL_MS = 2 * 60 * 1000 // every 2 minutes
 
-function TokenPlanBadge() {
+// Once the hub answers 503 the subscription key is not configured: stop asking until the page reloads.
+let tokenPlanUnconfigured = false
+
+// Only asks for the plan while the session uses a MiniMax model (the plan is of no use otherwise).
+function TokenPlanBadge({ model }: { model?: string }) {
   const [plan, setPlan] = useState<TokenPlan | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const used = !!model && /minimax/i.test(model)
 
   const fetchPlan = async () => {
+    if (tokenPlanUnconfigured) return
     try {
       const data = await getMinimaxTokenPlan()
       setPlan(data as TokenPlan)
-    } catch {
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('→ 503')) tokenPlanUnconfigured = true
       // Not configured or unreachable — stay hidden
     }
   }
 
   useEffect(() => {
+    if (!used) return
     fetchPlan()
     const pollId = setInterval(fetchPlan, TOKEN_PLAN_POLL_MS)
     // Update the displayed countdown every minute
@@ -74,9 +82,9 @@ function TokenPlanBadge() {
       clearInterval(pollId)
       if (timerRef.current) clearInterval(timerRef.current)
     }
-  }, [])
+  }, [used])
 
-  if (!plan) return null
+  if (!used || !plan) return null
 
   const remaining = typeof plan.remaining_tokens === 'number' ? plan.remaining_tokens : null
   const total = typeof plan.total_tokens === 'number' ? plan.total_tokens : null
@@ -316,10 +324,12 @@ interface ContextBarProps {
 export function ContextBar({ sessionId, placement = 'viewport' }: ContextBarProps) {
   const contextUsage = useStore(s => s.contextUsage[sessionId])
   const sessionUsage = useStore(s => s.sessionUsage[sessionId])
+  const sessionModel = useStore(s => s.sessions.find(x => x.id === sessionId)?.model)
+  const model = contextUsage?.model || sessionModel
   const [detailOpen, setDetailOpen] = useState(false)
   const [tooltip, setTooltip] = useState<{ name: string; tokens: number; pct: number; x: number } | null>(null)
 
-  if (!contextUsage) return <TokenPlanBadge />
+  if (!contextUsage) return <TokenPlanBadge model={model} />
 
   const { categories, totalTokens, maxTokens, percentage } = contextUsage
   const usedCategories = (categories ?? []).filter(c => c.name !== 'Free space' && c.tokens > 0)
@@ -397,7 +407,7 @@ export function ContextBar({ sessionId, placement = 'viewport' }: ContextBarProp
         </span>
       </div>
 
-      <TokenPlanBadge />
+      <TokenPlanBadge model={model} />
 
       {detailOpen && (
         <ContextDetailModal

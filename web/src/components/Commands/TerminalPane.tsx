@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import * as api from '../../api'
 import { getTermWSUrl } from '../../hooks/useWSConnection'
@@ -26,6 +27,10 @@ export function TerminalPane({ projectId, commandId }: { projectId: string; comm
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    // Links in the output open in a new tab; only http(s), and the new page gets no opener.
+    term.loadAddon(new WebLinksAddon((_e, uri) => {
+      if (/^https?:\/\//i.test(uri)) window.open(uri, '_blank', 'noopener,noreferrer')
+    }))
     term.open(el)
 
     let ws: WebSocket | null = null
